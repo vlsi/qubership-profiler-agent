@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>postgresql</enhancer>
+    <ruleset if-enhancer="postgresql">
+        <rule>
+            <class>org.postgresql.core.v3.QueryExecutorImpl</class>
+            <method>execute(org.postgresql.core.Query, ParameterList, ResultHandler, int, int, int)</method>
+            <execute-before static="true" type="org/postgresql/core/v3/QueryExecutorImpl">dumpSqlConditional$profiler(p1)</execute-before>
+            <execute-when static="true" type="org/postgresql/core/v3/QueryExecutorImpl" duration-exceeds="50">dumpBindsConditional$profiler(p2)</execute-when>
+            <execute-when exception-only="true" type="org/postgresql/core/v3/QueryExecutorImpl">handleExceptionConditional$profiler(throwable, p1, p2)</execute-when>
+        </rule>
+        <rule>
+            <class>org.postgresql.core.v3.QueryExecutorImpl</class>
+            <method>execute(org.postgresql.core.Query[], ParameterList[], BatchResultHandler, int, int, int)</method>
+            <execute-before static="true" type="org/postgresql/core/v3/QueryExecutorImpl">dumpSqlConditional$profiler(p1)</execute-before>
+            <execute-when static="true" type="org/postgresql/core/v3/QueryExecutorImpl" duration-exceeds="50">dumpBindsConditional$profiler(p2)</execute-when>
+            <execute-when exception-only="true" type="org/postgresql/core/v3/QueryExecutorImpl">handleExceptionConditional$profiler(throwable, p1, p2)</execute-when>
+        </rule>
+        <!-- These methods were added since 42.3.0 -->
+        <rule>
+            <class>org.postgresql.core.v3.QueryExecutorImpl</class>
+            <method>execute(org.postgresql.core.Query, ParameterList, ResultHandler, int, int, int, boolean)</method>
+            <execute-before static="true" type="org/postgresql/core/v3/QueryExecutorImpl">dumpSql$profiler(p1)</execute-before>
+            <execute-when static="true" type="org/postgresql/core/v3/QueryExecutorImpl" duration-exceeds="50">dumpBinds$profiler(p2)</execute-when>
+            <execute-when exception-only="true" type="org/postgresql/core/v3/QueryExecutorImpl">handleException$profiler(throwable, p1, p2)</execute-when>
+        </rule>
+        <rule>
+            <class>org.postgresql.core.v3.QueryExecutorImpl</class>
+            <method>execute(org.postgresql.core.Query[], ParameterList[], BatchResultHandler, int, int, int, boolean)</method>
+            <execute-before static="true" type="org/postgresql/core/v3/QueryExecutorImpl">dumpSql$profiler(p1)</execute-before>
+            <execute-when static="true" type="org/postgresql/core/v3/QueryExecutorImpl" duration-exceeds="50">dumpBinds$profiler(p2)</execute-when>
+            <execute-when exception-only="true" type="org/postgresql/core/v3/QueryExecutorImpl">handleException$profiler(throwable, p1, p2)</execute-when>
+        </rule>
+        <rule>
+            <class>org.postgresql.core.v3.QueryExecutorImpl</class>
+            <method>fetch(ResultCursor, ResultHandler, int)</method>
+            <method>execute(org.postgresql.core.Query[], ParameterList[], ...)</method>
+        </rule>
+        <rule>
+            <class>org.postgresql.jdbc2.AbstractJdbc2Statement</class>
+            <method>execute</method>
+            <method>executeBatch</method>
+            <method>executeQuery</method>
+            <method>executeUpdate</method>
+            <execute-before type="org/postgresql/jdbc2/AbstractJdbc2Statement">setSessionInfo$profiler</execute-before>
+        </rule>
+        <rule>
+            <class>org.postgresql.jdbc.PgStatement</class>
+            <method>execute</method>
+            <method>executeBatch</method>
+            <method>executeQuery</method>
+            <method>executeUpdate</method>
+            <execute-before type="org/postgresql/jdbc/PgStatement">setSessionInfo$profiler</execute-before>
+        </rule>
+        <rule>
+            <class>com.zaxxer.hikari.pool.HikariPool</class>
+            <method>getConnection</method>
+        </rule>
+    </ruleset>
+</profiler-configuration>

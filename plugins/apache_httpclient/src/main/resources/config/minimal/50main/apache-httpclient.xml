@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>apache_httpclient</enhancer>
+    <ruleset>
+        <rule>
+            <class>org.apache.http.impl.client.DefaultRequestDirector</class>
+            <method>execute</method>
+            <log-parameter name="http.request" index="false">1</log-parameter>
+        </rule>
+        <rule>
+            <class>org.apache.http.protocol.HttpRequestExecutor</class>
+            <method>doReceiveResponse</method>
+            <method>doSendRequest</method>
+        </rule>
+        <rule>
+            <class>org.apache.http.protocol.HttpRequestExecutor</class>
+            <method>execute</method>
+            <execute-before>dumpHttpRequest$profiler(p1)</execute-before>
+        </rule>
+        <rule>
+            <class>org.apache.commons.httpclient.HttpClient</class>
+            <method>executeMethod(HostConfiguration, HttpMethod, HttpState)</method>
+            <execute-before>dumpHttpRequest$profiler(p2)</execute-before>
+        </rule>
+        <rule>
+            <class>org.apache.commons.httpclient.HttpClient</class>
+            <method>executeMethod</method>
+        </rule>
+        <rule>
+            <class>org.apache.commons.httpclient.HttpMethodDirector</class>
+            <method>executeWithRetry</method>
+        </rule>
+        <rule>
+            <class>org.apache.commons.httpclient.HttpMethodBase</class>
+            <method>writeRequest</method>
+            <method>writeRequestBody</method>
+            <method>readResponse</method>
+            <method>readStatusLine</method>
+            <method>processStatusLine</method>
+            <method>readResponseHeaders</method>
+            <method>processResponseHeaders</method>
+            <method>readResponseBody</method>
+            <method>processResponseBody</method>
+        </rule>
+        <rule>
+            <class>org.apache.http.impl.conn.PoolingHttpClientConnectionManager</class>
+            <method>leaseConnection</method>
+        </rule>
+    </ruleset>
+</profiler-configuration>

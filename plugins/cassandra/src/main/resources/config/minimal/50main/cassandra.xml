@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>cassandra</enhancer>
+    <ruleset if-enhancer="cassandra">
+        <rule>
+            <class>com.datastax.driver.core.DefaultResultSetFuture</class>
+            <method>onSet(com.datastax.driver.core.Connection, com.datastax.driver.core.Message$Response,
+                com.datastax.driver.core.ExecutionInfo, com.datastax.driver.core.Statement, long)</method>
+            <execute-before type="com/datastax/driver/core/DefaultResultSetFuture">onSet$profiler(p4, p5)</execute-before>
+            <execute-when exception-only="true" type="com/datastax/driver/core/DefaultResultSetFuture">handleException$profiler(throwable, p4, p5)</execute-when>
+        </rule>
+        <rule>
+            <class>com.datastax.driver.core.DefaultResultSetFuture</class>
+            <method>&lt;init&gt;</method>
+            <execute-after type="com/datastax/driver/core/DefaultResultSetFuture">postConstruct$profiler()</execute-after>
+        </rule>
+    </ruleset>
+</profiler-configuration>

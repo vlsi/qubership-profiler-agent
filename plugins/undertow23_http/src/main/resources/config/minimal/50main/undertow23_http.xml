@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>undertow23_http</enhancer>
+    <!-- WildFly(JBoss) >= 27 use Undertow >= 2.3.x with Jakarta EE 10 (jakarta.servlet.*)  -->
+    <ruleset if-enhancer="undertow23_http">
+        <rule>
+            <class>io.undertow.servlet.core.ApplicationListeners</class>
+            <method>requestInitialized</method>
+            <method-editor>Undertow23RequestHandler</method-editor>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>io.undertow.server.Connectors</class>
+            <!-- Root method for request execution. Note: it does not include request parsing. -->
+            <method>executeRootHandler</method>
+            <execute-before static="true">dumpQueueWaitTime$profiler(p2)</execute-before>
+        </rule>
+        <rule>
+            <class>io.undertow.servlet.handlers.FilterHandler$FilterChainImpl</class>
+            <method>doFilter</method>
+            <execute-before>fillNcUser$profiler(p1)</execute-before>
+        </rule>
+    </ruleset>
+</profiler-configuration>

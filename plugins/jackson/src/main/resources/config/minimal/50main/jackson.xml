@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>jackson</enhancer>
+    <ruleset if-enhancer="jackson">
+        <rule>
+            <class>com.fasterxml.jackson.databind.ObjectMapper</class>
+            <method>_readMapAndClose</method>
+            <minimum-method-size>0</minimum-method-size>
+        </rule>
+        <rule>
+            <class>com.fasterxml.jackson.databind.ObjectWriter</class>
+            <method>writeValue</method>
+            <minimum-method-size>0</minimum-method-size>
+        </rule>
+    </ruleset>
+
+</profiler-configuration>

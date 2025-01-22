@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<weblogic-web-app xmlns="http://xmlns.oracle.com/weblogic/weblogic-web-app">
+    <session-descriptor>
+        <cookie-name>PROFILERSESSION</cookie-name>
+        <cookie-max-age-secs>86400</cookie-max-age-secs>
+        <http-proxy-caching-of-cookies>false</http-proxy-caching-of-cookies>
+    </session-descriptor>
+
+    <jsp-descriptor>
+        <debug>true</debug>
+    </jsp-descriptor>
+
+    <security-role-assignment>
+        <role-name>admin</role-name>
+        <principal-name>system</principal-name>
+        <principal-name>sysadm</principal-name>
+        <principal-name>Administrator</principal-name>
+        <principal-name>Administrators</principal-name>
+        <principal-name>profileruser</principal-name>
+        <principal-name>profiler_user</principal-name>
+    </security-role-assignment>
+
+    <container-descriptor>
+        <prefer-web-inf-classes>true</prefer-web-inf-classes>
+    </container-descriptor>
+
+    <context-root>/profiler</context-root>
+</weblogic-web-app>

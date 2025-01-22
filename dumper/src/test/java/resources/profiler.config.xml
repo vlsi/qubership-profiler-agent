@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <ruleset>
+        <rule>
+            <class>org.qubership.profiler.test.**</class>
+        </rule>
+        <rule>
+            <class>org.qubership.profiler.**</class>
+            <do-not-profile/>
+        </rule>
+    </ruleset>
+</profiler-configuration>

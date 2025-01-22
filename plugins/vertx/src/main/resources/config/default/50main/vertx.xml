@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>vertx</enhancer>
+    <ruleset if-enhancer="vertx">
+        <rule>
+            <class>org.jboss.resteasy.core.MethodInjectorImpl</class>
+            <method>invoke(org.jboss.resteasy.spi.HttpRequest, org.jboss.resteasy.spi.HttpResponse, java.lang.Object, java.lang.Object[])</method>
+            <execute-after type="org/jboss/resteasy/core/MethodInjectorImpl">invoke$profiler(p1)</execute-after>
+        </rule>
+
+        <rule>
+            <class>org.jboss.resteasy.reactive.server.handlers.InvocationHandler</class>
+            <method>handle(org.jboss.resteasy.reactive.server.core.ResteasyReactiveRequestContext)</method>
+            <execute-after type="org/jboss/resteasy/reactive/server/handlers/InvocationHandler">handle$profiler(p1)</execute-after>
+        </rule>
+    </ruleset>
+</profiler-configuration>

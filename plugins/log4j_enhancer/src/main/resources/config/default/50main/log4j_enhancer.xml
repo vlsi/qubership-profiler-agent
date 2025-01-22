@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>log4j_enhancer</enhancer>
+    <parameters>
+      <parameter name="log.generated" index="false"/>
+      <parameter name="log.written" index="false"/>
+    </parameters>
+    <ruleset>
+        <rule>
+            <class>org.apache.log4j.Category</class>
+            <class>org.qubership.framework.logging.impl.log4j.NCLogger</class>
+            <method>forcedLog(String,Priority,Object,Throwable)</method>
+            <execute-before static="true" type="org/apache/log4j/Category">logWritten$profiler(p3)</execute-before>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.log4j.Category</class>
+            <method>trace</method>
+            <method>debug</method>
+            <method>info</method>
+            <method>warn</method>
+            <method>error</method>
+            <method>fatal</method>
+            <execute-before static="true">logGenerated$profiler(p1)</execute-before>
+        </rule>
+        <rule>
+            <class>org.apache.log4j.Category</class>
+            <method>log(Priority,Object)</method>
+            <method>log(Priority,Object,Throwable)</method>
+            <execute-before static="true">logGenerated$profiler(p2)</execute-before>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.log4j.Category</class>
+            <method>log(String,Priority,Object,Throwable)</method>
+            <execute-before static="true">logGenerated$profiler(p3)</execute-before>
+            <do-not-profile/>
+        </rule>
+
+        <rule>
+            <class>org.apache.commons.logging.impl.Log4JLogger</class>
+            <method>trace</method>
+            <method>debug</method>
+            <method>info</method>
+            <method>warn</method>
+            <method>error</method>
+            <method>fatal</method>
+        </rule>
+    </ruleset>
+</profiler-configuration>

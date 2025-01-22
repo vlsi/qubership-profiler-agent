@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>spring</enhancer>
+    <ruleset if-enhancer="spring">
+        <rule>
+            <class>org.springframework.jms.listener.AbstractMessageListenerContainer</class>
+            <method>doExecuteListener(Session, Message)</method>
+            <execute-before>dumpMessage$profiler(p2)</execute-before>
+        </rule>
+    </ruleset>
+
+    <ruleset>
+        <rule>
+            <class>org.springframework.beans.factory.support.DefaultListableBeanFactory</class>
+            <method>getBean</method>
+        </rule>
+        <rule>
+            <class>org.springframework.transaction.jta.JtaTransactionManager</class>
+            <method>doBegin</method>
+            <method>doCommit</method>
+            <method>doResume</method>
+            <method>doSuspend</method>
+        </rule>
+    </ruleset>
+
+    <ruleset>
+        <rule>
+            <class>org.springframework.ws.transport.support.WebServiceMessageReceiverObjectSupport</class>
+            <method>handleConnection</method>
+        </rule>
+    </ruleset>
+</profiler-configuration>

@@ -1,0 +1,35 @@
+package org.qubership.profiler.formatters.title;
+
+import org.qubership.profiler.agent.ParameterInfo;
+import gnu.trove.THashSet;
+import gnu.trove.TIntObjectHashMap;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import static org.qubership.profiler.formatters.title.TitleCommonTools.addGenericParams;
+import static org.qubership.profiler.formatters.title.TitleCommonTools.addParameter;
+
+public class OrchestratorTitleFormatter extends AbstractTitleFormatter {
+
+    private Set<String> SKIP_PARAMS = Collections.EMPTY_SET;
+
+    @Override
+    public ProfilerTitle formatTitle(String classMethod, Map<String, Integer> tagToIdMap, Object params, List<ParameterInfo> defaultListParams) {
+        ProfilerTitleBuilder title = new ProfilerTitleBuilder();
+        title.append("Orchestrator: ");
+        title.appendHtml("<b>");
+        addParameter(title, tagToIdMap, params, "", "po.process.name");
+        title.appendHtml("/<b>");
+        addGenericParams(title, tagToIdMap, params, defaultListParams, SKIP_PARAMS);
+        addParameter(title, tagToIdMap, params, ", text: ", "jms.text.fragment");
+        return title;
+    }
+
+    @Override
+    public ProfilerTitle formatCommonTitle(String classMethod, Map<String, Integer> tagToIdMap, Map<Integer, List<String>> params, Map<String, Object> formatContext) {
+        throw new UnsupportedOperationException();
+    }
+}

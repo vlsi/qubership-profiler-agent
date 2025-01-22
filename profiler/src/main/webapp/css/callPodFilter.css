@@ -1,0 +1,33 @@
+div.suggestionBox {
+    background-color: white;
+    border: 2px solid lightgray;
+    z-index: 1000;
+}
+div.suggestionBox, div.suggestionBox > div {
+    border-radius: 7px;
+}
+div.suggestionBox > div {
+    padding: 5px;
+    cursor: pointer;
+    user-select: none;
+}
+div.suggestionBox > div.selected{
+    text-decoration: #6E94FF;
+    text-decoration-line: underline;
+    text-decoration-style: dashed;
+}
+div.suggestionBox > div:hover{
+    background-color: lightyellow;
+}
+
+input.callPodFilter {
+    border: 1px solid;
+}
+
+input.callPodFilter.error:focus {
+    outline-color: lightcoral;
+}
+
+input.callPodFilter.error {
+    border: 1px dashed lightcoral;
+}
