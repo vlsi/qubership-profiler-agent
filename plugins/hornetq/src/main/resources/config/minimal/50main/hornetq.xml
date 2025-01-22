@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>hornetq</enhancer>
+    <ruleset>
+        <rule>
+            <class>org.hornetq.core.client.impl.ClientConsumerImpl</class>
+            <method>callOnMessage</method>
+        </rule>
+        <rule>
+            <class>org.hornetq.jms.client.HornetQMessage</class>
+            <method>createMessage</method>
+            <execute-after static="true">dumpMessage$profiler(result)</execute-after>
+            <do-not-profile/>
+        </rule>
+    </ruleset>
+</profiler-configuration>

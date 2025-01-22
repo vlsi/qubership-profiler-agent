@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>elasticsearch</enhancer>
+    <ruleset if-enhancer="elasticsearch">
+        <!--
+        <rule>
+            <class>org.elasticsearch.client.RestHighLevelClient</class>
+            <method>internalPerformRequest(Req, org.elasticsearch.common.CheckedFunction, org.elasticsearch.client.RequestOptions, org.elasticsearch.common.CheckedFunction, java.util.Set)</method>
+            <execute-after>internalPerformRequest$profiler(req, response)</execute-after>
+        </rule>
+        <rule>
+            <class>reactor.netty.channel.ChannelOperationsHandler</class>
+            <method>channelRead</method>
+        </rule>
+        -->
+    </ruleset>
+</profiler-configuration>

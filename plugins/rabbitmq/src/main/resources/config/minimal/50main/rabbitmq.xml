@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>rabbitmq</enhancer>
+    <ruleset if-enhancer="rabbitmq">
+        <rule>
+            <class>com.rabbitmq.client.impl.ChannelN</class>
+            <method>basicPublish(java.lang.String, java.lang.String, boolean, boolean, ...)</method>
+            <execute-after type="com/rabbitmq/client/impl/ChannelN" exception="true">basicPublish$profiler(p1, p2, p6, throwable)</execute-after>
+        </rule>
+        <rule>
+            <class>org.springframework.amqp.rabbit.listener.adapter.MessagingMessageListenerAdapter</class>
+            <method>invokeHandler(org.springframework.amqp.core.Message, Channel, Message)</method>
+            <execute-after exception="true">invokeHandler$profiler(p1, p2, p3, throwable)</execute-after>
+        </rule>
+    </ruleset>
+
+</profiler-configuration>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>activemq</enhancer>
+    <ruleset>
+        <rule>
+            <class>org.apache.activemq.transport.tcp.TcpTransport</class>
+            <method>readCommand</method>
+            <execute-when exception-only="true">readCommandHandleException$profiler(state)</execute-when>
+        </rule>
+        <rule>
+            <class>org.apache.activemq.transport.tcp.TcpTransport</class>
+            <method>doRun</method>
+        </rule>
+    </ruleset>
+    <!-- ActiveMQ Artemis -->
+    <ruleset>
+        <rule>
+            <class>org.apache.activemq.artemis.ra.inflow.ActiveMQMessageHandler</class>
+            <method>onMessage</method>
+            <execute-before>dumpConsumer$profiler</execute-before>
+        </rule>
+        <rule>
+            <class>org.apache.activemq.artemis.jms.client.JMSMessageListenerWrapper</class>
+            <method>onMessage</method>
+            <execute-before>dumpConsumer$profiler</execute-before>
+        </rule>
+        <rule>
+            <class>org.apache.activemq.artemis.jms.client.ActiveMQMessage</class>
+            <method>doBeforeReceive</method>
+            <execute-after>dumpMessage$profiler</execute-after>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.activemq.artemis.jms.client.ActiveMQBytesMessage</class>
+            <method>doBeforeReceive</method>
+            <execute-after>dumpMessage$profiler</execute-after>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.activemq.artemis.jms.client.ActiveMQTextMessage</class>
+            <method>doBeforeReceive</method>
+            <execute-after>dumpTextMessage$profiler</execute-after>
+            <do-not-profile/>
+        </rule>
+    </ruleset>
+</profiler-configuration>

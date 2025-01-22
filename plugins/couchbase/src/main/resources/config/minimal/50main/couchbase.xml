@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>couchbase</enhancer>
+    <parameters>
+        <parameter name="collection.name" deduplicate="true"/>
+    </parameters>
+    <ruleset if-enhancer="couchbase">
+        <rule>
+            <class>com.couchbase.client.java.Collection</class>
+            <method>get</method>
+            <method>getAndLock</method>
+            <method>getAndTouch</method>
+            <method>getAllReplicas(String, GetAllReplicasOptions)</method>
+            <method>getAnyReplica</method>
+            <method>exists</method>
+            <method>remove</method>
+            <method>insert</method>
+            <method>upsert</method>
+            <method>replace</method>
+            <method>touch</method>
+            <method>unlock</method>
+            <method>lookupIn</method>
+            <method>mutateIn</method>
+            <method>list(String, Class, ArrayListOptions)</method>
+            <method>set(String, Class, ArraySetOptions)</method>
+            <method>map(String, Class, MapOptions)</method>
+            <method>queue(String, Class, QueueOptions)</method>
+            <log-parameter-when duration-exceeds="25" name="id">0</log-parameter-when>
+            <execute-when duration-exceeds="10">dumpName$profiler</execute-when>
+        </rule>
+        <rule>
+            <class>com.couchbase.client.java.Cluster</class>
+            <class>com.couchbase.client.java.Scope</class>
+            <method>query(String, QueryOptions)</method>
+            <method>analyticsQuery(String, AnalyticsOptions)</method>
+            <log-parameter-when duration-exceeds="100" name="n1ql" big="true" signature="sql">0</log-parameter-when>
+        </rule>
+        <rule>
+            <class>com.couchbase.client.java.Cluster</class>
+            <method>searchQuery(String, SearchQuery, SearchOptions)</method>
+            <log-parameter-when duration-exceeds="100" name="n1ql" big="true" signature="sql">1</log-parameter-when>
+        </rule>
+        <rule>
+            <class>com.couchbase.client.java.Cluster</class>
+            <method>connect</method>
+            <method>ping</method>
+            <method>waitUntilReady</method>
+        </rule>
+    </ruleset>
+</profiler-configuration>

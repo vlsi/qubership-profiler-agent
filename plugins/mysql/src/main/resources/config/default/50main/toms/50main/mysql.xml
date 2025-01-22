@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>mysql</enhancer>
+    <parameters>
+        <parameter name="sql" big="true" deduplicate="true" signature="sql"/>
+    </parameters>
+    <ruleset>
+        <rule>
+            <class>com.mysql.cj.jdbc.StatementImpl</class>
+            <method>execute(String,...)</method>
+            <method>executeQuery(String,...)</method>
+            <method>executeLargeUpdate(String,...)</method>
+            <log-parameter name="sql">0</log-parameter>
+        </rule>
+        <rule>
+            <class>com.mysql.cj.jdbc.ClientPreparedStatement</class>
+            <method>execute</method>
+            <method>executeQuery</method>
+            <method>executeLargeUpdate</method>
+            <execute-before>dumpSql$profiler</execute-before>
+        </rule>
+        <rule>
+            <class>com.mysql.cj.jdbc.StatementImpl</class>
+            <class>com.mysql.cj.jdbc.ClientPreparedStatement</class>
+            <method-modifier>public</method-modifier>
+        </rule>
+        <rule>
+            <class>com.mysql.cj.protocol.a.result.ResultsetRowsCursor</class>
+            <method>fetchMoreRows</method>
+        </rule>
+        <rule>
+            <class>com.mysql.cj.jdbc.ConnectionImpl</class>
+            <method>commit</method>
+            <method>rollback</method>
+        </rule>
+    </ruleset>
+</profiler-configuration>

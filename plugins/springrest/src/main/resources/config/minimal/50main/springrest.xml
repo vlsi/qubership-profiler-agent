@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>springrest</enhancer>
+    <ruleset if-enhancer="springrest">
+        <rule>
+            <class>org.springframework.web.client.RestTemplate</class>
+            <method>handleResponse(URI, HttpMethod, ClientHttpResponse)</method>
+            <execute-after exception="true">logRequestParameters$profiler(p1, p2, p3)</execute-after>
+        </rule>
+    </ruleset>
+
+</profiler-configuration>

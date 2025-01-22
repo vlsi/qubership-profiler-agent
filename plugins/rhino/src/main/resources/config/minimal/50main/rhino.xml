@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>rhino</enhancer>
+    <ruleset>
+        <rule>
+            <class>org.mozilla.javascript.regexp.RegExpImpl</class>
+            <method>action(Context, Scriptable, Scriptable, Object[], int)</method>
+            <execute-when duration-exceeds="10">dumpRegexp$profiler(p3, p4)</execute-when>
+        </rule>
+        <rule>
+            <class>org.mozilla.javascript.ScriptRuntime</class>
+            <method>doTopCall</method>
+        </rule>
+    </ruleset>
+</profiler-configuration>

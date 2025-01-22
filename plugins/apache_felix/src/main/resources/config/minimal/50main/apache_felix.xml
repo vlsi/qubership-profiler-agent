@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>apache_felix</enhancer>
+    <ruleset>
+        <rule if-enhancer="apache_felix">
+            <class>org.apache.felix.framework.Felix</class>
+            <method>&lt;init&gt;(Map)</method>
+            <process-argument static="true" argument="0">addBootDelegation$profiler(p1)</process-argument>
+        </rule>
+    </ruleset>
+</profiler-configuration>

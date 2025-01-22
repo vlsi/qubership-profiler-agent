@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>jetty10_http</enhancer>
+    <!-- Tomcat >= 9 with Jakarta EE 10 (jakarta.servlet.*) -->
+    <ruleset if-enhancer="jetty10_http">
+        <rule>
+            <class>org.eclipse.jetty.servlet.ServletHandler</class>
+            <method>doHandle</method>
+            <method-editor>Jetty10RequestHandler</method-editor>
+        </rule>
+    </ruleset>
+</profiler-configuration>

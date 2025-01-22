@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>ocelot</enhancer>
+    <parameters>
+        <parameter name="trace.id" index="true" list="true"/>
+        <parameter name="span.id" index="true" list="true" order="800"/>
+    </parameters>
+    <ruleset if-enhancer="ocelot">
+        <rule>
+            <class>io.opencensus.trace.Span</class>
+            <method>&lt;init&gt;</method>
+            <execute-after>logIdAfterStart$profiler</execute-after>
+        </rule>
+        <rule>
+            <class>io.opentelemetry.sdk.trace.SdkSpan</class>
+            <method>&lt;init&gt;</method>
+            <execute-after>logIdAfterStart$profiler</execute-after>
+        </rule>
+    </ruleset>
+</profiler-configuration>

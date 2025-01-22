@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>java_http_client</enhancer>
+    <ruleset>
+        <rule>
+            <class>sun.net.www.http.HttpClient</class>
+            <method>parseHTTP</method>
+            <execute-before>dumpHttpRequest$profiler</execute-before>
+        </rule>
+    </ruleset>
+</profiler-configuration>

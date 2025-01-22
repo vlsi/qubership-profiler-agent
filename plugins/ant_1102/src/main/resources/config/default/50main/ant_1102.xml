@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>ant_1102</enhancer>
+    <ruleset if-enhancer="ant_1102">
+        <rule>
+            <class>org.apache.tools.ant.Project</class>
+            <method>executeTarget(String)</method>
+            <execute-before>logEntry$profiler(p1)</execute-before>
+            <execute-after exception="true">logExit$profiler</execute-after>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.Target</class>
+            <method>execute</method>
+            <execute-before>logEntry$profiler</execute-before>
+            <execute-after exception="true">logExit$profiler</execute-after>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.Task</class>
+            <method>perform</method>
+            <execute-before>logEntry$profiler</execute-before>
+            <execute-after exception="true">logExit$profiler</execute-after>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.taskdefs.Java</class>
+            <method>executeJava()</method>
+            <execute-before>dumpCommandLine$profiler</execute-before>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.taskdefs.ExecTask</class>
+            <method>checkConfiguration()</method>
+            <execute-before>dumpCommandLine$profiler</execute-before>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.taskdefs.Ant</class>
+            <method>execute</method>
+            <execute-before>logEntry$profiler</execute-before>
+            <execute-after exception="true">logExit$profiler</execute-after>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.qubership.dsi.offlineimport.tool.ImportToolTask</class>
+            <method>execute</method>
+            <execute-before>logImportFile$profiler</execute-before>
+        </rule>
+    </ruleset>
+
+    <ruleset>
+        <rule>
+            <class>org.apache.tools.ant.Project</class>
+            <method>executeTarget</method>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.Project</class>
+            <method>executeTargets</method>
+            <method>executeSortedTargets</method>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.Main</class>
+            <method>runBuild</method>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.Main</class>
+            <method>exit</method>
+            <execute-before static="true"
+                type="org/qubership/profiler/agent/Profiler">threadExit</execute-before>
+            <do-not-profile />
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.UnknownElement</class>
+            <class>org.apache.tools.ant.taskdefs.CallTarget</class>
+            <do-not-profile />
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.Target</class>
+            <method>execute</method>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.Task</class>
+            <method>perform</method>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.taskdefs.Java</class>
+            <method>executeJava(CommandlineJava)</method>
+            <do-not-profile/>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.ProjectHelper</class>
+            <method>configureProject</method>
+        </rule>
+        <rule>
+            <class>org.apache.tools.ant.taskdefs.**</class>
+        </rule>
+    </ruleset>
+</profiler-configuration>

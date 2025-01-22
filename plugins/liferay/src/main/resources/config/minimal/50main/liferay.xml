@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiler-configuration>
+    <enhancer>liferay</enhancer>
+    <parameters>
+        <parameter name="liferay.user" index="true" list="true"/>
+    </parameters>
+    <ruleset>
+        <rule>
+            <!-- java.lang.ClassNotFoundException: javax.servlet.jsp.tagext.Tag while computing stackmaps -->
+            <class>jsp_servlet._html._common._themes.__portlet</class>
+            <do-not-profile/>
+        </rule>
+    </ruleset>
+    <ruleset if-enhancer="liferay">
+        <rule>
+            <class>com.liferay.portal.theme.ThemeDisplay</class>
+            <method>setUser(User)</method>
+            <execute-before>logUser$profiler(p1)</execute-before>
+        </rule>
+        <rule>
+            <class>com.liferay.portlet.layoutconfiguration.util.RuntimePortletUtil</class>
+            <!-- liferay 6 -->
+            <method>processPortlet(ServletContext, HttpServletRequest, HttpServletResponse, RenderRequest, RenderResponse, Portlet, String, String, String, Integer, Integer, String, boolean)</method>
+            <execute-before>savePortletId$profiler(p2, p4, p7)</execute-before>
+        </rule>
+        <rule>
+            <class>com.liferay.portlet.layoutconfiguration.util.RuntimePortletUtil</class>
+            <!-- liferay 5 -->
+            <method>processPortlet(StringBuilder, ServletContext, HttpServletRequest, HttpServletResponse, RenderRequest, RenderResponse, Portlet, String, String, String, Integer, Integer, String)</method>
+            <execute-before>savePortletId$profiler(p3, p5, p8)</execute-before>
+        </rule>
+        <rule>
+            <class>com.liferay.portlet.layoutconfiguration.util.RuntimePortletUtil</class>
+            <method>processTemplate</method>
+            <method>processXML</method>
+        </rule>
+        <rule>
+            <class>com.liferay.taglib.util.IncludeTag</class>
+            <method>doInclude(String)</method>
+            <log-parameter name="include.page" index="false" big="false">0</log-parameter>
+        </rule>
+        <rule>
+            <class>com.liferay.portal.layoutconfiguration.util.RuntimePageImpl</class>
+            <method>processTemplate</method>
+            <method>processXML</method>
+        </rule>
+        <rule>
+            <class>com.liferay.portal.layoutconfiguration.util.RuntimePageImpl</class>
+            <method>doDispatch(PageContext, String, TemplateResource, boolean)</method>
+            <log-parameter name="portlet.id">1</log-parameter>
+        </rule>
+    </ruleset>
+</profiler-configuration>

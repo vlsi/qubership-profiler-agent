@@ -1,0 +1,4 @@
+<jboss-web>
+    <context-root>/profiler</context-root>
+    <security-domain>ESCDomain</security-domain>
+</jboss-web>
