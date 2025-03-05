@@ -3409,63 +3409,10 @@ var CL = {}, CT = {}, profiler_lpad, isDump = {};
             }
 
             var javaModules = [
-                ['core.attribute.atributeValue', 'org.qubership.ejb.core.AttributeValue'],
-                ['core.attribute.calculation', 'org.qubership.ejb.core.Calcula'],
-                ['core.ejb.other', 'org.qubership.ejb.core.'],
-                ['core.ejb.framework', 'org.qubership.ejb.framework.'],
-                ['core.ncObjectLight', 'org.qubership.ejb.core.light.'],
-                ['core.security', 'org.qubership.ejb.core.security.'],
-                ['core.security', 'org.qubership.ejb.session.security.'],
-                ['core.security', 'org.qubership.security.'],
-                ['core.referenceResolver', 'org.qubership.ejb.core.ReferenceResolver'],
-                ['core.listeners.history', 'org.qubership.ejb.core.cache.history.'],
-                ['core.listeners.other', 'org.qubership.ejb.core.eventnotifications.'],
-                ['core.ncdo', 'org.qubership.platform.core.ncdo.'],
-                ['core.querybuilder', 'org.qubership.platform.core.querybuilder.'],
-                ['core.dataaccess', 'org.qubership.platform.core.dataaccess.'],
-                ['core.dataaccess', 'org.qubership.presentation.dataaccess.'],
-                ['core.dataaccess', 'org.qubership.core.request.'],
-                ['core.other', 'org.qubership.core.'],
-
                 ['logging.log4j', 'org.apache.log4j'],
                 ['logging.commons', 'org.apache.commons.logging'],
 
-                ['db', 'org.qubership.framework.jdbc.'],
                 ['db', 'org.postgresql.'],
-
-                ['tui.other', 'org.qubership.jsp.'],
-                ['tui.xml', 'org.qubership.jsp.xml.'],
-                ['tui.pages', 'org.qubership.jsp.page.'],
-                ['tui.cbtui', 'org.qubership.presentation.'],
-
-                ['platform.search', 'org.qubership.platform.search'],
-
-                ['platform.mail', 'org.qubership.platform.mail.'],
-
-                ['platform.other', 'org.qubership.platform.'],
-
-                ['ejb.session.common', 'org.qubership.ejb.session.common.'],
-
-                ['scheduler', 'org.qubership.platform.scheduler.'],
-                ['bam', 'org.qubership.platform.bam.'],
-                ['mediation', 'org.qubership.mediation.'],
-
-                ['orchestrator.core', 'org.qubership.platform.orchestrator.core.'],
-                ['orchestrator.other', 'org.qubership.platform.orchestrator.'],
-
-                ['solutions.dt.other', 'org.qubership.solutions.dt.'],
-                ['solutions.dt.ngssm', 'org.qubership.solutions.dt.ngssm.'],
-
-                ['ossj', 'org.qubership.applications.ossj.'],
-
-                ['solutions.telus.other', 'org.qubership.solutions.customers.telus.'],
-                ['solutions.telus.jsp', 'jsp_servlet._solutions._telus.'],
-
-                ['solutions.telstra.other', 'org.qubership.solutions.telstra.'],
-                ['solutions.telstra.jsp', 'jsp_servlet._solutions._telstra.'],
-
-                ['solutions.other', 'org.qubership.solutions.'],
-                ['solutions.other', 'jsp_servlet._solutions.'],
 
                 ['profiler', 'org.qubership.profiler.']
 
