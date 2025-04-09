@@ -12,6 +12,7 @@
         <module>plugin-generator</module>
         <module>agent</module>
         <module>boot</module>
+        <module>buildtools</module>
         <module>cli</module>
         <module>common</module>
         <module>parsers</module>
@@ -21,6 +22,7 @@
         <module>instrumenter</module>
         <module>plugin</module>
         <module>plugins</module>
+        <module>proto-definition</module>
         <module>it-test</module>
         <module>profiler</module>
         <module>runtime</module>
@@ -303,11 +305,11 @@
                             <artifactId>closure-compiler</artifactId>
                             <version>v20230502</version>
                         </dependency>
-                        <dependency><!-- MergeCSSandJS -->
-                            <groupId>org.qubership.execution-statistics-collector.esc-buildtools</groupId>
-                            <artifactId>esc-buildtools</artifactId>
-                            <version>${esc.buildtools.version}</version>
-                        </dependency>
+<!--                        <dependency>&lt;!&ndash; MergeCSSandJS &ndash;&gt;-->
+<!--                            <groupId>org.qubership.execution-statistics-collector.esc-buildtools</groupId>-->
+<!--                            <artifactId>esc-buildtools</artifactId>-->
+<!--                            <version>${esc.buildtools.version}</version>-->
+<!--                        </dependency>-->
                     </dependencies>
                 </plugin>
                 <plugin>
@@ -421,13 +423,13 @@
                             </configuration>
                         </execution>
                     </executions>
-                    <dependencies>
-                        <dependency>
-                            <groupId>org.qubership.execution-statistics-collector.esc-buildtools</groupId>
-                            <artifactId>esc-buildtools</artifactId>
-                            <version>${esc.buildtools.version}</version>
-                        </dependency>
-                    </dependencies>
+<!--                    <dependencies>-->
+<!--                        <dependency>-->
+<!--                            <groupId>org.qubership.execution-statistics-collector.esc-buildtools</groupId>-->
+<!--                            <artifactId>esc-buildtools</artifactId>-->
+<!--                            <version>${esc.buildtools.version}</version>-->
+<!--                        </dependency>-->
+<!--                    </dependencies>-->
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -540,6 +542,12 @@
             <dependency>
                 <groupId>org.qubership.execution-statistics-collector</groupId>
                 <artifactId>boot</artifactId>
+                <version>${project.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.qubership.execution-statistics-collector</groupId>
+                <artifactId>buildtools</artifactId>
                 <version>${project.version}</version>
                 <scope>provided</scope>
             </dependency>
