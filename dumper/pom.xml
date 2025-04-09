@@ -21,6 +21,15 @@
             <artifactId>common</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.qubership.execution-statistics-collector</groupId>
+            <artifactId>proto-definition</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpcore</artifactId>
+            <version>4.4.13</version>
+        </dependency>
+        <dependency>
             <groupId>net.sf.trove4j</groupId>
             <artifactId>trove4j</artifactId>
         </dependency>
