@@ -11,6 +11,7 @@ import java.util.*;
 /**
  * Possible log file formats:
  * <table>
+ *     <caption>Log file formats</caption>
  *     <tr><td>"LOGFORMAT2"</td>
  *     <td>
  *         <ol>

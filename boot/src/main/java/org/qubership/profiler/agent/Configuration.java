@@ -18,7 +18,7 @@ public interface Configuration {
      * Updates parameter info with new type
      * @param param name of parameter to update
      * @param type new type of the parameter
-     * @see Configuration_01#getParameterInfo, ParamTypes
+     * @see Configuration_01#getParameterInfo
      */
     @Deprecated
     public void setParamType(String param, int type);

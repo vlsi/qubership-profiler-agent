@@ -36,28 +36,28 @@ public class CallInfo {
      * action: queryString
      * clientId: userName '@' remoteAddress
      * clientInfo: threadName ':' XID
-     * <p/>
+     * <p>
      * CommonPage:
      * module: ('G' | 'P') ' ' url
      * action: objectId ':' tabName
      * clientId: userName '@' remoteAddress
      * clientInfo: threadName ':' XID
-     * <p/>
+     * <p>
      * Jobs:
      * module: 'Job ' jobName
      * action: jobClass '.' jobMethod | jobJMSTopic | jobURL
      * clientInfo: threadName ':' XID
-     * <p/>
+     * <p>
      * Workflow:
      * module: 'WF' processTemplateId
      * action: processId ':' activityId ':' actionNumber
      * clientInfo: threadName ':' XID
-     * <p/>
+     * <p>
      * Dataflow:
      * module: 'DF' sessionTemplateId
      * action: sessionId
      * clientInfo: threadName ':' XID
-     * <p/>
+     * <p>
      * Orchestrator:
      * module: 'PO ' processName
      * action: taskId ':' taskName
