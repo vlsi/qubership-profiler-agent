@@ -4,14 +4,14 @@ import java.io.UnsupportedEncodingException;
 
 /**
  * Murmur hash 2.0.
- * <p/>
+ * <p>
  * The murmur hash is a relative fast hash function from
  * http://murmurhash.googlepages.com/ for platforms with efficient
  * multiplication.
- * <p/>
+ * <p>
  * This is a re-implementation of the original C code plus some
  * additional features.
- * <p/>
+ * <p>
  * Public domain.
  *
  * @author Viliam Holub

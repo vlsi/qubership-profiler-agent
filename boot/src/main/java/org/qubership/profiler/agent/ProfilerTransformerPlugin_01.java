@@ -19,7 +19,6 @@ public interface ProfilerTransformerPlugin_01 extends ProfilerTransformerPlugin 
      * This will load new configuration to the class transformer, scan all the loaded classes and reload classes when nessesary.
      *
      * @param newConfigPath the parh to the new config file. Leave empty or null to reload configuration from current location
-     *                      <p/>
      *                      The reloading is offloaded to a separate thread as soon as the configuration is parsed.
      * @throws IOException                  when failed to include some file to the configuration
      * @throws SAXException                 when parsing of configuration xml failed
