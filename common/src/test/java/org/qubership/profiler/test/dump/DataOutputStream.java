@@ -13,7 +13,7 @@ public class DataOutputStream {
     public void varIntOutputTest() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
-		DataOutputStreamEx dos = new DataOutputStreamEx(baos);
+        DataOutputStreamEx dos = new DataOutputStreamEx(baos);
         dos.writeVarInt(0);
         Assert.assertEquals(new byte[]{0}, baos.toByteArray());
         dos.writeVarInt(1);
@@ -38,7 +38,7 @@ public class DataOutputStream {
     public void varIntInputTest() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
-		DataOutputStreamEx dos = new DataOutputStreamEx(baos);
+        DataOutputStreamEx dos = new DataOutputStreamEx(baos);
         dos.writeVarInt(0);
         dos.writeVarInt(1);
         dos.writeVarInt(2);
@@ -47,7 +47,7 @@ public class DataOutputStream {
         dos.writeVarInt(0x81);
         ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
         @SuppressWarnings("resource")
-		DataInputStreamEx dis = new DataInputStreamEx(bais);
+        DataInputStreamEx dis = new DataInputStreamEx(bais);
         Assert.assertEquals(dis.readVarInt(), 0);
         Assert.assertEquals(dis.readVarInt(), 1);
         Assert.assertEquals(dis.readVarInt(), 2);
@@ -60,13 +60,13 @@ public class DataOutputStream {
     public void negativeIntegers() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
-		DataOutputStreamEx dos = new DataOutputStreamEx(baos);
+        DataOutputStreamEx dos = new DataOutputStreamEx(baos);
         for (int i = -100000; i <= 0; i++)
             dos.writeVarInt(i);
 
         ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
         @SuppressWarnings("resource")
-		DataInputStreamEx dis = new DataInputStreamEx(bais);
+        DataInputStreamEx dis = new DataInputStreamEx(bais);
         for (int i = -100000; i <= 0; i++)
             Assert.assertEquals(dis.readVarInt(), i);
     }
@@ -75,7 +75,7 @@ public class DataOutputStream {
     public void varIntOutputZigzagTest() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
-		DataOutputStreamEx dos = new DataOutputStreamEx(baos);
+        DataOutputStreamEx dos = new DataOutputStreamEx(baos);
         dos.writeVarIntZigZag(0);
         Assert.assertEquals(new byte[]{0}, baos.toByteArray());
         dos.writeVarIntZigZag(1);
@@ -92,14 +92,14 @@ public class DataOutputStream {
     public void zigzagTestInt() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
-		DataOutputStreamEx dos = new DataOutputStreamEx(baos);
+        DataOutputStreamEx dos = new DataOutputStreamEx(baos);
         int i;
         for (i = -1000; i <= 1000; i++)
             dos.writeVarIntZigZag(i);
 
         ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
         @SuppressWarnings("resource")
-		DataInputStreamEx dis = new DataInputStreamEx(bais);
+        DataInputStreamEx dis = new DataInputStreamEx(bais);
         for (i = -1000; i <= 1000; i++)
             Assert.assertEquals(dis.readVarIntZigZag(), i, "Wrong integer decoded from the stream");
         Assert.assertEquals(dis.available(), 0, "Buffer contains unread bytes");
@@ -122,7 +122,7 @@ public class DataOutputStream {
         );
 
         @SuppressWarnings("resource")
-		DataInputStreamEx inEx = new DataInputStreamEx(in);
+        DataInputStreamEx inEx = new DataInputStreamEx(in);
         byte []res = new byte[N];
         inEx.readFully(res);
         for(int i = 0; i<N; i++)
@@ -133,7 +133,7 @@ public class DataOutputStream {
     public void varIntOutputPerformance() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream(1100000 * 4);
         @SuppressWarnings("resource")
-		DataOutputStreamEx dos = new DataOutputStreamEx(new BufferedOutputStream(baos));
+        DataOutputStreamEx dos = new DataOutputStreamEx(new BufferedOutputStream(baos));
         for (int i = 0; i < 1000000; i++) {
             dos.writeVarInt(i);
         }
@@ -143,7 +143,7 @@ public class DataOutputStream {
     public void varIntInputPerformance() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream(1100000 * 4);
         @SuppressWarnings("resource")
-		DataOutputStreamEx dos = new DataOutputStreamEx(new BufferedOutputStream(baos));
+        DataOutputStreamEx dos = new DataOutputStreamEx(new BufferedOutputStream(baos));
         for (int i = 0; i < 1000000; i++) {
             dos.writeVarInt(i);
         }
@@ -151,7 +151,7 @@ public class DataOutputStream {
 
         ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
         @SuppressWarnings("resource")
-		DataInputStreamEx dis = new DataInputStreamEx(new BufferedInputStream(bais));
+        DataInputStreamEx dis = new DataInputStreamEx(new BufferedInputStream(bais));
         for (int i = 0; i < 1000000; i++) {
             dis.readVarInt();
         }

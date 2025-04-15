@@ -45,7 +45,7 @@ public class FetchJFRAllocations extends FetchJFRDump {
 
         allocatedObject.methodName = inNewTlab ? "<allocate>" : "<allocate outside tlab>";
         allocatedObject.setClassName(allocationClass.getMember(event).getFullName());
-		threadinfo.addThreadLine(allocatedObject);
+        threadinfo.addThreadLine(allocatedObject);
 
         super.addStackTrace(event, threadinfo);
     }

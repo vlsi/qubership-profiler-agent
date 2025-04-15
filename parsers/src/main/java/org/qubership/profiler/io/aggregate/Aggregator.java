@@ -20,7 +20,7 @@ public class Aggregator {
 
     private long callsCount;
 
-	public void processCall(Call call, String title) {
+    public void processCall(Call call, String title) {
         if(callsCount >= MAX_CALLS_FOR_AGGREGATE_TO_EXCEL) {
             return;
         }
@@ -44,26 +44,26 @@ public class Aggregator {
         row.setQueueing(call.queueWaitDuration + row.getQueueing());
         row.setSuspension(call.suspendDuration + row.getSuspension());
         row.setMemory(call.memoryUsed + row.getMemory());
-	}
+    }
 
-	public Collection<AggregateRow> finish() {
-		for(AggregateRow row : rows.values()) {
-			long duration = row.getDuration();
-			row.setDurationHours(((double)duration)/1000/60/60);
-			row.setDurationPerExec((double)duration/(double)row.getCount());
-			row.setDuration90thPercentile(percentile(row.getAllDurations(), 90));
+    public Collection<AggregateRow> finish() {
+        for(AggregateRow row : rows.values()) {
+            long duration = row.getDuration();
+            row.setDurationHours(((double)duration)/1000/60/60);
+            row.setDurationPerExec((double)duration/(double)row.getCount());
+            row.setDuration90thPercentile(percentile(row.getAllDurations(), 90));
 
-			long cpuTime = row.getCpuTime();
-			row.setCpuTimeHours(((double)cpuTime)/1000/60/60);
-			row.setCpuTimePerExec((double)cpuTime/(double)row.getCount());
+            long cpuTime = row.getCpuTime();
+            row.setCpuTimeHours(((double)cpuTime)/1000/60/60);
+            row.setCpuTimePerExec((double)cpuTime/(double)row.getCount());
 
-			long suspension = row.getSuspension();
-			row.setSuspensionPerExec((double)suspension/(double)row.getCount());
+            long suspension = row.getSuspension();
+            row.setSuspensionPerExec((double)suspension/(double)row.getCount());
 
-			long memory = row.getMemory();
-			row.setMemoryGb(((double)memory)/1024/1024/1024);
-			row.setMemoryPerExecMb(((double)memory/(double)row.getCount())/1024/1024);
-		}
+            long memory = row.getMemory();
+            row.setMemoryGb(((double)memory)/1024/1024/1024);
+            row.setMemoryPerExecMb(((double)memory/(double)row.getCount())/1024/1024);
+        }
         if(callsCount >= MAX_CALLS_FOR_AGGREGATE_TO_EXCEL || rows.size() >= MAX_DISTINCT_CALLS_FOR_AGGREGATE_TO_EXCEL) {
             List<AggregateRow> result = new ArrayList<>(rows.values());
             AggregateRow row = new AggregateRow();
@@ -76,12 +76,12 @@ public class Aggregator {
             return result;
         }
         return rows.values();
-	}
+    }
 
-	private int percentile(List<Integer> durations, double percentile) {
-		Collections.sort(durations);
-		int index = (int) Math.ceil((percentile / 100.0) * durations.size());
-		return durations.get(index-1);
-	}
+    private int percentile(List<Integer> durations, double percentile) {
+        Collections.sort(durations);
+        int index = (int) Math.ceil((percentile / 100.0) * durations.size());
+        return durations.get(index-1);
+    }
 
 }
