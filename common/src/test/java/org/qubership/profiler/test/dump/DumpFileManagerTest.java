@@ -261,7 +261,7 @@ public class DumpFileManagerTest {
             }
         };
 
-		try(DumpFileManager dumpFileManager = new DumpFileManager(
+        try(DumpFileManager dumpFileManager = new DumpFileManager(
                 0L /* no age limits */
                 , 50000L /* 20K */
                 , rootPath

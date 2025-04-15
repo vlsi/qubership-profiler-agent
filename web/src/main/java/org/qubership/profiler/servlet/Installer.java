@@ -99,7 +99,7 @@ public class Installer implements ServletContextListener {
     }
 
     @SuppressWarnings("resource")
-	private boolean backupFiles(ServletContext context, File home, Set<String> filesNotRequiringUpdate) {
+    private boolean backupFiles(ServletContext context, File home, Set<String> filesNotRequiringUpdate) {
         log.info("Performing backups of existing files");
         final InputStream installerZip = getClass().getResourceAsStream("/WEB-INF/installer/installer.zip");
         if (installerZip == null) {
@@ -119,7 +119,7 @@ public class Installer implements ServletContextListener {
                 if (buf.length < ze.getSize())
                     buf = new byte[len];
 
-				DataInputStreamEx dis = new DataInputStreamEx(zis);
+                DataInputStreamEx dis = new DataInputStreamEx(zis);
                 dis.readFully(buf, 0, len);
 
                 File dst = new File(home, ze.getName());
@@ -243,7 +243,7 @@ public class Installer implements ServletContextListener {
     }
 
     @SuppressWarnings("resource")
-	private boolean extractBinaries(ServletContext context, File home, Set<String> filesNotRequiringUpdate) {
+    private boolean extractBinaries(ServletContext context, File home, Set<String> filesNotRequiringUpdate) {
         log.info("Extracting new files");
         final InputStream installerZip = getClass().getResourceAsStream("/WEB-INF/installer/installer.zip");
         if (installerZip == null) {

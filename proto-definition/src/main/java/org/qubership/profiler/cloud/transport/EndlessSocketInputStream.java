@@ -8,9 +8,9 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * since sockets do not block when data in buffer is pending, this proxy is needed to avoid
  * Caused by: java.io.EOFException: Unexpected end of ZLIB input stream
- * 	at java.util.zip.InflaterInputStream.fill(InflaterInputStream.java:240)
- * 	at java.util.zip.InflaterInputStream.read(InflaterInputStream.java:158)
- * 	at java.util.zip.GZIPInputStream.read(GZIPInputStream.java:117)
+ *     at java.util.zip.InflaterInputStream.fill(InflaterInputStream.java:240)
+ *     at java.util.zip.InflaterInputStream.read(InflaterInputStream.java:158)
+ *     at java.util.zip.GZIPInputStream.read(GZIPInputStream.java:117)
  */
 public class EndlessSocketInputStream extends FilterInputStream {
     public static final long PARK_TIME_NANOS = 500000L;

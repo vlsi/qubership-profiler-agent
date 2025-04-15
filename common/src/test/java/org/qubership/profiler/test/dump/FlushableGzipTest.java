@@ -12,7 +12,7 @@ public class FlushableGzipTest {
     public void flushStoresIntermediateData() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
-		OutputStream gzip = new FlushableGZIPOutputStream(baos);
+        OutputStream gzip = new FlushableGZIPOutputStream(baos);
 
         final byte[] source = {1, 1, 1, 1, 1, 2, 2, 2, 2, 2};
 

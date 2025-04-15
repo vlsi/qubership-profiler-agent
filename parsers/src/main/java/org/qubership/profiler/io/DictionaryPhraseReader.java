@@ -1,7 +1,6 @@
 package org.qubership.profiler.io;
 
 import org.qubership.profiler.dump.IDataInputStreamEx;
-import org.qubership.profiler.io.IDictionaryStreamVisitor;
 
 import java.io.IOException;
 
