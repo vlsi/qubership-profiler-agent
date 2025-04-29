@@ -1,0 +1,26 @@
+name: bump version in gradle.properties
+inputs:
+  version:
+    required: true
+    description: new version
+
+runs:
+  using: composite
+  steps:
+    - name: update version
+      shell: bash
+      # language=bash
+      run: |
+        # Check if version needs to be updated
+        VERSION_LINE="profiler.version=${{ inputs.version }}"
+        if grep -q "^${VERSION_LINE}$" gradle.properties; then
+          echo "Version is already up to date"
+        else
+          # Update version in gradle.properties
+          sed -i "s/^profiler\.version=.*$/${VERSION_LINE}/" gradle.properties
+
+          # Commit and push changes
+          git add gradle.properties
+          git commit -m "chore: bump version to ${{ inputs.version }}" -m "[ci-skip]"
+          git push origin ${{ inputs.branch_name }}
+        fi

@@ -95,3 +95,27 @@ To build all components just checkout source code, navigate to checkout director
 ```bash
 mvn clean install
 ```
+
+## Releasing Qubership Profiler
+
+This project defines a [manual release workflow](.github/workflows/release.yaml).
+
+To trigger a release, go to the
+👉 [Actions tab → release.yaml](https://github.com/Netcracker/qubership-profiler-agent/actions/workflows/release.yaml) and run it manually.
+
+The release workflow uses [Release Drafter](https://github.com/release-drafter/release-drafter) to prepare
+release notes, and it uses labels to group the changes. If you need to adjust the notes, update the labels as needed.
+
+Here's the full step-by-step:
+1. Navigate to [Release Workflow](https://github.com/Netcracker/qubership-profiler-agent/actions/workflows/release.yaml)
+1. Click on `Run workflow`
+1. Select the branch name to be released
+1. By default, release workflow would pick the release version from `gradle.properties`, and you can overrided it if needed
+1. Click on `Run workflow`
+
+The release workflow would perform the following steps:
+1. Check if the release tag `v...` does not exist yet, otherwise it would terminate
+1. Bump the version in `gradle.properties` to the release version (e.g., if the manually provided version differs)
+1. Build and publish the artifacts to Central Portal
+1. Create the release tag and publish GitHub release
+1. Bump the version in `gradle.properties` to the next patch version
