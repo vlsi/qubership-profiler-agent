@@ -95,3 +95,21 @@ To build all components just checkout source code, navigate to checkout director
 ```bash
 mvn clean install
 ```
+
+## Releasing Qubership Profiler
+
+Release workflow uses [Release Drafter](https://github.com/release-drafter/release-drafter) to prepare
+the release notes, and it uses labels to group the changes. If you need to adjust the notes, update the labels as needed.
+
+* Navigate to [Release Workflow](actions/workflows/release.yaml)
+* Click on `Run workflow`
+* Select the branch name to be released
+* By default, release workflow would pick the release version from `gradle.properties`, and you can overrided it if needed
+* Click on `Run workflow`
+
+The release workflow would:
+* Check if the release tag `v...` does not exist yet, otherwise it would terminate
+* Bump the version in `gradle.properties` to the release version (e.g., if the manually provided version differs)
+* Build and publish the artifacts to Central Portal
+* Create the release tag and publish GitHub release
+* Bump the version in `gradle.properties` to the next patch version
