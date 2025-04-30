@@ -20,7 +20,7 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 // This is the name of a current project
 // Note: it cannot be inferred from the directory name as developer might clone the project to folder with any name
-rootProject.name = "qubership-profiler-agent"
+rootProject.name = "qubership-profiler"
 
 includeBuild("build-logic")
 

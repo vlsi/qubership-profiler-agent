@@ -4,7 +4,7 @@ plugins {
     id("build-logic.publish-to-central")
 }
 
-val archivesName = "qubership-profiler-$name"
+val archivesName = "${isolated.rootProject.name}${path.replace(':', '-')}"
 base.archivesName.set(archivesName)
 
 publishing {
