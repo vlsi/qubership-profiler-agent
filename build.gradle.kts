@@ -9,7 +9,6 @@ plugins {
 }
 
 ide {
-    // TODO: set copyright to PostgreSQL Global Development Group
     ideaInstructionsUri =
         uri("https://github.com/Netcracker/qubership-profiler-agent")
     doNotDetectFrameworks("android", "jruby")
