@@ -81,19 +81,16 @@ Queues:
 
 ### Local build
 
-Before run build ESC locally you need check availability and install the following tools:
+Build requirements:
 
-* OpenJDK 11.x (another JDK version can't compile ESC) - [https://jdk.java.net/archive/](https://jdk.java.net/archive/)
-* Maven 3.8.x - [https://maven.apache.org/download.cgi](https://maven.apache.org/download.cgi)
+* Java 17
 
-During build Maven also will automatically download and use the following tools:
-
-* `Go` - to build `prf-tool` module
-
-To build all components just checkout source code, navigate to checkout directory and run maven build:
+To build all the artifacts and execute tests, run the following:
 
 ```bash
-mvn clean install
+git clone https://github.com/Netcracker/qubership-profiler-agent.git
+./gradlew build # builds everything
+./gradlew tasks # lists available tasks
 ```
 
 ## Releasing Qubership Profiler
