@@ -32,12 +32,12 @@ jobs:
           java-version: 17
           server-id: central
       - name: Test
-        uses: burrunan/gradle-cache-action@v1
+        uses: burrunan/gradle-cache-action@d6eb8c67115239ea198afc5e4e727e634417f992
         with:
           multi-cache-enabled: false
           arguments: --scan --no-parallel build
       - name: Publish snapshots
-        uses: burrunan/gradle-cache-action@v1
+        uses: burrunan/gradle-cache-action@d6eb8c67115239ea198afc5e4e727e634417f992
         if: ${{ env.CENTRAL_PORTAL_USERNAME != '' }}
         with:
           arguments: publishAllPublicationsToCentralSnapshotsRepository
