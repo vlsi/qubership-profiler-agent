@@ -1,3 +1,5 @@
+import java.time.Duration
+
 plugins {
     id("build-logic.build-params")
     id("com.gradleup.nmcp.aggregation")
@@ -10,5 +12,6 @@ nmcpAggregation {
         publishingType = buildParameters.centralPortalPublishingType.name
         // WA for https://github.com/GradleUp/nmcp/issues/52
         publicationName = provider { "${project.name}-${project.version}.zip" }
+        verificationTimeout = Duration.ofMinutes(buildParameters.centralPortalPublishingTimeout.toLong())
     }
 }
