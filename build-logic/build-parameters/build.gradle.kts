@@ -17,6 +17,10 @@ buildParameters {
         defaultValue.set("AUTOMATIC")
         description.set("Configures if the deployment to Central Portal should be automatically published or if the user should manually publish it")
     }
+    integer("centralPortalPublishingTimeout") {
+        defaultValue.set(60)
+        description.set("Configures the timeout (in minutes) for the automatic deployment to publish at the Central Portal")
+    }
     bool("useInMemoryPgpKeys") {
         defaultValue.set(true)
         description.set("Configures PGP signing to use in-memory keys for signing (configure with SIGNING_PGP_PRIVATE_KEY, and SIGNING_PGP_PASSPHRASE environment variables)")
