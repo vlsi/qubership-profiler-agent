@@ -101,7 +101,7 @@ jobs:
           # language=properties
           properties: |
             release=true
-            centralPortalPublishingType=USER_MANAGED
+            centralPortalPublishingType=AUTOMATIC
         env:
           CENTRAL_PORTAL_USERNAME: ${{ secrets.MAVEN_USER }}
           CENTRAL_PORTAL_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
