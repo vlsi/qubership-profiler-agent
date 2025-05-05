@@ -28,6 +28,7 @@ dependencies {
         api("org.hdrhistogram:HdrHistogram:2.1.11")
         api("org.openjdk.jmc:common:8.0.1")
         api("org.openjdk.jmc:flightrecorder:8.0.1")
+        api("org.slf4j:slf4j-api:1.7.36")
         api("stax:stax-api:1.0.1")
     }
 }
