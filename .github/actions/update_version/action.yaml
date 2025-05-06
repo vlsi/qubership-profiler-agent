@@ -1,26 +1,86 @@
 name: bump version in gradle.properties
+description: updates the version in gradle.properties, the action requires permissions contents write and pull-requests write
 inputs:
   version:
     required: true
     description: new version
+  automerge-timeout:
+    required: false
+    description: timeout (seconds) to wait for the PR to merge automatically
+    default: '1200'
 
 runs:
   using: composite
   steps:
-    - name: update version
+    - name: check if update is needed
+      id: check_version
       shell: bash
       # language=bash
       run: |
-        # Check if version needs to be updated
+        # Check if the version needs to be updated to ${{ inputs.version }}
         VERSION_LINE="profiler.version=${{ inputs.version }}"
         if grep -q "^${VERSION_LINE}$" gradle.properties; then
           echo "Version is already up to date"
+          echo "update_required=false" >> $GITHUB_OUTPUT
         else
-          # Update version in gradle.properties
-          sed -i "s/^profiler\.version=.*$/${VERSION_LINE}/" gradle.properties
-
-          # Commit and push changes
-          git add gradle.properties
-          git commit -m "chore: bump version to ${{ inputs.version }}" -m "[ci-skip]"
-          git push origin ${{ inputs.branch_name }}
+          echo "update_required=true" >> $GITHUB_OUTPUT
         fi
+
+    - name: Update the version
+      if: ${{ steps.check_version.outputs.update_required == 'true' }}
+      id: update_version
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_BRANCH: bot/update-version-${{ inputs.version }}
+      # language=bash
+      run: |
+        # Update version in gradle.properties to ${{ inputs.version }}
+        set -x
+        sed -i "s/^profiler\.version=.*$/${VERSION_LINE}/" gradle.properties
+
+        # Commit and push changes
+        git checkout -b "$PR_BRANCH"
+        git add gradle.properties
+        git commit -m "chore: bump version to ${{ inputs.version }}" -m "[ci-skip]"
+        git push origin "$PR_BRANCH"
+
+        # Create the pull request
+        PR_URL=$(gh pr create --title "chore: bump version to ${{ inputs.version }}" \
+          --body "Auto-generated version bump" \
+          --head "$PR_BRANCH" \
+          --base "${{ inputs.branch_name }}" \
+          --label chore \
+          --label automerge)
+
+        # Enable auto-merge on the pull request
+        gh pr merge --auto --rebase --delete-branch "$PR_URL"
+
+        # Wait for PR to auto-merge
+        sleep 5 # allow the PR to automerge
+        timeout_seconds=${{ inputs.automerge-timeout }}
+        interval_seconds=10  # Check every 10 seconds
+
+        deadline=$(( $(date +%s) + timeout_seconds ))
+
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          MERGED_AT=$(gh pr view "$PR_NUMBER" --json mergedAt --jq '.mergedAt')
+          if [ "$MERGED_AT" != "null" ]; then
+            echo "✅ PR $PR_URL has been merged at $MERGED_AT"
+            exit 0
+          fi
+          echo "⏳ Waiting for PR $PR_URL to merge..."
+          sleep "$interval_seconds"
+        done
+
+        echo "❌ Timeout reached. PR $PR_URL was not merged within $timeout_seconds seconds."
+        exit 1
+
+    - name: Cleanup temporary branch
+      shell: bash
+      if: ${{ always() }}
+      # language=bash
+      env:
+        PR_BRANCH: bot/update-version-${{ inputs.version }}
+      run: |
+        git push origin --delete "$PR_BRANCH" || echo "Temporary branch for version bump $PR_BRANCH was not found, so there's no need to delete it"
