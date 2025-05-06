@@ -80,9 +80,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - uses: actions/create-github-app-token@v1
+        id: app_token
+        with:
+          app-id: ${{ vars.GH_BUMP_VERSION_APP_ID }}
+          private-key: ${{ secrets.GH_BUMP_VERSION_APP_KEY }}
+
       - name: Update version in gradle.properties to ${{ steps.release_version.outputs.version }}
         uses: ./.github/actions/update_version
         with:
+          token: ${{ steps.app_token.outputs.token }}
           version: ${{ steps.release_version.outputs.version }}
 
       - name: Set up JDK 17
@@ -132,4 +139,5 @@ jobs:
       - name: Update version in gradle.properties to ${{ steps.next_version.outputs.version }}
         uses: ./.github/actions/update_version
         with:
+          token: ${{ steps.app_token.outputs.token }}
           version: ${{ steps.next_version.outputs.version }}
