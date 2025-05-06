@@ -16,9 +16,8 @@ jobs:
     permissions:
       # write permission is required to create a GitHub release
       contents: write
-      # write permission is required for autolabeler
-      # otherwise, read permission is required at least
-      pull-requests: read
+      # write permission is required creating a pull request with version bump
+      pull-requests: write
     steps:
       - name: Validate input parameters
         # language=bash
