@@ -91,7 +91,7 @@ public class DataFlowTitleFormatter extends AbstractTitleFormatter {
             DFSession session = new DFSession();
             for (JsonToken token = parser.nextToken(); token != null; token = parser.nextToken()) {
                 if (token == JsonToken.VALUE_STRING) {
-                    switch (parser.getCurrentName()) {
+                    switch (parser.currentName()) {
                         case "t":
                             session.t = parser.getText();
                             break;
