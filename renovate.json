@@ -9,6 +9,10 @@
   "schedule": [
     "every 3 weeks on Monday"
   ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "plugins/*/build.gradle.kts"
+  ],
   "packageRules": [
     {
       "groupName": "checkerframework",
