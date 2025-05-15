@@ -84,7 +84,7 @@ jobs:
         id: app_token
         with:
           app-id: ${{ vars.GH_BUMP_VERSION_APP_ID }}
-          private-key: ${{ secrets.GH_BUMP_VERSION_APP_KEY }}
+          private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
 
       - name: Update version in gradle.properties to ${{ steps.release_version.outputs.version }}
         uses: ./.github/actions/update_version
