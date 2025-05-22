@@ -68,7 +68,10 @@ dependencies {
 val installerZip by tasks.registering(Zip::class) {
     from(sourceSets.main.get().resources)
     into("lib") {
-        from(installerZipFiles)
+        from(installerZipFiles) {
+            // Remove "-$version" suffix from the jar names as the profiler does not expect files with versions
+            rename("""-\d+\.\d+(?:.(?!jar$))+""", "")
+        }
     }
     // TODO: do we really need extracting the config files? Could the agent look into the jars?
     into(".") {

@@ -75,7 +75,6 @@ public class ConfigurationImpl implements ConfigurationSPI {
     public ConfigurationImpl(String configFile) throws ParserConfigurationException, IOException, SAXException {
         //noinspection unchecked
         this.enhancerPlugins = (Map) Bootstrap.getPlugin(EnhancerRegistryPlugin.class).getEnhancersMap();
-        log.debug("Loading configuration from {}", configFile);
         this.configFile = configFile;
         parseFile(configFile);
         String verifyClassesProp = PropertyFacadeBoot.getProperty(Profiler.class.getName() + ".verify-classes", null);
@@ -93,6 +92,7 @@ public class ConfigurationImpl implements ConfigurationSPI {
     }
 
     private void parseFile(File file) throws ParserConfigurationException, IOException, SAXException {
+        log.debug("Loading configuration from {}", file.getAbsolutePath());
         final String fileName = file.getName();
         String overrideFileName;
         if ("super".equalsIgnoreCase(fileName)) {
