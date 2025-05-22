@@ -69,6 +69,9 @@ val generateInjectorClassesDir = layout.buildDirectory.dir("generated-injector-c
 
 val compileInjector by tasks.registering(JavaCompile::class) {
     dependsOn(generateInjector)
+    buildParameters.buildJdk?.let {
+        javaCompiler.set(javaToolchains.compilerFor(it))
+    }
     source(generateInjectorDir)
     classpath = injectorCompileClasspath
     destinationDirectory.set(generateInjectorClassesDir)

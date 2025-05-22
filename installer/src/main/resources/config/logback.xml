@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<configuration scan="true" scanPeriod="30 seconds">
+  <!--<appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">-->
+    <!--<file>logs/execution-statistics-collector-${org.qubership.profier.serverName}.log</file>-->
+    <!--<Append>true</Append>-->
+    <!--<rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">-->
+      <!--<FileNamePattern>logs/execution-statistics-collector-${org.qubership.profier.serverName}.log.%i.zip</FileNamePattern>-->
+      <!--<MinIndex>1</MinIndex>-->
+      <!--<MaxIndex>5</MaxIndex>-->
+    <!--</rollingPolicy>-->
+    <!--<triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">-->
+      <!--<MaxFileSize>5MB</MaxFileSize>-->
+    <!--</triggeringPolicy>-->
+    <!--<layout class="ch.qos.logback.classic.PatternLayout">-->
+      <!--<Pattern>%date %relative %level [%thread] %logger{10} %msg%n</Pattern>-->
+    <!--</layout>-->
+  <!--</appender>-->
+
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <layout class="ch.qos.logback.classic.PatternLayout">
+      <Pattern>%date %relative %logger{10} %msg%n</Pattern>
+    </layout>
+  </appender>
+
+  <root>
+    <level value="info" />
+    <appender-ref ref="STDOUT" />
+    <!--<appender-ref ref="FILE" />-->
+  </root>
+</configuration>

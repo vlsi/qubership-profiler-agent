@@ -18,4 +18,7 @@
             <do-not-profile/>
         </rule>
     </ruleset>
+    <ruleset>
+        <rule src="_config.filters.xml"/>
+    </ruleset>
 </profiler-configuration>

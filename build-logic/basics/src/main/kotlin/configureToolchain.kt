@@ -1,4 +1,5 @@
 import org.gradle.api.provider.Provider
+import org.gradle.jvm.toolchain.JavaCompiler
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaLauncher
 import org.gradle.jvm.toolchain.JavaToolchainService
@@ -7,6 +8,10 @@ import org.gradle.jvm.toolchain.JvmImplementation
 import org.gradle.jvm.toolchain.JvmVendorSpec
 
 fun JavaToolchainService.launcherFor(jdk: ToolchainProperties): Provider<JavaLauncher> = launcherFor {
+    configureToolchain(jdk)
+}
+
+fun JavaToolchainService.compilerFor(jdk: ToolchainProperties): Provider<JavaCompiler> = compilerFor {
     configureToolchain(jdk)
 }
 
