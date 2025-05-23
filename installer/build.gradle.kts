@@ -88,3 +88,17 @@ val installerZip by tasks.registering(Zip::class) {
         )
     }
 }
+
+// Publish installer.zip to Maven repository so users could consume
+val javaagent = configurations.consumable("javaagent") {
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, "javaagent")
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, buildParameters.targetJavaVersion)
+    }
+    outgoing {
+        artifact(installerZip)
+    }
+}
+
+(components["java"] as AdhocComponentWithVariants).addVariantsFromConfiguration(javaagent.get()) {
+}
