@@ -39,6 +39,12 @@
       ]
     },
     {
+      "groupName": "org.openjdk.jmc",
+      "matchPackageNames": [
+        "org.openjdk.jmc{/,}**"
+      ]
+    },
+    {
       "description": "logback 1.3.0 requires slf4j-api 2.0+, and we want using slf4j 1.7",
       "groupName": "logback",
       "allowedVersions": "< 1.3.0",
