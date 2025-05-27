@@ -1,3 +1,9 @@
-Executes tests with `-javaagent:.../qubership-profiler-agent.jar`, so it enables to test the following:
-* `installer.zip` contents: build system extracts the profiler from `installer.zip`
-* configuration files and the jar files in `installer.zip`: the profiler activates with `-javaagent:..`, so the configuration and the classes load like they would do with regular applications
+# Installer ZIP Test
+
+This module verifies the functionality of the `installer.zip` distribution by running tests with the
+`-javaagent:.../qubership-profiler-agent.jar` parameter. It validates:
+
+- Proper extraction and packaging of profiler components from `installer.zip`
+- Correct loading of configuration files and jar files in a production-like environment with Java agent enabled
+
+The tests ensure the profiler works correctly when loaded as a Java agent, simulating real application usage.
