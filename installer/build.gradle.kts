@@ -1,10 +1,75 @@
 plugins {
     id("build-logic.java-published-library")
+    id("build-logic.test-junit5")
 }
 
 // https://github.com/gradle/gradle/pull/16627
 private inline fun <reified T : Named> AttributeContainer.attribute(attr: Attribute<T>, value: String) =
     attribute(attr, objects.named<T>(value))
+
+val testApp by sourceSets.creating
+
+val testAppJar by tasks.registering(Jar::class) {
+    group = LifecycleBasePlugin.BUILD_GROUP
+    description = "Creates a jar file for a small application for the profiler testing purposes"
+    archiveClassifier = "test-app"
+    from(testApp.output)
+    manifest {
+        attributes["Main-Class"] = "org.qubership.profiler.testapp.Main"
+    }
+}
+
+// Note: the repository should be cloned under this path externally
+// GitHub Actions uses actions/checkout to clone the repository
+// For local testing, clone the repo manually
+val baseImageRepo = layout.buildDirectory.dir("git/qubership-core-base-images")
+
+val cloneBaseImageRepoIfNeeded by tasks.registering(Exec::class) {
+    group = LifecycleBasePlugin.BUILD_GROUP
+    description = "Clones qubership-core-base-images repository if it does not exist locally"
+    onlyIf { !baseImageRepo.get().dir(".git").asFile.exists() }
+    executable = "git"
+    args("clone")
+    args("--depth", "50")
+    args("--branch", "main")
+    args("https://github.com/Netcracker/qubership-core-base-images.git")
+    workingDir(baseImageRepo.get().asFile.parentFile)
+    outputs.dir(baseImageRepo)
+}
+
+val copyInstallerZipToDockerArtifacts by tasks.registering(Copy::class) {
+    description =
+        "Copies profiler agent distribution to the Docker build directory (Docker can't use files outside of its build directory)"
+    dependsOn(cloneBaseImageRepoIfNeeded)
+    into(baseImageRepo.map { it.dir("local-artifacts") })
+    from(installerZip)
+}
+
+val buildBaseImage by tasks.registering(Exec::class) {
+    group = LifecycleBasePlugin.BUILD_GROUP
+    description = "Builds java-base image with the latest profiler agent"
+    dependsOn(cloneBaseImageRepoIfNeeded, copyInstallerZipToDockerArtifacts)
+    executable = "docker"
+    workingDir(baseImageRepo)
+    args("build")
+    args("--file", "Dockerfile.java-alpine")
+    args("-t", "qubership/qubership-core-base-image:profiler-latest")
+    args("--build-arg", "QUBERSHIP_PROFILER_ARTIFACT_SOURCE=local")
+    args("--build-arg", "QUBERSHIP_PROFILER_VERSION=$version")
+    args(".")
+}
+
+tasks.test {
+    dependsOn(buildBaseImage, testAppJar)
+    jvmArgumentProviders.add(
+        CommandLineArgumentProvider {
+            listOf(
+                "-Dqubership.profiler.test.java-base.root=${baseImageRepo.get().asFile.absolutePath}",
+                "-Dqubership.profiler.testapp.jar=${testAppJar.get().archiveFile.get().asFile.absolutePath}",
+            )
+        }
+    )
+}
 
 val installerZipElements by configurations.dependencyScope("installerZipElements") {
 }
@@ -22,6 +87,10 @@ val installerZipFiles = configurations.resolvable("installerZipFiles") {
 }
 
 dependencies {
+    testImplementation("org.testcontainers:junit-jupiter")
+    testRuntimeOnly("ch.qos.logback:logback-classic") {
+        because("testcontainers uses slf4j for logging")
+    }
     installerZipElements(projects.boot)
     installerZipElements(projects.agent)
     installerZipElements(projects.runtime) {

@@ -6,7 +6,7 @@ plugins {
 
 autostyle {
     kotlinGradle {
-        ktlint()
+        ktlint("0.40.0")
         trimTrailingWhitespace()
         endWithNewline()
     }

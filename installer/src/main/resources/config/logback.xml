@@ -23,7 +23,7 @@
   </appender>
 
   <root>
-    <level value="${org.qubership.profier.log.root_level:-info}" />
+    <level value="${org.qubership.profiler.log.root_level:-info}" />
     <appender-ref ref="STDOUT" />
     <!--<appender-ref ref="FILE" />-->
   </root>

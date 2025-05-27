@@ -8,18 +8,10 @@ plugins {
 }
 
 dependencies {
-    testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter-api")
     testImplementation("org.junit.jupiter:junit-jupiter-params")
-    testImplementation("org.hamcrest:hamcrest:3.0")
-    testImplementation("org.hamcrest:hamcrest-junit:2.0.0.0")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    if ((project.findProperty("junit4") ?: "true").toString().toBoolean()) {
-        // Allow projects to opt-out of junit dependency, so they can be JUnit5-only
-        testImplementation("junit:junit:4.13.2")
-        testRuntimeOnly("org.junit.vintage:junit-vintage-engine")
-    }
 }
 
 tasks.configureEach<Test> {

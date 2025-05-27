@@ -58,9 +58,11 @@ tasks.war {
         attributes["Web-ContextPath"] = "profiler"
     }
     from(sourceSets["launcher"].output)
-    from(configurations["launcherRuntimeClasspath"].elements.map { jars ->
-        jars.map { zipTree(it) }
-    }) {
+    from(
+        configurations["launcherRuntimeClasspath"].elements.map { jars ->
+            jars.map { zipTree(it) }
+        }
+    ) {
         duplicatesStrategy = DuplicatesStrategy.WARN
         // Tomcat jars are signed, and we can't reuse the signatures
         exclude("**/*.SF")
