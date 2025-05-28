@@ -40,12 +40,7 @@ tasks.configureEach<KotlinJvmCompile> {
                 else -> it.toString()
             }
         }
-        // jdk-release requires Java 9+
-        buildParameters.buildJdkVersion
-            .takeIf { it > 8 }
-            ?.let {
-                freeCompilerArgs.add("-Xjdk-release=$jdkRelease")
-            }
+        freeCompilerArgs.add("-Xjdk-release=$jdkRelease")
         jvmTarget = JvmTarget.fromTarget(jdkRelease)
     }
 }
