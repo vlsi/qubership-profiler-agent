@@ -49,7 +49,7 @@
       "groupName": "Tomcat",
       "allowedVersions": "< 10",
       "matchPackageNames": [
-        "org.apache.tomcat{/,}**"
+        "org.apache.tomcat.embed{/,}**"
       ]
     },
     {
