@@ -54,6 +54,22 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Check if artifact exists in Central Portal
+        id: published_to_central
+        shell: bash
+        # language=bash
+        run: |
+          VERSION="${{ steps.release_version.outputs.version }}"
+          # Check if the artifact exists in Central Portal
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://repo1.maven.org/maven2/org/qubership/profiler/qubership-profiler-agent/${VERSION}")
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "Profiler $VERSION does not exist in Central Portal"
+            echo "value=false" >> $GITHUB_OUTPUT
+          else
+            echo "Profiler $VERSION already exists in Central Portal"
+            echo "value=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check if tag exists
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
         env:
@@ -102,6 +118,7 @@ jobs:
       # Publish to Central before generating a tag, so we don't need to drop the tag if
       # Central deployment fails.
       - name: Publish to Central Portal
+        if: ${{ steps.published_to_central.outputs.value == 'false' }}
         uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3
         with:
           arguments: publishAggregationToCentralPortal
