@@ -1,5 +1,4 @@
 import com.github.autostyle.gradle.AutostyleTask
-import de.thetaphi.forbiddenapis.gradle.CheckForbiddenApis
 import org.gradle.kotlin.dsl.apply
 import org.gradle.language.base.plugins.LifecycleBasePlugin
 
@@ -16,12 +15,7 @@ if (!buildParameters.skipAutostyle) {
     }
 }
 
-val skipCheckstyle = buildParameters.skipCheckstyle || run {
-    logger.info("Checkstyle requires Java 11+")
-    buildParameters.buildJdkVersion < 11
-}
-
-if (!skipCheckstyle) {
+if (!buildParameters.skipCheckstyle) {
     apply(plugin = "build-logic.checkstyle")
 }
 
@@ -45,14 +39,14 @@ plugins.withId("java-base") {
     }
 }
 
-if (!buildParameters.skipAutostyle || !skipCheckstyle || !buildParameters.skipForbiddenApis) {
+if (!buildParameters.skipAutostyle || !buildParameters.skipCheckstyle || !buildParameters.skipForbiddenApis) {
     tasks.register("style") {
         group = LifecycleBasePlugin.VERIFICATION_GROUP
         description = "Formats code (license header, import order, whitespace at end of line, ...) and executes Checkstyle verifications"
         if (!buildParameters.skipAutostyle) {
             dependsOn("autostyleApply")
         }
-        if (!skipCheckstyle) {
+        if (!buildParameters.skipCheckstyle) {
             dependsOn("checkstyleAll")
         }
         if (!buildParameters.skipForbiddenApis) {
@@ -65,7 +59,7 @@ if (!buildParameters.skipAutostyle || !skipCheckstyle || !buildParameters.skipFo
         if (!buildParameters.skipAutostyle) {
             dependsOn("autostyleCheck")
         }
-        if (!skipCheckstyle) {
+        if (!buildParameters.skipCheckstyle) {
             dependsOn("checkstyleAll")
         }
         if (!buildParameters.skipForbiddenApis) {
