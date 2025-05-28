@@ -12,7 +12,7 @@ sourceSets {
 }
 
 // https://github.com/gradle/gradle/pull/16627
-inline fun <reified T : Named> AttributeContainer.attribute(attr: Attribute<T>, value: String) =
+private inline fun <reified T : Named> AttributeContainer.attribute(attr: Attribute<T>, value: String) =
     attribute(attr, objects.named<T>(value))
 
 val jsResourcesElements = configurations.dependencyScope("jsResourcesElements") {
