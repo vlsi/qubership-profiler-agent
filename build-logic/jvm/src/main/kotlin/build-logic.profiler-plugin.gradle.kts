@@ -45,6 +45,9 @@ dependencies {
         injectorCompileClasspath(platform(project(":bom-thirdparty")))
     }
     implementation("org.slf4j:slf4j-api")
+    findProject(":test-config")?.let {
+        generateInjectorClasspath(it)
+    }
     injectorCompileClasspath("org.ow2.asm:asm-commons")
     injectorCompileClasspath("org.ow2.asm:asm-util")
 }
