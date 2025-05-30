@@ -1,6 +1,6 @@
 plugins {
     id("build-logic.java-published-library")
-    id("build-logic.test-testng")
+    id("build-logic.test-junit5")
 }
 
 dependencies {
@@ -12,6 +12,5 @@ dependencies {
     implementation("org.openjdk.jmc:common")
     implementation("org.openjdk.jmc:flightrecorder")
     implementation("org.springframework:spring-context")
-    testImplementation("junit:junit")
     testImplementation("org.mockito:mockito-core")
 }

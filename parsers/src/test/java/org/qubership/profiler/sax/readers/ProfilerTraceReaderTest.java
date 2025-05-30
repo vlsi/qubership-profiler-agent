@@ -1,5 +1,7 @@
 package org.qubership.profiler.sax.readers;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import org.qubership.profiler.dump.DataInputStreamEx;
 import org.qubership.profiler.sax.raw.ClobReaderFlyweight;
 import org.qubership.profiler.sax.raw.ClobReaderFlyweightFile;
@@ -12,8 +14,7 @@ import org.qubership.profiler.sax.readers.ProfilerTraceReader.ClobReadTypes;
 import org.qubership.profiler.sax.values.ClobValue;
 import org.qubership.profiler.sax.values.ValueHolder;
 
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.util.ResourceUtils;
 
@@ -24,7 +25,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
-
 
 class MockTreeTraceVisitor extends TreeTraceVisitor {
     public static ArrayList<HashMap<String, String>> visitList;
@@ -105,10 +105,10 @@ public class ProfilerTraceReaderTest {
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.LAST_ONLY, ClobReadTypes.ALL_VALUES);
         List<ClobValue> clobArray = new ArrayList<ClobValue>(clobs);
         ClobValue clob = clobArray.get(0);
-        Assert.assertEquals(1, clobArray.size());
-        Assert.assertEquals("xml", clob.folder);
-        Assert.assertEquals(513630, clob.offset);
-        Assert.assertEquals(null, clob.value);
+        assertEquals(1, clobArray.size());
+        assertEquals("xml", clob.folder);
+        assertEquals(513630, clob.offset);
+        assertEquals(null, clob.value);
     }
 
     @Test
@@ -117,15 +117,15 @@ public class ProfilerTraceReaderTest {
         File file = ResourceUtils.getFile("classpath:storage/test_trace/trace/000001");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.FIRST_AND_LAST, ClobReadTypes.ALL_VALUES);
         List<ClobValue> clobArray = new ArrayList<ClobValue>(clobs);
-        Assert.assertEquals(2, clobArray.size());
+        assertEquals(2, clobArray.size());
         ClobValue clob = clobArray.get(0);
-        Assert.assertEquals("sql", clob.folder);
-        Assert.assertEquals(0, clob.offset);
-        Assert.assertEquals(null, clob.value);
+        assertEquals("sql", clob.folder);
+        assertEquals(0, clob.offset);
+        assertEquals(null, clob.value);
         clob = clobArray.get(1);
-        Assert.assertEquals("xml", clob.folder);
-        Assert.assertEquals(513630, clob.offset);
-        Assert.assertEquals(null, clob.value);
+        assertEquals("xml", clob.folder);
+        assertEquals(513630, clob.offset);
+        assertEquals(null, clob.value);
 
     }
 
@@ -134,18 +134,18 @@ public class ProfilerTraceReaderTest {
         File file = ResourceUtils.getFile("classpath:storage/test_trace/trace/000001");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.FIRST_ONLY, ClobReadTypes.ALL_VALUES);
         List<ClobValue> clobArray = new ArrayList<ClobValue>(clobs);
-        Assert.assertEquals(1, clobArray.size());
+        assertEquals(1, clobArray.size());
         ClobValue clob = clobArray.get(0);
-        Assert.assertEquals("sql", clob.folder);
-        Assert.assertEquals(0, clob.offset);
-        Assert.assertEquals(null, clob.value);
+        assertEquals("sql", clob.folder);
+        assertEquals(0, clob.offset);
+        assertEquals(null, clob.value);
     }
 
     @Test
     public void testAllClobs() throws IOException {
         File file = ResourceUtils.getFile("classpath:storage/test_trace");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.ALL_VALUES, ClobReadTypes.ALL_VALUES);
-        Assert.assertEquals(0, clobs.size());
+        assertEquals(0, clobs.size());
     }
 
     @Test
@@ -163,9 +163,9 @@ public class ProfilerTraceReaderTest {
 
         reader.read(treeRowids);
         String expected = "[{isReactorFrame=0, currentOperation=0, prevOperation=0, reactStartTime=0, methodId=174, isReactorEndPoint=0, emit=0, reactDuration=0, blockingOperator=0}, {isReactorFrame=0, currentOperation=0, prevOperation=0, reactStartTime=0, methodId=174, isReactorEndPoint=0, emit=0, reactDuration=0, blockingOperator=0}, {isReactorFrame=0, currentOperation=0, prevOperation=0, reactStartTime=0, methodId=174, isReactorEndPoint=0, emit=0, reactDuration=0, blockingOperator=0}]";
-        Assert.assertEquals(expected, MockTreeTraceVisitor.visitList.toString());
-        Assert.assertTrue(result.visitExitVisited);
-        Assert.assertFalse(result.visitLabelVisited);
+        assertEquals(expected, MockTreeTraceVisitor.visitList.toString());
+        assertTrue(result.visitExitVisited);
+        assertFalse(result.visitLabelVisited);
     }
 
     @Test
@@ -183,9 +183,9 @@ public class ProfilerTraceReaderTest {
 
         reader.read(treeRowids);
         String expected = "[{isReactorFrame=0, currentOperation=0, prevOperation=0, reactStartTime=0, methodId=173, isReactorEndPoint=0, emit=0, reactDuration=0, blockingOperator=0}, {isReactorFrame=0, currentOperation=0, prevOperation=0, reactStartTime=0, methodId=173, isReactorEndPoint=0, emit=0, reactDuration=0, blockingOperator=0}]";
-        Assert.assertEquals(expected, MockTreeTraceVisitor.visitList.toString());
-        Assert.assertTrue(result.visitExitVisited);
-        Assert.assertFalse(result.visitLabelVisited);
+        assertEquals(expected, MockTreeTraceVisitor.visitList.toString());
+        assertTrue(result.visitExitVisited);
+        assertFalse(result.visitLabelVisited);
     }
 
     @Test
@@ -203,8 +203,8 @@ public class ProfilerTraceReaderTest {
 
         reader.read(treeRowids);
         String expected = "[{isReactorFrame=0, currentOperation=0, prevOperation=0, reactStartTime=0, methodId=593, isReactorEndPoint=0, emit=0, reactDuration=0, blockingOperator=0}]";
-        Assert.assertEquals(expected, MockTreeTraceVisitor.visitList.toString());
-        Assert.assertTrue(result.visitExitVisited);
-        Assert.assertFalse(result.visitLabelVisited);
+        assertEquals(expected, MockTreeTraceVisitor.visitList.toString());
+        assertTrue(result.visitExitVisited);
+        assertFalse(result.visitLabelVisited);
     }
 }

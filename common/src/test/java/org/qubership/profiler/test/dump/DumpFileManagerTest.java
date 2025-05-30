@@ -1,25 +1,25 @@
 package org.qubership.profiler.test.dump;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import org.qubership.profiler.dump.*;
 import org.qubership.profiler.io.listener.FileRotatedListener;
 
 import mockit.Expectations;
 import mockit.internal.reflection.MethodReflection;
-import org.apache.commons.io.FileUtils;
-import org.testng.Assert;
-import org.testng.annotations.AfterSuite;
-import org.testng.annotations.BeforeSuite;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.*;
 import java.net.URISyntaxException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.NumberFormat;
 import java.util.*;
 
 public class DumpFileManagerTest {
 
+    @TempDir
     private Path rootDir;
     private String rootPath;
     private static final NumberFormat NUMBER_FORMAT = NumberFormat.getIntegerInstance();
@@ -29,16 +29,9 @@ public class DumpFileManagerTest {
         NUMBER_FORMAT.setMinimumIntegerDigits(6);
     }
 
-    @BeforeSuite
+    @BeforeEach
     public void prepareDumpRoot() throws IOException {
-        rootDir = Files.createTempDirectory("dumpRoot");
         rootPath = rootDir.toString();
-
-    }
-
-    @AfterSuite
-    public void cleanupDumpRoot() throws IOException {
-        FileUtils.deleteDirectory(rootDir.toFile());
     }
 
     @Test
@@ -49,7 +42,7 @@ public class DumpFileManagerTest {
         }
         try (DumpFileLog log = new DumpFileLog(flist)) {
             Queue<DumpFile> dumpFiles = log.parseIfPresent();
-            Assert.assertNull(dumpFiles, "dumpQueue should be null since the file is corrupted");
+            assertNull(dumpFiles, "dumpQueue should be null since the file is corrupted");
         }
     }
 

@@ -6,7 +6,7 @@ import org.qubership.profiler.test.util.Randomizer;
 import mockit.FullVerifications;
 import mockit.Mocked;
 import mockit.VerificationsInOrder;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 public class ExecuteMethodTest extends InitTransformers {
     @Mocked

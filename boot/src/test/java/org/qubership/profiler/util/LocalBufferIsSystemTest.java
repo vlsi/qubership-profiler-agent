@@ -7,20 +7,20 @@ import org.qubership.profiler.agent.ProfilerData;
 
 import mockit.Mocked;
 import mockit.Tested;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 public class LocalBufferIsSystemTest {
     @Tested
     @Mocked
-    final ProfilerData unused = null;
+    final static ProfilerData unused = null;
 
     @Tested
     @Mocked()
-    final Profiler unused2 = null;
+    final static Profiler unused2 = null;
 
-    @BeforeClass
-    public void setupBufferSize() {
+    @BeforeAll
+    public static void setupBufferSize() {
         org.qubership.profiler.util.LocalBufferTest.setupBufferSize();
     }
 

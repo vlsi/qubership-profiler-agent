@@ -42,6 +42,7 @@ include("profiler")
 include("profiler-ui")
 include("proto-definition")
 include("runtime")
+include("test-config")
 include("war-lib")
 include("web")
 

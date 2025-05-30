@@ -1,7 +1,8 @@
 package org.qubership.profiler.chart;
 
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.StringWriter;
@@ -12,9 +13,9 @@ public class StackedChartTest {
         StackedChart c = new StackedChart("empty");
         StringWriter sw = new StringWriter();
         c.toJS(sw);
-        Assert.assertEquals(sw.toString(), "{labels:[],\n" +
+        assertEquals("{labels:[],\n" +
                 "title:\"empty\",\n" +
-                "data:[]}");
+                "data:[]}", sw.toString());
     }
 
     @Test
@@ -24,10 +25,10 @@ public class StackedChartTest {
 
         StringWriter sw = new StringWriter();
         c.toJS(sw);
-        Assert.assertEquals(sw.toString(), "{labels:[\"Date\",\"cpu\"],\n" +
+        assertEquals("{labels:[\"Date\",\"cpu\"],\n" +
                 "title:\"test ' title\",\n" +
                 "data:[[new Date(10),15]\n" +
-                ",[new Date(1010),0]]}");
+                ",[new Date(1010),0]]}", sw.toString());
     }
 
     @Test
@@ -37,10 +38,10 @@ public class StackedChartTest {
 
         StringWriter sw = new StringWriter();
         c.toJS(sw);
-        Assert.assertEquals(sw.toString(), "{labels:[\"Date\",\"cpu\"],\n" +
+        assertEquals("{labels:[\"Date\",\"cpu\"],\n" +
                 "title:\"test ' &lt;a href&gt;title\",\n" +
                 "data:[[new Date(10),15]\n" +
-                ",[new Date(1010),0]]}");
+                ",[new Date(1010),0]]}", sw.toString());
     }
 
     @Test
@@ -54,10 +55,10 @@ public class StackedChartTest {
                 return "<a href='example.com'>"+arg+"</a>";
             }
         });
-        Assert.assertEquals(sw.toString(), "{labels:[\"Date\",\"<a href='example.com'>cpu<\\/a>\"],\n" +
+        assertEquals("{labels:[\"Date\",\"<a href='example.com'>cpu<\\/a>\"],\n" +
                 "title:\"test ' title\",\n" +
                 "data:[[new Date(10),15]\n" +
-                ",[new Date(1010),0]]}");
+                ",[new Date(1010),0]]}", sw.toString());
     }
 
     @Test
@@ -70,12 +71,12 @@ public class StackedChartTest {
         StringWriter sw = new StringWriter();
         c.toJS(sw);
 
-        Assert.assertEquals(sw.toString(), "{labels:[\"Date\",\"cpu\"],\n" +
+        assertEquals("{labels:[\"Date\",\"cpu\"],\n" +
                 "title:\"test \\\" title\",\n" +
                 "data:[[new Date(10),5]\n" +
                 ",[new Date(20),6]\n" +
                 ",[new Date(30),1]\n" +
-                ",[new Date(1030),0]]}");
+                ",[new Date(1030),0]]}", sw.toString());
     }
 
     @Test
@@ -93,7 +94,7 @@ public class StackedChartTest {
         StringWriter sw = new StringWriter();
         c.toJS(sw);
 
-        Assert.assertEquals(sw.toString(), "{labels:[\"Date\",\"io\",\"cpu\"],\n" +
+        assertEquals("{labels:[\"Date\",\"io\",\"cpu\"],\n" +
                 "title:\"test title\",\n" +
                 "data:[[new Date(10),null,5]\n" +
                 ",[new Date(15),1,null]\n" +
@@ -103,7 +104,7 @@ public class StackedChartTest {
                 ",[new Date(30),null,1]\n" +
                 ",[new Date(31),2,null]\n" +
                 ",[new Date(1030),null,0]\n" +
-                ",[new Date(1031),0,null]]}");
+                ",[new Date(1031),0,null]]}", sw.toString());
     }
 
     @Test
@@ -121,7 +122,7 @@ public class StackedChartTest {
         StringWriter sw = new StringWriter();
         c.toJS(sw);
 
-        Assert.assertEquals(sw.toString(), "{labels:[\"Date\",\"cpu\",\"io\"],\n" +
+        assertEquals("{labels:[\"Date\",\"cpu\",\"io\"],\n" +
                 "title:\"test title\",\n" +
                 "data:[[new Date(10),5,null]\n" +
                 ",[new Date(15),null,1]\n" +
@@ -131,7 +132,7 @@ public class StackedChartTest {
                 ",[new Date(30),1,null]\n" +
                 ",[new Date(31),null,9]\n" +
                 ",[new Date(1030),0,null]\n" +
-                ",[new Date(1031),null,0]]}");
+                ",[new Date(1031),null,0]]}", sw.toString());
     }
 
     @Test
@@ -149,7 +150,7 @@ public class StackedChartTest {
         StringWriter sw = new StringWriter();
         c.toJS(sw);
 
-        Assert.assertEquals(sw.toString(), "{labels:[\"Date\",\"cpu\",\"io\"],\n" +
+        assertEquals("{labels:[\"Date\",\"cpu\",\"io\"],\n" +
                 "title:\"test title\",\n" +
                 "data:[[new Date(10000),5,null]\n" +
                 ",[new Date(11000),0,null]\n" +
@@ -162,6 +163,6 @@ public class StackedChartTest {
                 ",[new Date(27000),null,0]\n" +
                 ",[new Date(30000),1,null]\n" +
                 ",[new Date(31000),0,9]\n" +
-                ",[new Date(32000),null,0]]}");
+                ",[new Date(32000),null,0]]}", sw.toString());
     }
 }

@@ -1,6 +1,7 @@
 package org.qubership.profiler.test.dump;
 
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Tag;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -11,8 +12,8 @@ import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 
 public class BufferSpeedTest {
-
-    @Test(invocationCount = 5, groups = "performance")
+    @RepeatedTest(5)
+    @Tag("performance")
     public void dataOutputStream() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream(100000 * 8);
         DeflaterOutputStream gz = new DeflaterOutputStream(baos);
@@ -24,7 +25,8 @@ public class BufferSpeedTest {
         dos.close();
     }
 
-    @Test(invocationCount = 5, groups = "performance")
+    @RepeatedTest(5)
+    @Tag("performance")
     public void byteBufferStream() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream(100000 * 8);
         final ByteBuffer bb = ByteBuffer.allocate(102400);

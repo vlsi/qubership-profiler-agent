@@ -88,9 +88,6 @@ val installerZipFiles = configurations.resolvable("installerZipFiles") {
 
 dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
-    testRuntimeOnly("ch.qos.logback:logback-classic") {
-        because("testcontainers uses slf4j for logging")
-    }
     installerZipElements(projects.boot)
     installerZipElements(projects.agent)
     installerZipElements(projects.runtime) {

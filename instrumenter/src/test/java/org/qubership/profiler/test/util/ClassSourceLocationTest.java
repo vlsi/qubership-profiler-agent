@@ -1,10 +1,12 @@
 package org.qubership.profiler.test.util;
 
+import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
 import org.qubership.profiler.instrument.TypeUtils;
 
 import gnu.trove.THash;
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 
@@ -12,24 +14,24 @@ public class ClassSourceLocationTest {
     @Test
     public void classLoadedFromDirectory(){
         String path = TypeUtils.getJarName(getClass().getProtectionDomain());
-        Assert.assertEquals(path, "java/test/"); // build/java/test/
+        assertEquals("java/test/", path); // build/java/test/
     }
 
     @Test
     public void classLoadedFromJar(){
         String path = TypeUtils.getJarName(THash.class.getProtectionDomain());
-        Assert.assertTrue(path != null, "TypeUtils.getJarName(THash.class.getProtectionDomain()) should not be null");
-        Assert.assertTrue(path.matches("[^/]+/[^/]+/trove4j.*.jar"), path + " does not match regex [^/]+/[^/]+/trove4j.*.jar");
+        assertNotNull(path, "TypeUtils.getJarName(THash.class.getProtectionDomain()) should not be null");
+        assertTrue(path.matches("[^/]+/[^/]+/trove4j.*.jar"), path + " does not match regex [^/]+/[^/]+/trove4j.*.jar");
     }
 
     @Test
     public void classLoadedFromJDK(){
         String path = TypeUtils.getJarName(Object.class.getProtectionDomain());
-        Assert.assertNull(path);
+        assertNull(path);
     }
 
     private void testResolveMvn(String mvnUrl, String expectedJarName) {
-        Assert.assertEquals(TypeUtils.resolveMvnJar(mvnUrl).replace(File.separatorChar, '/'), expectedJarName);
+        assertEquals(TypeUtils.resolveMvnJar(mvnUrl).replace(File.separatorChar, '/'), expectedJarName);
     }
 
     @Test

@@ -1,13 +1,14 @@
 package org.qubership.profiler.test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import org.qubership.profiler.test.pigs.ProcessArgumentPig;
 import org.qubership.profiler.test.pigs.TestRes;
 
 import mockit.FullVerifications;
 import mockit.Mocked;
 import mockit.VerificationsInOrder;
-import org.junit.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 
@@ -15,17 +16,16 @@ public class ProcessArgumentTest extends InitTransformers {
     @Mocked
     ProcessArgumentPig.Observer unused;
 
-    ProcessArgumentPig pig = new ProcessArgumentPig();
-
     @Test
     public void processInt() {
+        ProcessArgumentPig pig = new ProcessArgumentPig();
         int res = pig.intArg(42);
-        Assert.assertEquals(42 + 3 + 7, res);
+        assertEquals(42 + 3 + 7, res);
         new VerificationsInOrder() {
             {
                 int arg;
                 ProcessArgumentPig.Observer.intArg(arg = withCapture());
-                Assert.assertEquals(49, arg);
+                assertEquals(49, arg);
             }
         };
         new FullVerifications(){};
@@ -33,16 +33,17 @@ public class ProcessArgumentTest extends InitTransformers {
 
     @Test
     public void processMap() {
+        ProcessArgumentPig pig = new ProcessArgumentPig();
         HashMap x = new HashMap();
         x.put("test", "y");
         x.put("x", "y");
         String res = pig.mapArg(x);
-        Assert.assertEquals("result", "y", res);
+        assertEquals("y", res, "result");
         new VerificationsInOrder() {
             {
                 String arg;
                 ProcessArgumentPig.Observer.objectArg(arg = withCapture());
-                Assert.assertEquals("Observer.objectArg", "after process", arg);
+                assertEquals("after process", arg, "Observer.objectArg");
             }
         };
         new FullVerifications(){};
@@ -53,5 +54,4 @@ public class ProcessArgumentTest extends InitTransformers {
         TestRes testRes = new TestRes("3");
         System.out.println(testRes);
     }
-
 }

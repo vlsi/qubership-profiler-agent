@@ -1,7 +1,8 @@
 package org.qubership.profiler.test;
 
 import gnu.trove.TIntIntHashMap;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
 
 public class PerformanceTest {
 
@@ -44,7 +45,8 @@ public class PerformanceTest {
         }
     }
 
-    @Test(groups = "performance")
+    @Test
+    @Tag("performance")
     public void threadLocalBuffer() throws InterruptedException {
         for (int i = 0; i < 80; i++)
             new ThreadLocal().get();

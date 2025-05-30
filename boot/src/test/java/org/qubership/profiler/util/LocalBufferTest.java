@@ -1,14 +1,16 @@
 package org.qubership.profiler.util;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
 import org.qubership.profiler.agent.LocalBuffer;
 import org.qubership.profiler.agent.LocalState;
 import org.qubership.profiler.agent.Profiler;
 
 import mockit.Mocked;
 import mockit.Verifications;
-import org.testng.Assert;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 public class LocalBufferTest {
     @Mocked
@@ -17,13 +19,13 @@ public class LocalBufferTest {
     @Test
     public void isCleanOnConstruct() {
         LocalBuffer buffer = new LocalBuffer();
-        Assert.assertEquals(buffer.first, 0, "first");
-        Assert.assertEquals(buffer.count, 0, "count");
-        Assert.assertEquals(buffer.prevBuffer, null, "prevBuffer");
-        Assert.assertEquals(buffer.state, null, "state");
+        assertEquals(0, buffer.first, "first");
+        assertEquals(0, buffer.count, "count");
+        assertNull(buffer.prevBuffer, "prevBuffer");
+        assertNull(buffer.state, "state");
     }
 
-    @BeforeClass
+    @BeforeAll
     public static void setupBufferSize() {
         System.setProperty("org.qubership.profiler.util.LocalBuffer.SIZE", "10");
     }
@@ -54,8 +56,8 @@ public class LocalBufferTest {
                 times = 1;
             }
         };
-        Assert.assertEquals(state.buffer.first, 0, "Second buffer should contents start at 0");
-        Assert.assertEquals(state.buffer.count, 1, "Second buffer should contain 1 record");
+        assertEquals(0, state.buffer.first, "Second buffer should contents start at 0");
+        assertEquals(1, state.buffer.count, "Second buffer should contain 1 record");
     }
 
 
@@ -86,8 +88,8 @@ public class LocalBufferTest {
                 times = 1;
             }
         };
-        Assert.assertEquals(state.buffer.first, 0, "Second buffer should contents start at 0");
-        Assert.assertEquals(state.buffer.count, 1, "Second buffer should contain 1 record");
+        assertEquals(0, state.buffer.first, "Second buffer should contents start at 0");
+        assertEquals(1, state.buffer.count, "Second buffer should contain 1 record");
     }
 
     @Test
@@ -115,7 +117,7 @@ public class LocalBufferTest {
                 times = 1;
             }
         };
-        Assert.assertEquals(state.buffer.first, 0, "Second buffer should contents start at 0");
-        Assert.assertEquals(state.buffer.count, 1, "Second buffer should contain 1 record");
+        assertEquals(0, state.buffer.first, "Second buffer should contents start at 0");
+        assertEquals(1, state.buffer.count, "Second buffer should contain 1 record");
     }
 }

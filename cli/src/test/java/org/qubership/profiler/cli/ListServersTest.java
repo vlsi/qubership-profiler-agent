@@ -1,8 +1,9 @@
 package org.qubership.profiler.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import net.sourceforge.argparse4j.inf.Namespace;
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.util.HashMap;
@@ -18,6 +19,6 @@ public class ListServersTest {
         Namespace ns = new Namespace(map);
         ListServers listServers = new ListServers();
         int res = listServers.accept(ns);
-        Assert.assertEquals(res, 0, "listServers.accept should be successful");
+        assertEquals(0, res, "listServers.accept should be successful");
     }
 }

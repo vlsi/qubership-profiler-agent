@@ -1,38 +1,42 @@
 package org.qubership.profiler.test.dump;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import org.qubership.profiler.dump.DataInputStreamEx;
 import org.qubership.profiler.dump.DataOutputStreamEx;
 
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
 
 import java.io.*;
 import java.util.Enumeration;
 
-public class DataOutputStream {
+public class DataOutputStreamTest {
     @Test
     public void varIntOutputTest() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
         DataOutputStreamEx dos = new DataOutputStreamEx(baos);
         dos.writeVarInt(0);
-        Assert.assertEquals(new byte[]{0}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0}, baos.toByteArray());
         dos.writeVarInt(1);
-        Assert.assertEquals(new byte[]{0, 1}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1}, baos.toByteArray());
         dos.writeVarInt(2);
-        Assert.assertEquals(new byte[]{0, 1, 2}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1, 2}, baos.toByteArray());
         dos.writeVarInt(0x7f);
-        Assert.assertEquals(new byte[]{0, 1, 2, 0x7f}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1, 2, 0x7f}, baos.toByteArray());
         dos.writeVarInt(0x80);
-        Assert.assertEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1}, baos.toByteArray());
         dos.writeVarInt(0x81);
-        Assert.assertEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1}, baos.toByteArray());
         dos.writeVarInt(999465);
-        Assert.assertEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1, (byte) 169, (byte) 0x80, 61}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1, (byte) 169, (byte) 0x80, 61}, baos.toByteArray());
         dos.writeVarInt(999466);
-        Assert.assertEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1, (byte) 169, (byte) 0x80, 61, (byte) 170, (byte) 0x80, 61}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1, (byte) 169, (byte) 0x80, 61, (byte) 170, (byte) 0x80, 61}, baos.toByteArray());
         dos.writeVarInt(999467);
-        Assert.assertEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1, (byte) 169, (byte) 0x80, 61, (byte) 170, (byte) 0x80, 61, (byte) 171, (byte) 0x80, 61}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 1, 2, 0x7f, (byte) 0x80, 1, (byte) 0x81, 1, (byte) 169, (byte) 0x80, 61, (byte) 170, (byte) 0x80, 61, (byte) 171, (byte) 0x80, 61}, baos.toByteArray());
     }
 
     @Test
@@ -49,15 +53,16 @@ public class DataOutputStream {
         ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
         @SuppressWarnings("resource")
         DataInputStreamEx dis = new DataInputStreamEx(bais);
-        Assert.assertEquals(dis.readVarInt(), 0);
-        Assert.assertEquals(dis.readVarInt(), 1);
-        Assert.assertEquals(dis.readVarInt(), 2);
-        Assert.assertEquals(dis.readVarInt(), 0x7f);
-        Assert.assertEquals(dis.readVarInt(), 0x80);
-        Assert.assertEquals(dis.readVarInt(), 0x81);
+        assertEquals(0, dis.readVarInt());
+        assertEquals(1, dis.readVarInt());
+        assertEquals(2, dis.readVarInt());
+        assertEquals(0x7f, dis.readVarInt());
+        assertEquals(0x80, dis.readVarInt());
+        assertEquals(0x81, dis.readVarInt());
     }
 
-    @Test(groups = "performance")
+    @Test
+    @Tag("performance")
     public void negativeIntegers() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         @SuppressWarnings("resource")
@@ -69,7 +74,7 @@ public class DataOutputStream {
         @SuppressWarnings("resource")
         DataInputStreamEx dis = new DataInputStreamEx(bais);
         for (int i = -100000; i <= 0; i++)
-            Assert.assertEquals(dis.readVarInt(), i);
+            assertEquals(dis.readVarInt(), i);
     }
 
     @Test
@@ -78,15 +83,15 @@ public class DataOutputStream {
         @SuppressWarnings("resource")
         DataOutputStreamEx dos = new DataOutputStreamEx(baos);
         dos.writeVarIntZigZag(0);
-        Assert.assertEquals(new byte[]{0}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0}, baos.toByteArray());
         dos.writeVarIntZigZag(1);
-        Assert.assertEquals(new byte[]{0, 2}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 2}, baos.toByteArray());
         dos.writeVarIntZigZag(-1);
-        Assert.assertEquals(new byte[]{0, 2, 1}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 2, 1}, baos.toByteArray());
         dos.writeVarIntZigZag(2);
-        Assert.assertEquals(new byte[]{0, 2, 1, 4}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 2, 1, 4}, baos.toByteArray());
         dos.writeVarIntZigZag(-2);
-        Assert.assertEquals(new byte[]{0, 2, 1, 4, 3}, baos.toByteArray());
+        assertArrayEquals(new byte[]{0, 2, 1, 4, 3}, baos.toByteArray());
     }
 
     @Test
@@ -102,8 +107,8 @@ public class DataOutputStream {
         @SuppressWarnings("resource")
         DataInputStreamEx dis = new DataInputStreamEx(bais);
         for (i = -1000; i <= 1000; i++)
-            Assert.assertEquals(dis.readVarIntZigZag(), i, "Wrong integer decoded from the stream");
-        Assert.assertEquals(dis.available(), 0, "Buffer contains unread bytes");
+            assertEquals(i, dis.readVarIntZigZag(), "Wrong integer decoded from the stream");
+        assertEquals(0, dis.available(), "Buffer contains unread bytes");
     }
 
     @Test
@@ -127,10 +132,12 @@ public class DataOutputStream {
         byte []res = new byte[N];
         inEx.readFully(res);
         for(int i = 0; i<N; i++)
-            Assert.assertEquals(res[i], i+1);
+            assertEquals(res[i], i+1);
     }
 
-    @Test(groups = {"performance"}, invocationCount = 10, dependsOnMethods = {"varIntOutputTest"})
+    // dependsOnMethods = {"varIntOutputTest"}
+    @RepeatedTest(10)
+    @Tag("performance")
     public void varIntOutputPerformance() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream(1100000 * 4);
         @SuppressWarnings("resource")
@@ -140,7 +147,9 @@ public class DataOutputStream {
         }
     }
 
-    @Test(groups = {"performance"}, invocationCount = 10, dependsOnMethods = {"varIntOutputTest", "varIntInputTest"})
+    // dependsOnMethods = {"varIntOutputTest", "varIntInputTest"}
+    @RepeatedTest(10)
+    @Tag("performance")
     public void varIntInputPerformance() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream(1100000 * 4);
         @SuppressWarnings("resource")
