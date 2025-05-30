@@ -5,10 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.*;
 
 import java.io.*;
-import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.charset.Charset;
-import java.nio.charset.CharsetEncoder;
 
 public class DumperTest {
     @Test
@@ -83,62 +79,5 @@ public class DumperTest {
 
             assertEquals(millis, t);
         }
-    }
-
-    static final String src = "/**\n" +
-            "     * Flushes this encoder.\n" +
-            "     *\n" +
-            "     * <p> Some encoders maintain internal state and may need to write some\n" +
-            "     * final bytes to the output buffer once the overall input sequence has\n" +
-            "     * been read.\n" +
-            "     *\n" +
-            "     * <p> Any additional output is written to the output buffer beginning at\n" +
-            "     * its current position.  At most {@link Buffer#remaining out.remaining()}\n" +
-            "     * bytes will be written.  The buffer's position will be advanced\n" +
-            "     * appropriately, but its mark and limit will not be modified.\n" +
-            "     *\n" +
-            "     * <p> If this method completes successfully then it returns {@link\n" +
-            "     * CoderResult#UNDERFLOW}.  If there is insufficient room in the output\n" +
-            "     * buffer then it returns {@link CoderResult#OVERFLOW}.  If this happens\n" +
-            "     * then this method must be invoked again, with an output buffer that has\n" +
-            "     * more room, in order to complete the current <a href=\"#steps\">encoding\n" +
-            "     * operation</a>.\n" +
-            "     *\n" +
-            "     * <p> If this encoder has already been flushed then invoking this method\n" +
-            "     * has no effect.\n" +
-            "     *\n" +
-            "     * <p> This method invokes the {@link #implFlush implFlush} method to\n" +
-            "     * perform the actual flushing operation.  </p>\n" +
-            "     *\n" +
-            "     * @param  out\n" +
-            "     *         The output byte buffer\n" +
-            "     *\n" +
-            "     * @return  A coder-result object, either {@link CoderResult#UNDERFLOW} or\n" +
-            "     *          {@link CoderResult#OVERFLOW}\n" +
-            "     *\n" +
-            "     * @throws  IllegalStateException\n" +
-            "     *          If the previous step of the current encoding operation was an\n" +
-            "     *          invocation neither of the {@link #flush flush} method nor of\n" +
-            "     *          the three-argument {@link\n" +
-            "     *          #encode(CharBuffer,ByteBuffer,boolean) encode} method\n" +
-            "     *          with a value of <tt>true</tt> for the <tt>endOfInput</tt>\n" +
-            "     *          parameter\n" +
-            "     */";
-
-    @Test
-    @Tag("performance")
-    public void encoder1() {
-        Charset cs = Charset.forName("UTF-8");
-        CharBuffer cb = CharBuffer.allocate(src.length());
-        ByteBuffer bb;
-        CharsetEncoder ce = cs.newEncoder();
-//        while(true){
-        long t = System.nanoTime();
-        src.getChars(0, src.length(), cb.array(), 0);
-        cb.clear();
-        cs.encode(cb);
-        t = System.nanoTime() - t - 1300;
-        System.out.println("t = " + (t));
-//        }
     }
 }
