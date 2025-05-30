@@ -47,7 +47,9 @@
       ]
     },
     {
+      "description": "Stick with JMC < 9 since JMC 9+ requires Java 17 for the runtime",
       "groupName": "org.openjdk.jmc",
+      "allowedVersions": "< 9",
       "matchPackageNames": [
         "org.openjdk.jmc{/,}**"
       ]
