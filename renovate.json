@@ -15,6 +15,14 @@
   ],
   "packageRules": [
     {
+      "description": "Stick with JavaEE API 6 to support running with older application servers",
+      "groupName": "JavaEE",
+      "allowedVersions": "< 7",
+      "matchPackageNames": [
+        "javax:javaee-api"
+      ]
+    },
+    {
       "groupName": "checkerframework",
       "matchPackageNames": [
         "org.checkerframework{/,}**"
