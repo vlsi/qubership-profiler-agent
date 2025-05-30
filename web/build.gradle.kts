@@ -7,7 +7,6 @@ dependencies {
     implementation(projects.common)
     implementation(projects.parsers)
     api("javax:javaee-api")
-    implementation("ch.qos.logback:logback-access")
     implementation("ch.qos.logback:logback-classic")
     implementation("ch.qos.logback:logback-core")
     implementation("com.fasterxml.jackson.core:jackson-databind")
