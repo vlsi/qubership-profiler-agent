@@ -4,18 +4,17 @@ import org.qubership.profiler.fetch.StackcollapseParser;
 import org.qubership.profiler.threaddump.parser.ThreadInfo;
 import org.qubership.profiler.threaddump.parser.ThreaddumpParser;
 
-import org.junit.Assert;
-import org.testng.annotations.DataProvider;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class StackcollapseParseTest {
     private void assertEquals(String expected, ThreaddumpParser.JSerializable res) {
         StringBuffer sb = new StringBuffer();
         res.toJS(sb);
-        Assert.assertEquals(expected, sb.toString());
+        Assertions.assertEquals(expected, sb.toString());
     }
 
-    @DataProvider
     public static Object[][] frames() {
         return new String[][]{
                 {"java/util/concurrent/ThreadPoolExecutor.runWorker", "M.g('java.util.concurrent.ThreadPoolExecutor\\000runWorker\\000Unknown\\000')\n"},
@@ -26,14 +25,14 @@ public class StackcollapseParseTest {
         };
     }
 
-    @Test(dataProvider = "frames")
+    @ParameterizedTest
+    @MethodSource("frames")
     public void frame(String line, String expected) {
         StackcollapseParser p = new StackcollapseParser(null);
         ThreaddumpParser.ThreadLineInfo res = p.parseThreadLine(line);
         assertEquals(expected, res);
     }
 
-    @DataProvider
     public static Object[][] threads() {
         return new String[][]{
                 {"fr/marben/diameterimpl/MARBENa/MARBENa/MARBENk.MARBENa" +
@@ -65,7 +64,8 @@ public class StackcollapseParseTest {
         };
     }
 
-    @Test(dataProvider = "threads")
+    @ParameterizedTest
+    @MethodSource("threads")
     public void thread(String line, String expected) {
         StackcollapseParser p = new StackcollapseParser(null);
         ThreadInfo res = p.parseThread(line);

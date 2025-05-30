@@ -1,13 +1,15 @@
 package org.qubership.profiler.test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import org.qubership.profiler.agent.*;
 import org.qubership.profiler.test.pigs.LogParameterPig;
 import org.qubership.profiler.test.util.Randomizer;
 
 import mockit.Capturing;
 import mockit.Expectations;
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests all aspects of class profiling/instrumentation
@@ -16,10 +18,9 @@ public class LogParameterTest extends InitTransformers {
     @Capturing
     private LocalBuffer buffer;
 
-    LogParameterPig pig = new LogParameterPig();
-
     @Test
     public void stringArg() {
+        LogParameterPig pig = new LogParameterPig();
         final String x = Randomizer.randomString();
         final int tagId = ProfilerData.resolveTag("parameter.string") | DumperConstants.DATA_TAG_RECORD;
 
@@ -33,6 +34,7 @@ public class LogParameterTest extends InitTransformers {
 
     @Test
     public void intArg() {
+        LogParameterPig pig = new LogParameterPig();
         final int x = Randomizer.rnd.nextInt();
         final int tagId = ProfilerData.resolveTag("parameter.int") | DumperConstants.DATA_TAG_RECORD;
 
@@ -74,7 +76,8 @@ public class LogParameterTest extends InitTransformers {
         LogParameterPig.staticIntDouble(vInt, vDouble);
     }
 
-    @Test(enabled = false)
+    @Test
+    @Disabled
     public void logWhenDurationExceeds() {
         final int vInt = Randomizer.rnd.nextInt();
         final int tagInt = ProfilerData.resolveTag("parameter.int") | DumperConstants.DATA_TAG_RECORD;
@@ -93,6 +96,7 @@ public class LogParameterTest extends InitTransformers {
 
     @Test
     public void invokesConstructor() {
+        LogParameterPig pig = new LogParameterPig();
         final int x = Randomizer.rnd.nextInt();
         final int tagId = ProfilerData.resolveTag("parameter.int") | DumperConstants.DATA_TAG_RECORD;
 
@@ -106,6 +110,7 @@ public class LogParameterTest extends InitTransformers {
 
     @Test
     public void logReturnDouble() {
+        LogParameterPig pig = new LogParameterPig();
         final int vInt = Randomizer.rnd.nextInt();
         final double vDouble = Randomizer.rnd.nextDouble();
         final int tagDouble500 = ProfilerData.resolveTag("return.double500") | DumperConstants.DATA_TAG_RECORD;
@@ -119,11 +124,12 @@ public class LogParameterTest extends InitTransformers {
         }};
 
         double result = pig.returnsDouble(vDouble, vInt);
-        Assert.assertEquals(result, vDouble * vInt, "Resulting value do not match a*b");
+        assertEquals(vDouble * vInt, result, "Resulting value do not match a*b");
     }
 
     @Test
     public void logReturnByte() {
+        LogParameterPig pig = new LogParameterPig();
         final byte vByte1 = (byte) Randomizer.rnd.nextInt();
         final byte vByte2 = (byte) Randomizer.rnd.nextInt();
         final int tagByte500 = ProfilerData.resolveTag("return.byte500") | DumperConstants.DATA_TAG_RECORD;
@@ -137,7 +143,7 @@ public class LogParameterTest extends InitTransformers {
         }};
 
         byte result = pig.returnsByte(vByte1, vByte2);
-        Assert.assertEquals(result, (byte)(vByte1 + vByte2), "Resulting byte do not match a+b");
+        assertEquals((byte)(vByte1 + vByte2), result, "Resulting byte do not match a+b");
     }
 
 }

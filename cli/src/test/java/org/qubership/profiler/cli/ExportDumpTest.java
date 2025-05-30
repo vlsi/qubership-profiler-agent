@@ -1,8 +1,10 @@
 package org.qubership.profiler.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import net.sourceforge.argparse4j.inf.Namespace;
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.net.URI;
@@ -44,7 +46,7 @@ public class ExportDumpTest {
         testDirectory.mkdirs();
         File outputFile = new File(testDirectory, "test_export.zip");
         if (outputFile.isFile()) {
-            Assert.assertTrue(outputFile.delete(), "could not delete test export file - " + outputFile.getAbsolutePath());
+            assertTrue(outputFile.delete(), () -> "could not delete test export file - " + outputFile.getAbsolutePath());
         }
 
         Map<String, Object> map = new HashMap<>();
@@ -59,9 +61,9 @@ public class ExportDumpTest {
         ExportDump export = new ExportDump();
         int res = export.accept(ns);
 
-        Assert.assertEquals(res, 0, "export.accept should be successful");
-        Assert.assertTrue(outputFile.isFile(), "output file must be generated");
-        Assert.assertTrue(outputFile.length() > 0, "output file must have non-zero length");
-        Assert.assertTrue(outputFile.delete(), "could not delete test export file after test - " + outputFile.getAbsolutePath());
+        assertEquals(0, res, "export.accept should be successful");
+        assertTrue(outputFile.isFile(), "output file must be generated");
+        assertTrue(outputFile.length() > 0, "output file must have non-zero length");
+        assertTrue(outputFile.delete(), () -> "could not delete test export file after test - " + outputFile.getAbsolutePath());
     }
 }

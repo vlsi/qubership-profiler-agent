@@ -1,7 +1,8 @@
 package org.qubership.profiler.test;
 
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import org.junit.jupiter.api.*;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -10,8 +11,9 @@ import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
 
 public class DumperTest {
-    @Test(enabled = false)
-    public static void testByteConversion() throws IOException {
+    @Test
+    @Disabled
+    public void testByteConversion() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
         byte x = (byte) (3 << 6);
@@ -21,11 +23,12 @@ public class DumperTest {
 
         ByteArrayInputStream is = new ByteArrayInputStream(buf);
         DataInputStream dis = new DataInputStream(is);
-        Assert.assertEquals(dis.read() >> 6, 3);
+        assertEquals(3, dis.read() >> 6);
     }
 
-    @Test(enabled = false)
-    public static void testIntConversion() throws IOException {
+    @Test
+    @Disabled
+    public void testIntConversion() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
         for (int millis = -10000; millis <= 10000; millis++) {
@@ -78,7 +81,7 @@ public class DumperTest {
             }
 
 
-            Assert.assertEquals(millis, t);
+            assertEquals(millis, t);
         }
     }
 
@@ -122,8 +125,9 @@ public class DumperTest {
             "     *          parameter\n" +
             "     */";
 
-    @Test(groups = "performance")
-    public static void encoder1() {
+    @Test
+    @Tag("performance")
+    public void encoder1() {
         Charset cs = Charset.forName("UTF-8");
         CharBuffer cb = CharBuffer.allocate(src.length());
         ByteBuffer bb;

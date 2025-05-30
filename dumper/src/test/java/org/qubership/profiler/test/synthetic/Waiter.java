@@ -1,6 +1,8 @@
 package org.qubership.profiler.test.synthetic;
 
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeUnit;
 
@@ -9,7 +11,8 @@ public class Waiter {
     private static final long WAITING = 1;
     private static final int ENTRYPOINT = 199;
 
-    @Test(invocationCount = 10)
+    @RepeatedTest(10)
+    @Order(1)
     public static void test() {
         for (int i = RUN_COUNT; i > 0; i--) {
             try {
@@ -20,8 +23,9 @@ public class Waiter {
         }
     }
 
-    @Test(invocationCount = 1, dependsOnMethods = "test")
-    public static void sleep() throws InterruptedException {
+    @Test
+    @Order(2)
+    public void sleep() throws InterruptedException {
         TimeUnit.SECONDS.sleep(1);
     }
 

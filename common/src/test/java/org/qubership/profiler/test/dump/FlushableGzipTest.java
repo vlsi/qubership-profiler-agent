@@ -1,11 +1,13 @@
 package org.qubership.profiler.test.dump;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import org.qubership.profiler.dump.FlushableGZIPOutputStream;
 
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.*;
+import java.util.Arrays;
 import java.util.zip.GZIPInputStream;
 
 public class FlushableGzipTest {
@@ -26,7 +28,7 @@ public class FlushableGzipTest {
 
         int bytesRead = in.read(decompressed);
 
-        Assert.assertEquals(bytesRead, source.length);
-        Assert.assertEquals(decompressed, source);
+        assertEquals(Arrays.toString(source), Arrays.toString(decompressed), "Contents should be intact after compress and decompress");
+        assertEquals(source.length, bytesRead, "Decompressed length should be the same as the original");
     }
 }

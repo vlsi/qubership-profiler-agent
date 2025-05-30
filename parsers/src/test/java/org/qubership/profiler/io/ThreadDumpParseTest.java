@@ -1,5 +1,7 @@
 package org.qubership.profiler.io;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import org.qubership.profiler.sax.readers.ThreadDumpReader;
 import org.qubership.profiler.sax.stack.DumpVisitor;
 import org.qubership.profiler.sax.stack.DumpsVisitor;
@@ -8,8 +10,7 @@ import org.qubership.profiler.threaddump.parser.ThreadInfo;
 import org.qubership.profiler.util.IOHelper;
 import org.qubership.profiler.util.ProfilerConstants;
 
-import org.junit.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.*;
 
@@ -19,18 +20,18 @@ public class ThreadDumpParseTest {
     public void testSunDump() throws Exception {
         SunThreadFormatParser p = new SunThreadFormatParser();
         ThreadInfo threadInfo = p.parseThread("\"ServiceExecutor[8]\" #695 daemon prio=5 os_prio=0 tid=0x00007f7284004800 nid=0x695a waiting on condition [0x00007f70d34f5000]");
-        Assert.assertNotNull(threadInfo);
-        Assert.assertEquals("tid", "0x00007f7284004800", threadInfo.threadID);
-        Assert.assertEquals("name", "ServiceExecutor[8]", threadInfo.name);
+        assertNotNull(threadInfo);
+        assertEquals("0x00007f7284004800", threadInfo.threadID, "tid");
+        assertEquals("ServiceExecutor[8]", threadInfo.name, "name");
     }
 
     @Test
     public void testHighOsPrio() throws Exception {
         SunThreadFormatParser p = new SunThreadFormatParser();
         ThreadInfo threadInfo = p.parseThread("\"play-thread-3\" #48 prio=5 os_prio=15 tid=0x00000008dcc54000 nid=0x18e14 waiting on condition [0x00007fffdcfcd000]");
-        Assert.assertNotNull(threadInfo);
-        Assert.assertEquals("name", "play-thread-3", threadInfo.name);
-        Assert.assertEquals("tid", "0x00000008dcc54000", threadInfo.threadID);
+        assertNotNull(threadInfo);
+        assertEquals("play-thread-3", threadInfo.name, "name");
+        assertEquals("0x00000008dcc54000", threadInfo.threadID, "tid");
     }
 
     @Test
@@ -75,7 +76,7 @@ public class ThreadDumpParseTest {
         }
         InputStream is = getClass().getResourceAsStream(fileName + ".out.txt");
         String expected = new String(IOHelper.readFully(is), "UTF-8");
-        Assert.assertEquals(normalizeNl(expected), normalizeNl(out.toString()));
+        assertEquals(normalizeNl(expected), normalizeNl(out.toString()));
     }
 
     private String normalizeNl(String in) {

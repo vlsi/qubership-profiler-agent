@@ -1,10 +1,11 @@
 package org.qubership.profiler.configuration;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import org.qubership.profiler.agent.ParamTypes;
 import org.qubership.profiler.agent.ParameterInfo;
 
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.xml.sax.InputSource;
@@ -19,61 +20,61 @@ public class ParameterInfoTest {
     public void xmlTypeAutoParse() {
         ParameterInfo pi = getPI("<param-info name=\"abcd.xml\"/>");
 
-        Assert.assertTrue(pi.big);
-        Assert.assertFalse(pi.deduplicate);
-        Assert.assertEquals(pi.combined, ParamTypes.PARAM_BIG);
+        assertTrue(pi.big);
+        assertFalse(pi.deduplicate);
+        assertEquals(ParamTypes.PARAM_BIG, pi.combined);
     }
 
     @Test
     public void sqlTypeAutoParse() {
         ParameterInfo pi = getPI("<param-info name=\"abcd.sql\"/>");
 
-        Assert.assertTrue(pi.big);
-        Assert.assertTrue(pi.deduplicate);
-        Assert.assertEquals(pi.combined, ParamTypes.PARAM_BIG_DEDUP);
+        assertTrue(pi.big);
+        assertTrue(pi.deduplicate);
+        assertEquals(ParamTypes.PARAM_BIG_DEDUP, pi.combined);
     }
 
     @Test
     public void xpathTypeAutoParse() {
         ParameterInfo pi = getPI("<param-info name=\"xpath.abcd\"/>");
 
-        Assert.assertTrue(pi.big);
-        Assert.assertTrue(pi.deduplicate);
-        Assert.assertEquals(pi.combined, ParamTypes.PARAM_BIG_DEDUP);
+        assertTrue(pi.big);
+        assertTrue(pi.deduplicate);
+        assertEquals(ParamTypes.PARAM_BIG_DEDUP, pi.combined);
     }
 
     @Test
     public void attrName() {
         ParameterInfo pi = getPI("<param-info name=\"test\"/>");
 
-        Assert.assertEquals(pi.name, "test");
+        assertEquals("test", pi.name);
     }
 
     @Test
     public void attrBig() {
         ParameterInfo pi = getPI("<param-info name=\"test\" big=\"true\"/>");
 
-        Assert.assertTrue(pi.big);
-        Assert.assertFalse(pi.deduplicate);
-        Assert.assertEquals(pi.combined, ParamTypes.PARAM_BIG);
+        assertTrue(pi.big);
+        assertFalse(pi.deduplicate);
+        assertEquals(pi.combined, ParamTypes.PARAM_BIG);
     }
 
     @Test
     public void attrDeduplicate() {
         ParameterInfo pi = getPI("<param-info name=\"test\" deduplicate=\"true\"/>");
 
-        Assert.assertTrue(pi.big);
-        Assert.assertTrue(pi.deduplicate);
-        Assert.assertEquals(pi.combined, ParamTypes.PARAM_BIG_DEDUP);
+        assertTrue(pi.big);
+        assertTrue(pi.deduplicate);
+        assertEquals(ParamTypes.PARAM_BIG_DEDUP, pi.combined);
     }
 
     @Test
     public void attrBigDeduplicate() {
         ParameterInfo pi = getPI("<param-info name=\"test\" big=\"true\" deduplicate=\"true\"/>");
 
-        Assert.assertTrue(pi.big);
-        Assert.assertTrue(pi.deduplicate);
-        Assert.assertEquals(pi.combined, ParamTypes.PARAM_BIG_DEDUP);
+        assertTrue(pi.big);
+        assertTrue(pi.deduplicate);
+        assertEquals(ParamTypes.PARAM_BIG_DEDUP, pi.combined);
     }
 
     private ParameterInfo getPI(String xml) {

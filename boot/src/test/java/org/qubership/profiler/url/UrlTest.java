@@ -1,7 +1,9 @@
 package org.qubership.profiler.url;
 
-import org.testng.Assert;
-import org.testng.annotations.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import org.junit.jupiter.api.Test;
 
 import java.net.MalformedURLException;
 import java.net.URISyntaxException;
@@ -12,6 +14,6 @@ public class UrlTest {
     public void testJarFile() throws MalformedURLException, URISyntaxException {
         URL u = new URL("jar:file:/Use%20rs/lib/boot.jar!/org/qubership.class");
         String actual = u.toURI().getSchemeSpecificPart();
-        Assert.assertEquals(actual, "file:/Use rs/lib/boot.jar!/org/qubership.class", "URL(" + u.toString() + ")");
+        assertEquals("file:/Use rs/lib/boot.jar!/org/qubership.class", actual, () -> "URL(" + u + ")");
     }
 }

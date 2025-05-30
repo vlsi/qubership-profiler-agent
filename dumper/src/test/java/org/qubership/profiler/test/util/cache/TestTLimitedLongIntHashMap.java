@@ -1,21 +1,26 @@
 package org.qubership.profiler.test.util.cache;
 
-import static org.testng.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.qubership.profiler.util.cache.TLimitedLongIntHashMap;
 
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-@Test(dataProviderClass = TestHashMapDataProvider.class)
 public class TestTLimitedLongIntHashMap {
-    @Test(dataProvider = "big-tests", groups = "big")
+    @Tag("big")
+    @ParameterizedTest
+    @MethodSource("org.qubership.profiler.test.util.cache.TestHashMapDataProvider#createInstances")
     public void doesNotCrashWhenManyMissesHappen(int size) {
         TLimitedLongIntHashMap map = new TLimitedLongIntHashMap(size);
         for (int i = 0; i < size * 10; i++)
             map.put(i, i);
     }
 
-    @Test(dataProvider = "big-tests", groups = "big")
+    @Tag("big")
+    @ParameterizedTest
+    @MethodSource("org.qubership.profiler.test.util.cache.TestHashMapDataProvider#createInstances")
     public void cachesSingleValue(int size) {
         TLimitedLongIntHashMap map = new TLimitedLongIntHashMap(size);
         long key = 0x1234567812345678l;
@@ -23,8 +28,9 @@ public class TestTLimitedLongIntHashMap {
         int value = 0x1234567;
         map.put(key, value);
         for (int i = 0; i < size * 5; i++) {
-            final int cached = map.get(key);
-            assertEquals(cached, value, "Cached value does not match expectation at step " + i + ", mapsize " + map.size() + ", limit of " + size);
+            int stepIndex = i;
+            int cached = map.get(key);
+            assertEquals(value, cached, () -> "Cached value does not match expectation at step " + stepIndex + ", mapsize " + map.size() + ", limit of " + size);
             j = j * 37 + 13;
             map.put(j, i);
             if (j == key)
@@ -32,7 +38,9 @@ public class TestTLimitedLongIntHashMap {
         }
     }
 
-    @Test(dataProvider = "big-tests", groups = "big", dependsOnMethods = {"doesNotCrashWhenManyMissesHappen", "cachesSingleValue"})
+    @Tag("big")
+    @ParameterizedTest
+    @MethodSource("org.qubership.profiler.test.util.cache.TestHashMapDataProvider#createInstances")
     public void mapShouldKeepCachedValues(int size) {
         TLimitedLongIntHashMap map = new TLimitedLongIntHashMap(size);
         long j = 0x1234567812345678l;
@@ -49,9 +57,10 @@ public class TestTLimitedLongIntHashMap {
 
         j = 0x1234567812345678l;
         for (int i = 0; i < size / 2 - 1; i++) {
-            final int cached = map.get(j);
+            int stepIndex = i;
+            int cached = map.get(j);
             j = j * 37 + 13;
-            assertEquals(cached, i, "Cached value does not match expectation at step " + i + ", mapsize " + map.size() + ", limit of " + size);
+            assertEquals(i, cached, () -> "Cached value does not match expectation at step " + stepIndex + ", mapsize " + map.size() + ", limit of " + size);
         }
     }
 }

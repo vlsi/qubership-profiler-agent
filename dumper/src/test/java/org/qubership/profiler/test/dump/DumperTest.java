@@ -1,5 +1,8 @@
 package org.qubership.profiler.test.dump;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
+
 import org.qubership.profiler.Dumper;
 import org.qubership.profiler.agent.*;
 import org.qubership.profiler.configuration.NetworkExportParamsImpl;
@@ -8,55 +11,53 @@ import org.qubership.profiler.metrics.MetricsPluginImpl;
 import org.qubership.profiler.transfer.DataSender;
 
 import mockit.Mocked;
-import org.testng.Assert;
-import org.testng.annotations.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.provider.Arguments;
 import org.xml.sax.SAXException;
 
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import javax.xml.parsers.ParserConfigurationException;
 
 public class DumperTest {
-    @Mocked()
-    final Profiler unused = null;
+    @Mocked
+    final static Profiler unused = null;
 
-    String dumpFolderName;
-    File root;
+    @TempDir
+    Path tmpDir;
 
-    private void deleteDirectory(File dir) {
-        if (!dir.exists()) return;
-        if (dir.isDirectory()) {
-            File[] files = dir.listFiles();
-            if (files != null) {
-                for (File file : files)
-                    deleteDirectory(file);
-            }
-        }
-        Assert.assertTrue(dir.delete(), "Unable to delete file " + dir.getAbsolutePath());
+    public static Stream<Arguments> mustHaveFiles() {
+        return Stream.of(
+                arguments("suspend" + File.separatorChar + "000001.gz", "Suspend"),
+                arguments("dictionary" + File.separatorChar + "000001.gz", "Dictionary"),
+                arguments("trace" + File.separatorChar + "000001.gz", "Trace"),
+                arguments("calls" + File.separatorChar + "000001.gz", "Calls"),
+                arguments("sql" + File.separatorChar + "000001.gz", "SQL"),
+                arguments("xml" + File.separatorChar + "000001.gz", "XML")
+        );
     }
 
-    @Test(groups = "checkGeneratedFiles", dataProvider = "mustHaveFiles")
-    public void checkFile(String path, String description) {
+    private void checkFile(String description, File root, String path) {
         File file = new File(root, path);
-        Assert.assertTrue(file.exists(), description + " file not found: " + file.getAbsolutePath());
+        assertTrue(file.exists(), () -> description + " file not found: " + file.getAbsolutePath());
     }
 
-    @BeforeSuite
+    @Test
     public void writeSomeData()  throws IOException, ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, SAXException, ParserConfigurationException, InvocationTargetException, InterruptedException {
         BlockingQueue<LocalBuffer> dirtyBuffers = new ArrayBlockingQueue<LocalBuffer>(100);
         BlockingQueue<LocalBuffer> emptyBuffers = new ArrayBlockingQueue<LocalBuffer>(100);
         ArrayList<LocalBuffer> buffers = new ArrayList<LocalBuffer>();
-        String dumpFolderName = "test-dump";
-        this.dumpFolderName = dumpFolderName;
-
-        deleteDirectory(new File(dumpFolderName));
+        String dumpFolderName = tmpDir.toFile().getAbsolutePath();
 
         Configuration_05 config = createConfiguration();
         final LocalState s = new LocalState();
@@ -85,12 +86,13 @@ public class DumperTest {
 
         Thread.sleep(2000);
         thread.shutdown();
-        root = dumper.getCurrentRoot();
-    }
-
-    @AfterSuite
-    public void cleanup() {
-        deleteDirectory(new File(dumpFolderName));
+        File root = dumper.getCurrentRoot();
+        checkFile("Suspend", root, "suspend" + File.separatorChar + "000001.gz");
+        checkFile("Dictionary", root, "dictionary" + File.separatorChar + "000001.gz");
+        checkFile("Trace", root, "trace" + File.separatorChar + "000001.gz");
+        checkFile("Calls", root, "calls" + File.separatorChar + "000001.gz");
+        checkFile("SQL", root, "sql" + File.separatorChar + "000001.gz");
+        checkFile("XML", root, "xml" + File.separatorChar + "000001.gz");
     }
 
     private Configuration_05 createConfiguration() {
@@ -161,18 +163,6 @@ public class DumperTest {
             public NetworkExportParams getNetworkExportParams() {
                 return null;
             }
-        };
-    }
-
-    @DataProvider
-    public Object[][] mustHaveFiles() {
-        return new Object[][]{
-            {"suspend" + File.separatorChar + "000001.gz", "Suspend"},
-            {"dictionary" + File.separatorChar + "000001.gz", "Dictionary"},
-            {"trace" + File.separatorChar + "000001.gz", "Trace"},
-            {"calls" + File.separatorChar + "000001.gz", "Calls"},
-            {"sql" + File.separatorChar + "000001.gz", "SQL"},
-            {"xml" + File.separatorChar + "000001.gz", "XML"}
         };
     }
 }

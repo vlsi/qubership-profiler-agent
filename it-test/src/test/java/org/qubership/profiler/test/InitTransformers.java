@@ -1,5 +1,7 @@
 package org.qubership.profiler.test;
 
+import static org.junit.jupiter.api.Assertions.fail;
+
 import org.qubership.profiler.agent.*;
 import org.qubership.profiler.agent.plugins.EnhancerRegistryPluginImpl;
 import org.qubership.profiler.configuration.ConfigurationImpl;
@@ -8,13 +10,13 @@ import org.qubership.profiler.instrument.enhancement.EnhancerPlugin_test;
 import mockit.internal.startup.Startup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testng.Assert;
 import org.xml.sax.SAXException;
 
 import java.io.File;
 import java.io.IOException;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.IllegalClassFormatException;
+import java.lang.instrument.UnmodifiableClassException;
 import java.lang.reflect.InvocationTargetException;
 import java.security.ProtectionDomain;
 
@@ -36,11 +38,11 @@ public abstract class InitTransformers {
 
     public static boolean transformerAdded;
 
-    private static void main(String[] args) throws IOException, SAXException, ParserConfigurationException, ClassNotFoundException, NoSuchMethodException, InvocationTargetException, IllegalAccessException, InstantiationException, NoSuchFieldException {
+    private static void main(String[] args) throws IOException, SAXException, ParserConfigurationException, ClassNotFoundException, NoSuchMethodException, InvocationTargetException, IllegalAccessException, InstantiationException, NoSuchFieldException, UnmodifiableClassException {
         addTransformer();
     }
 
-    public static synchronized void addTransformer() throws IOException, SAXException, ParserConfigurationException, ClassNotFoundException, NoSuchMethodException, InvocationTargetException, IllegalAccessException, InstantiationException, NoSuchFieldException {
+    public static synchronized void addTransformer() throws IOException, SAXException, ParserConfigurationException, ClassNotFoundException, NoSuchMethodException, InvocationTargetException, IllegalAccessException, InstantiationException, NoSuchFieldException, UnmodifiableClassException {
         if (transformerAdded)
             return;
         transformerAdded = true;
@@ -50,7 +52,7 @@ public abstract class InitTransformers {
             fileName = "it-test/" + fileName;
 
         if (!new File(fileName).exists())
-            Assert.fail("Configuration file " + fileName + " is not found");
+            fail("Configuration file " + fileName + " is not found");
 
         new EnhancerRegistryPluginImpl();
         new EnhancerPlugin_test();
