@@ -8,7 +8,6 @@ dependencies {
     implementation(projects.boot)
     implementation(projects.common)
     implementation(projects.pluginGenerator)
-    implementation("ch.qos.logback:logback-access")
     implementation("ch.qos.logback:logback-classic")
     implementation("ch.qos.logback:logback-core")
     implementation("commons-lang:commons-lang")
