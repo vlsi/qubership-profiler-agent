@@ -5,10 +5,14 @@ import static org.qubership.profiler.instrument.enhancement.EnhancerConstants.OP
 import org.objectweb.asm.*;
 import org.objectweb.asm.util.ASMifier;
 import org.objectweb.asm.util.TraceClassVisitor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 
 public class GenerateInjector {
+    private static final Logger log = LoggerFactory.getLogger(GenerateInjector.class);
+
     private final File root;
     private final File dst;
     private PrintWriter pw;
@@ -42,10 +46,10 @@ public class GenerateInjector {
         @Override
         public FieldVisitor visitField(int access, String name, String desc, String signature, Object value) {
             if (!name.endsWith("$profiler")) {
-                System.out.println("ignoring field " + name);
+                log.debug("ignoring field {}", name);
                 return null;
             }
-            System.out.println("adding field " + name);
+            log.debug("adding field {}", name);
             return super.visitField(access, name, desc, signature, value);
         }
 
@@ -56,14 +60,14 @@ public class GenerateInjector {
             }
 
             if (!name.endsWith("$profiler") && !"<clinit>".equals(name)) {
-                System.out.println("ignoring method " + name);
+                log.debug("ignoring method {}", name);
                 return null;
             }
             if ("clinit$profiler".equals(name)) {
-                System.out.println("converting method " + name + " to static initializer" );
+                log.debug("converting method {} to static initializer", name);
                 name = "<clinit>";
             }
-            System.out.println("adding method " + name);
+            log.debug("adding method {}", name);
             return super.visitMethod(access, name, desc, signature, exceptions);
         }
 
@@ -103,8 +107,7 @@ public class GenerateInjector {
         try {
             task.run();
         } catch (FileNotFoundException e) {
-            System.err.println("Unable to process " + args[0] + ", " + args[1]);
-            e.printStackTrace();
+            throw new IllegalStateException("Unable to process " + args[0] + ", " + args[1], e);
         }
     }
 
@@ -130,7 +133,7 @@ public class GenerateInjector {
         pw.print("}\n");
         pw.close();
         if (dst.exists() && lastRun > lastModified) {
-            System.out.println("Skipped processing " + root + " -> " + dst + " since source files are not modified");
+            log.debug("Skipped processing {} -> {} since source files are not modified", root, dst);
             return;
         }
         OutputStream out;
@@ -157,13 +160,12 @@ public class GenerateInjector {
         try {
             processClassFile(root);
         } catch (IOException e) {
-            System.err.println("Unable to process file " + root.getAbsolutePath());
-            e.printStackTrace();
+            throw new IllegalStateException("Unable to process file " + root.getAbsolutePath(), e);
         }
     }
 
     private void processClassFile(File root) throws IOException {
-        System.out.println("Processing file " + root.getAbsolutePath());
+        log.debug("Processing file {}", root.getAbsolutePath());
         lastModified = Math.max(lastModified, getLastModifiedTime(root));
         FileInputStream is = new FileInputStream(root);
         ClassReader cr = new ClassReader(is);
