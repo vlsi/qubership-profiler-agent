@@ -11,10 +11,15 @@ import org.objectweb.asm.*;
 import org.objectweb.asm.util.ASMifier;
 import org.objectweb.asm.util.CheckClassAdapter;
 import org.objectweb.asm.util.TraceClassVisitor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.PrintWriter;
+import java.io.StringWriter;
 
 public class ProfileMethodAdapterTest implements Opcodes {
+    private static final Logger log = LoggerFactory.getLogger(ProfileMethodAdapterTest.class);
+
     public ClassVisitor createVerifier(ClassVisitor out) {
         ClassVisitor profilingChain = new ClassVisitor(OPCODES_VERSION, out) {
             String className;
@@ -44,16 +49,15 @@ public class ProfileMethodAdapterTest implements Opcodes {
         ClassVisitor check = new CheckClassAdapter(out);
         final ASMifier asm = new ASMifier();
         TraceClassVisitor printer = new TraceClassVisitor(check, asm, null);
-        Runtime.getRuntime().addShutdownHook(new Thread() {
-            @Override
-            public void run() {
-                PrintWriter pw = new PrintWriter(System.out);
-                asm.print(pw);
-                pw.flush();
-            }
-        });
         ClassReader cr = new ClassReader(bytes);
         cr.accept(printer, 0);
+        if (log.isErrorEnabled()) {
+            StringWriter sw = new StringWriter();
+            try(PrintWriter pw = new PrintWriter(sw)) {
+                asm.print(pw);
+            }
+            log.debug("Class body: {}", sw);
+        }
     }
 
     @Test
