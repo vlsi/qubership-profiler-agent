@@ -4,7 +4,6 @@ import org.qubership.profiler.dom.ClobValues;
 import org.qubership.profiler.dom.GanttInfo;
 import org.qubership.profiler.dom.ProfiledTree;
 import org.qubership.profiler.dom.ProfiledTreeStreamVisitor;
-import org.qubership.profiler.io.ActiveSessionHistoryFetcher;
 import org.qubership.profiler.io.Hotspot;
 import org.qubership.profiler.io.TreeToJson;
 import org.qubership.profiler.io.exceptions.ErrorCollector;
@@ -140,8 +139,6 @@ public class CallTreeMediator extends ProfiledTreeStreamVisitor {
                 jgen.flush();
 
                 PrintWriter writer = new PrintWriter(arrayBuilder);
-                ActiveSessionHistoryFetcher ash = new ActiveSessionHistoryFetcher(writer);
-                ash.read(tree);
                 writer.flush();
 
                 printErrors(jgen);
