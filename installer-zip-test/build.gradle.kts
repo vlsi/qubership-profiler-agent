@@ -33,12 +33,13 @@ val extractInstaller by tasks.registering(Sync::class) {
 tasks.test {
     dependsOn(extractInstaller)
     // Execute tests with profiler
+    val dumpHome = layout.buildDirectory.dir("dump")
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
             listOf(
-                "-javaagent:${profilerHome.get().asFile.absolutePath}/lib/qubership-profiler-agent.jar"
+                "-javaagent:${profilerHome.get().asFile.absolutePath}/lib/qubership-profiler-agent.jar",
+                "-Dprofiler.dump.home=${dumpHome.get().asFile.absolutePath}",
             )
         }
     )
-    systemProperty("profiler.dump.home", layout.buildDirectory.dir("dump").map { it.asFile })
 }
