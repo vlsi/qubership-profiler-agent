@@ -8,6 +8,9 @@ on:
     branches:
       - '**'
 
+# Declare default permissions as read-only.
+permissions: read-all
+
 concurrency:
   # On master/release, we don't want any jobs cancelled so the sha is used to name the group
   # On PR branches, we cancel the job if new commits are pushed
