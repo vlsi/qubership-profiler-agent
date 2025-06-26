@@ -1,5 +1,7 @@
 # Qubership Profiler Agent
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Netcracker/qubership-profiler-agent/badge)](https://scorecard.dev/viewer/?uri=github.com/Netcracker/qubership-profiler-agent)
+
 This repository container the java agent that can attach as a `-javaagent` to the JVM and collect information
 as continuous tracing profiler.
 
