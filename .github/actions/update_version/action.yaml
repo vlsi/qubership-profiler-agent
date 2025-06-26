@@ -1,4 +1,5 @@
 name: bump version in gradle.properties
+description: Updates gradle.properties with the new version
 inputs:
   version:
     required: true
