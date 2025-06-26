@@ -6,11 +6,12 @@ on:
   pull_request_target:
     types: [opened, closed, synchronize]
 
-# Declare default permissions as read only.
+# Declare default permissions as read-only.
 permissions: read-all
 
 jobs:
   CLAAssistant:
+    name: CLA Assistant
     runs-on: ubuntu-latest
     permissions:
       actions: write

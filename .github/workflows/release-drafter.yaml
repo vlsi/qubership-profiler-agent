@@ -6,6 +6,9 @@ on:
       - main
       - release/**
 
+# Declare default permissions as read-only.
+permissions: read-all
+
 jobs:
   update_release_draft:
     permissions:
