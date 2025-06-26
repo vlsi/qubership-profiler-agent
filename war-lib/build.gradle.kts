@@ -1,4 +1,5 @@
-import com.github.jengelman.gradle.plugins.shadow.transformers.PropertiesFileTransformer
+import buildlogic.SpringFileTransformer
+import com.github.jengelman.gradle.plugins.shadow.transformers.ServiceFileTransformer
 
 plugins {
     id("build-logic.java-published-library")
@@ -17,13 +18,11 @@ dependencies {
 
 tasks.shadowJar {
     mergeServiceFiles()
-    append("META-INF/spring.handlers")
-    append("META-INF/spring.schemas")
-    append("META-INF/spring.tooling")
-    append("META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")
-    transform(PropertiesFileTransformer::class.java) {
-        paths.add("META-INF/spring.factories")
-        mergeStrategy = "append"
+    // spring-configuration-metadata.json is meant for IDEs
+    exclude("META-INF/spring-configuration-metadata.json")
+    transform(SpringFileTransformer::class.java)
+    transform(ServiceFileTransformer::class.java) {
+        include("META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")
     }
     relocate("ch.qos.logback", "org.qubership.profiler.shaded.ch.qos.logback")
     relocate("com.fasterxml", "org.qubership.profiler.shaded.com.fasterxml")
