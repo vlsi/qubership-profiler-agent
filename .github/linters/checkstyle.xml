@@ -5,9 +5,6 @@
     "http://checkstyle.sourceforge.net/dtds/configuration_1_3.dtd">
 
 <module name="Checker">
-
-  <property name="cacheFile" value="${config_loc}/${cache_file}"/>
-
   <property name="localeLanguage" value="en"/>
   <property name="charset" value="UTF-8"/>
   <property name="severity" value="error"/>
@@ -135,11 +132,6 @@
       <property name="commentFormat" value="CHECKSTYLE IGNORE (\w+)"/>
       <property name="checkFormat" value="$1"/>
     </module>
-  </module>
-
-  <module name="SuppressionFilter">
-    <!-- config_loc is used by Eclipse plugin -->
-    <property name="file" value="${config_loc}/checkstyle-suppressions.xml"/>
   </module>
 
 </module>
