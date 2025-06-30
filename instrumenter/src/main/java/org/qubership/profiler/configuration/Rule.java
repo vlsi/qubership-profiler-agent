@@ -154,7 +154,7 @@ public class Rule implements MethodAcceptor {
     }
 
     public void addClass(String className) {
-        if (classNameHashable != Boolean.FALSE && className.indexOf('.') > -1 && className.indexOf('*') == -1) {
+        if (!Boolean.FALSE.equals(classNameHashable)  && className.indexOf('.') > -1 && className.indexOf('*') == -1) {
             classNameHashable = Boolean.TRUE;
             if (classNamesRaw == null)
                 classNamesRaw = new ArrayList<String>();

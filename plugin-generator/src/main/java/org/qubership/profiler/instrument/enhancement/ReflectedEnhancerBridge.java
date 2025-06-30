@@ -12,17 +12,18 @@ public class ReflectedEnhancerBridge implements ClassEnhancer {
         try {
             target = klass.getMethod(method, ClassVisitor.class);
         } catch (NoSuchMethodException e) {
-            e.printStackTrace();
+            throw new IllegalArgumentException("Unable to find method " + method + " in class " + klass, e);
         }
     }
 
+    @SuppressWarnings("CatchAndPrintStackTrace")
     public void enhance(ClassVisitor cv) {
         try {
             target.invoke(null, cv);
         } catch (IllegalAccessException e) {
             e.printStackTrace();
         } catch (InvocationTargetException e) {
-            e.printStackTrace();
+            e.getCause().printStackTrace();
         }
     }
 

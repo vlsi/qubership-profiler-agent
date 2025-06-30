@@ -93,7 +93,7 @@ public class GuardedAction extends MethodInstrumenter {
             // We are right before *RETURN instruction, thus resulting value is on stack
             // To support java 1.7, we create stackmap frame with arguments as locals and "return value" on stack
             Type returnType = ma.getReturnType();
-            if (returnType == Type.VOID_TYPE) {
+            if (Type.VOID_TYPE.equals(returnType)) {
                 if(delegate.getClass() == ExecuteMethodAfter.class && ((ExecuteMethodAfter) delegate).shouldAddPlainTryCatchBlocks(ma.getClassVersion())) {
                     //Do nothing
                     //Stackmap frame was already added by TryCatch wrapper in delegate

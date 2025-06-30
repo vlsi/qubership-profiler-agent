@@ -2,6 +2,8 @@ package org.qubership.profiler.instrument.enhancement;
 
 import org.objectweb.asm.ClassVisitor;
 
+import java.util.Objects;
+
 public class FilteredEnhancer implements ClassEnhancer {
     EnhancerPlugin filter;
     private final ClassEnhancer enhancer;
@@ -30,6 +32,13 @@ public class FilteredEnhancer implements ClassEnhancer {
         if (filter != null ? !filter.equals(that.filter) : that.filter != null) return false;
 
         return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hashCode(filter);
+        result = 31 * result + Objects.hashCode(enhancer);
+        return result;
     }
 
     @Override

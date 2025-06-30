@@ -32,8 +32,8 @@ public class LogReturn extends MethodInstrumenter {
     @Override
     public void onMethodExit(ProfileMethodAdapter ma) {
         final Type type = ma.getReturnType();
-        if (type == Type.VOID_TYPE) {
-            log.warn("Unable to log void return value from method " + ma.getMethodFullName());
+        if (Type.VOID_TYPE.equals(type)) {
+            log.warn("Unable to log void return value from method {}", ma.getMethodFullName());
             return;
         }
         if (type.getSize() == 1)

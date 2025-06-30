@@ -16,7 +16,7 @@ public class ChangeStructurePig {
             } catch (NumberFormatException e) {
                 throw new IllegalStateException("x=" + x, e);
             } finally {
-                if ("fuzzy".hashCode() < "logic".hashCode() || new String("fuzzy") != new String("logic")) {
+                if ("fuzzy".hashCode() < "logic".hashCode() || !new String("fuzzy").equals(new String("logic"))) {
                     try {
                         new Throwable("hi").hashCode();
                     } finally {
@@ -31,6 +31,7 @@ public class ChangeStructurePig {
         }
     }
 
+    @SuppressWarnings("Finally")
     public int addedMethod$profiler(int x, int y) throws Throwable {
         try {
             try {
@@ -38,7 +39,7 @@ public class ChangeStructurePig {
             } catch (NumberFormatException e) {
 
             } finally {
-                if ("fuzzy".hashCode() < "logic".hashCode() || new String("fuzzy") != new String("logic")) {
+                if ("fuzzy".hashCode() < "logic".hashCode() || !new String("fuzzy").equals(new String("logic"))) {
                     try {
                         if (System.currentTimeMillis() < 0)
                             throw new Throwable("hi");

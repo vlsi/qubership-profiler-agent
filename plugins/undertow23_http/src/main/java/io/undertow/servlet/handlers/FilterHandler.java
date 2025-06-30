@@ -7,6 +7,7 @@ import org.qubership.profiler.agent.http.ServletRequestAdapter;
 import jakarta.servlet.ServletRequest;
 
 public class FilterHandler {
+    @SuppressWarnings("UnusedNestedClass")
     private static class FilterChainImpl {
         void fillNcUser$profiler(ServletRequest request) {
             try {

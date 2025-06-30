@@ -54,7 +54,7 @@ public class AbstractMessageListenerContainer {
         Profiler.event(correlationId, "jms.correlationid");
         Profiler.event(replyTo, "jms.replyto");
         if (timestamp != 0) // "new Long" is used for jdk 1.4 compatibility
-            Profiler.event(new Long(timestamp), "jms.timestamp");
+            Profiler.event(timestamp, "jms.timestamp");
         if (destination != null) {
             Profiler.event(destination, "jms.destination");
             Profiler.getState().callInfo.setCliendId("JMS " + StringUtils.right(destination, CallInfo.CLIENT_ID_LENGTH - 4));
