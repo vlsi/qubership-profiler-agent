@@ -125,6 +125,9 @@ public class Installer implements ServletContextListener {
                 dis.readFully(buf, 0, len);
 
                 File dst = new File(home, ze.getName());
+                if (!dst.toPath().normalize().startsWith(home.toPath())) {
+                    throw new IllegalArgumentException("Bad zip entry: " + ze.getName());
+                }
                 if (!backupFile(dst, buf, 0, len, filesNotRequiringUpdate))
                     return false;
             }
@@ -262,6 +265,9 @@ public class Installer implements ServletContextListener {
                     continue;
 
                 File dst = new File(home, ze.getName());
+                if (!dst.toPath().normalize().startsWith(home.toPath())) {
+                    throw new IllegalArgumentException("Bad zip entry: " + ze.getName());
+                }
                 final String dstPath = dst.getAbsolutePath();
                 if (filesNotRequiringUpdate.contains(dstPath)) {
                     log.info("Using existing file {} since its content is up to date", dstPath);
