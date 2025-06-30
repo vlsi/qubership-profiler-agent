@@ -200,7 +200,8 @@ public class DataInputStreamEx extends FilterInputStream implements IDataInputSt
     public long skip(long n) throws IOException {
         checkInterrupted();
         final long bytesRead = super.skip(n);
-        position += bytesRead;
+        // We do not expect skipping more than 2G bytes as we divite files into several megabyte chunks
+        position = Math.addExact(position, Math.toIntExact(bytesRead));
         return bytesRead;
     }
 
