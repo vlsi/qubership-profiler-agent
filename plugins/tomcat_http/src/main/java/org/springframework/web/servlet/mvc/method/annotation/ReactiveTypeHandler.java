@@ -27,6 +27,7 @@ public class ReactiveTypeHandler {
      *   -> emitter (field) -> handler (field) -> outputMessage (field) -> delegate (field) -> springResponse
      *       -> HttpServletResponse -> response (field) -> Request
      */
+    @SuppressWarnings("UnusedNestedClass")
     private static abstract class AbstractEmitterSubscriber {
         public void run$profiler(Throwable t) throws NoSuchFieldException, IllegalAccessException, ClassNotFoundException {
             Field emitterField = emitterField$profiler;

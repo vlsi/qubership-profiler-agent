@@ -73,7 +73,7 @@ buildParameters {
         description.set("Run CheckerFramework (nullness) verifications")
     }
     bool("enableErrorprone") {
-        defaultValue.set(false)
+        defaultValue.set(true)
         description.set("Run ErrorProne verifications")
     }
     bool("skipCheckstyle") {
