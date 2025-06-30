@@ -1,5 +1,6 @@
 package io.undertow.server;
 
+import org.qubership.profiler.agent.CallInfo;
 import org.qubership.profiler.agent.Profiler;
 import org.qubership.profiler.agent.TimerCache;
 
@@ -31,7 +32,12 @@ public class Connectors {
                     long msRequestStartTime = msStartTime + delta;
                     long queueWaitTime = msCurrentTime - msRequestStartTime;
                     if (queueWaitTime > 0) {
-                        Profiler.getState().callInfo.queueWaitDuration += queueWaitTime;
+                        CallInfo callInfo = Profiler.getState().callInfo;
+                        int prevQueueWaitDuration = callInfo.queueWaitDuration;
+                        // Avoid overflow. It is highly unlikely the queue wait duration would exceed 2^32 ms
+                        if (prevQueueWaitDuration + queueWaitTime > prevQueueWaitDuration) {
+                            callInfo.queueWaitDuration = Math.toIntExact(prevQueueWaitDuration + queueWaitTime);
+                        }
                     }
                 }
             }
