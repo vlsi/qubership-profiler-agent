@@ -31,7 +31,7 @@ public class Connectors {
                     long msRequestStartTime = msStartTime + delta;
                     long queueWaitTime = msCurrentTime - msRequestStartTime;
                     if (queueWaitTime > 0) {
-                        Profiler.getState().callInfo.queueWaitDuration += queueWaitTime;
+                        Profiler.getState().callInfo.addQueueWait(queueWaitTime);
                     }
                 }
             }
