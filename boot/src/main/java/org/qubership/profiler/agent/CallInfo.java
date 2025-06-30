@@ -148,6 +148,19 @@ public class CallInfo {
         return false;
     }
 
+    public void addQueueWait(long duration) {
+        if (duration <= 0) {
+            return;
+        }
+        int prevQueueWaitDuration = queueWaitDuration;
+        long nextQueueWaitDuration = prevQueueWaitDuration + duration;
+        // We do not want 64bit for queue wait duration, so we check for overflow here
+        // It is unlikely the want will need more than 2^32ms
+        if (nextQueueWaitDuration <= Integer.MAX_VALUE) {
+            queueWaitDuration = (int) nextQueueWaitDuration;
+        }
+    }
+
     public boolean anyFieldChanged() {
         return anyFieldChanged && !(anyFieldChanged = false);
     }
