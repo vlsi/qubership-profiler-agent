@@ -57,7 +57,7 @@ public class ConfigImpl {
         File newConfig = new File(configDir, configPath);
         if (!newConfig.exists())
             throw new IOException("Unable to use " + configPath + " as new config file since it does not exist");
-        if(!newConfig.getCanonicalPath().startsWith(configDir.getCanonicalPath())) {
+        if(!newConfig.toPath().normalize().startsWith(configDir.toPath())) {
             throw new IllegalArgumentException("Access denied. The path is outside of config folder.");
         }
         File configFilters = new File(configDir, CONFIG_FILTERS_OVERRIDE_FILE);

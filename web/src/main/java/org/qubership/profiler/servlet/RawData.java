@@ -42,7 +42,7 @@ public class RawData extends HttpServlet {
             File root = new File(DumpRootResolver.dumpRoot).getParentFile();
             File dirFile = new File(root, dir);
             File dirTypeFile = new File(dirFile, type);
-            if(!dirTypeFile.getCanonicalPath().startsWith(root.getCanonicalPath())) {
+            if(!dirTypeFile.toPath().normalize().startsWith(root.toPath())) {
                 throw new IllegalArgumentException("Access denied. The path is outside of dump folder.");
             }
 
