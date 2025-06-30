@@ -172,6 +172,9 @@ public class ProfilingTransformer implements ClassFileTransformer {
 
     private void storeTransformationResult(String name, byte[] bytes, String path) {
         File out = new File(path, name + ".class");
+        if (!out.toPath().normalize().startsWith(new File(path).toPath())) {
+            throw new IllegalArgumentException("Bad class name: " + name);
+        }
         log.trace("Storing class {} to {}", name, out);
         final File parentFile = out.getParentFile();
         if (!parentFile.exists() && !parentFile.mkdirs())
