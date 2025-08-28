@@ -22,6 +22,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
@@ -117,6 +118,7 @@ public class ProfilerTraceReaderTest {
         File file = ResourceUtils.getFile("classpath:storage/test_trace/trace/000001");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.FIRST_AND_LAST, ClobReadTypes.ALL_VALUES);
         List<ClobValue> clobArray = new ArrayList<ClobValue>(clobs);
+        Collections.sort(clobArray);
         assertEquals(2, clobArray.size());
         ClobValue clob = clobArray.get(0);
         assertEquals("sql", clob.folder);
