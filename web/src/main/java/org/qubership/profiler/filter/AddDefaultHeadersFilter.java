@@ -12,6 +12,9 @@ public class AddDefaultHeadersFilter implements Filter {
     public void doFilter(ServletRequest req, ServletResponse resp, FilterChain chain) throws ServletException, IOException {
         if (resp instanceof HttpServletResponse) {
             HttpServletResponse res = (HttpServletResponse) resp;
+            if (!res.containsHeader("Content-Security-Policy")) {
+                res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+            }
             res.setHeader("X-Frame-Options", "SAMEORIGIN");
             res.setHeader("X-XSS-Protection", "0");
             res.setHeader("X-content-Type-options", "nosniff");

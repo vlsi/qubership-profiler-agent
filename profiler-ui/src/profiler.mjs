@@ -30,11 +30,6 @@ import 'dygraphs/dist/dygraph.css';
 import { default as Dygraph } from 'dygraphs';
 import { Activator } from './activate_ide.mjs';
 
-// Prevent cross-frame attack
-// This works as follows: if a page is opened inside a frame,
-if (top.frames.length != 0)
-  top.location = self.document.location;
-
 jQuery.fn.firstParents = function(n) {
     var matched = [];
     var t = this[0].parentNode;
