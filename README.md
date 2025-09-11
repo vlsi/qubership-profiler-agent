@@ -44,7 +44,6 @@ Distribution tracing:
 * [Brave (Zipkin agent)](plugins/brave)
 * [Jaeger](plugins/jaeger)
 * [Ocelot](plugins/ocelot)
-* [Tracing](plugins/tracing)
 
 HTTP clients:
 
