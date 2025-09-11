@@ -17,6 +17,7 @@
     "jquery-notify": "git+https://github.com/ehynds/jquery-notify.git#1.5",
     "jquery.event.drag": "^2.2.2",
     "url-search-params-polyfill": "^8.2.5",
+    "color-themes-for-google-code-prettify": "^2.0.4",
     "datepair.js": "^0.4.17",
     "timepicker": "^1.14.1",
     "moment": "^2.30.1",

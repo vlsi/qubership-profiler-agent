@@ -1,6 +1,6 @@
 import { CT } from './profiler.mjs';
 import './activate_ide.mjs';
-import 'code-prettify/styles/desert.css';
+import 'color-themes-for-google-code-prettify/dist/themes/github-v2.css';
 import 'code-prettify/loader/prettify.js';
 import 'code-prettify/loader/lang-sql.js';
 

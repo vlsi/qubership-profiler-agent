@@ -1,5 +1,3 @@
-import '../styles/prof.css';
-
 import { default as $, jQuery } from './leaked-jquery.mjs';
 import 'jquery-bbq';
 import 'jquery-ui-themes/base/jquery-ui.css';
@@ -29,6 +27,7 @@ import { default as vkbeautify } from 'vkbeautify';
 import 'dygraphs/dist/dygraph.css';
 import { default as Dygraph } from 'dygraphs';
 import { Activator } from './activate_ide.mjs';
+import '../styles/prof.css';
 
 jQuery.fn.firstParents = function(n) {
     var matched = [];
