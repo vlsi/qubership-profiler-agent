@@ -256,25 +256,6 @@ ins {
     border: 2px solid red;
 }
 
-pre.prettyprint {
-    display: inline-block;
-    border: none;
-    vertical-align: text-top;
-    overflow-x: hidden;
-    overflow-y: auto;
-    max-height: 200px;
-}
-
-pre.lightbox {
-    background: white;
-    border: 1px solid gray;
-    left: 0;
-    max-height: none;
-    padding: 1em;
-    position: absolute;
-    z-index: 10;
-}
-
 .ui-buttonset .ui-button {
     margin-right: -.345em;
 }

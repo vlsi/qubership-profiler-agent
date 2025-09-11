@@ -261,6 +261,11 @@ code-prettify@^0.1.0:
   resolved "https://registry.yarnpkg.com/code-prettify/-/code-prettify-0.1.0.tgz#46870cc8c1a50d09bad539b33a983dbd4aa34b1e"
   integrity sha512-tNOWwXoF3ycqtvLCGPLYds2hKekmZfsPWinbRcLk6BBHBaSf+v+HJOvfg33VfVzYzvQ6zmVq+WO88oKweiJSQg==
 
+color-themes-for-google-code-prettify@^2.0.4:
+  version "2.0.4"
+  resolved "https://registry.yarnpkg.com/color-themes-for-google-code-prettify/-/color-themes-for-google-code-prettify-2.0.4.tgz#deeacf657fd68576864754d4e486d78dfdb1e784"
+  integrity sha512-4iwgVWCPDR1hVy/Og+ubHXu2FRZGqyUkdTWEb0oR/ZoBgbebQBl1xaebJh2wNo9vy+mKYANDDP5B1gQOC2mGvQ==
+
 datepair.js@^0.4.17:
   version "0.4.17"
   resolved "https://registry.yarnpkg.com/datepair.js/-/datepair.js-0.4.17.tgz#9bf1f0d0cc845c0e712737585cd7171d44a325e5"
