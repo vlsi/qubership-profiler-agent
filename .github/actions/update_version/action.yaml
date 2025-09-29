@@ -18,13 +18,16 @@ runs:
         token: ${{ inputs.token }}
         persist-credentials: true
 
-    - name: update version
+    - name: update version to ${{ inputs.version }}
       shell: bash
+      with:
+        VERSION: ${{ inputs.version }}
+        REF_NAME: ${{ github.ref_name }}
       # language=bash
       run: |
-        # Check if version needs to be updated to ${{ inputs.version }}
-        VERSION_LINE="profiler.version=${{ inputs.version }}"
-        if grep -q "^${VERSION_LINE}$" gradle.properties; then
+        # Check if version needs to be updated
+        VERSION_LINE="profiler.version=$VERSION"
+        if grep -Fqx -- "${VERSION_LINE}" gradle.properties; then
           echo "Version is already up to date"
           exit 0
         fi
@@ -34,8 +37,8 @@ runs:
 
         # Commit and push changes
         git add gradle.properties
-        git commit -m "chore: bump version to ${{ inputs.version }}" -m "[ci-skip]"
-        git push origin "${{ github.ref_name }}"
+        git commit -m "chore: bump version to $VERSION" -m "[ci-skip]"
+        git push origin "$REF_NAME"
 
     - name: Update the worktree, revert to the default token
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
