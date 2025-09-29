@@ -99,11 +99,11 @@ jobs:
           token: ${{ steps.app_token.outputs.token }}
           version: ${{ steps.release_version.outputs.version }}
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4
         with:
           distribution: zulu
-          java-version: 17
+          java-version: 21
           server-id: central
 
       # Publish to Central before generating a tag, so we don't need to drop the tag if
