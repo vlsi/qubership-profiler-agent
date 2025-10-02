@@ -20,7 +20,7 @@ runs:
 
     - name: update version to ${{ inputs.version }}
       shell: bash
-      with:
+      env:
         VERSION: ${{ inputs.version }}
         REF_NAME: ${{ github.ref_name }}
       # language=bash
