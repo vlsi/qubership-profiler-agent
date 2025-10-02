@@ -49,6 +49,7 @@ dependencies {
     nmcpAggregation(projects.boot)
     nmcpAggregation(projects.common)
     nmcpAggregation(projects.cli)
+    nmcpAggregation(projects.diagtools)
     nmcpAggregation(projects.dumper)
     nmcpAggregation(projects.installer)
     nmcpAggregation(projects.instrumenter)
