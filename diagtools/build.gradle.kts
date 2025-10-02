@@ -14,6 +14,7 @@ val platforms = mapOf(
     targetPlatform(OperatingSystemFamily.MACOS, MachineArchitecture.X86_64) to "darwin-amd64",
     targetPlatform(OperatingSystemFamily.LINUX, MachineArchitecture.X86_64) to "linux-amd64",
     targetPlatform(OperatingSystemFamily.MACOS, MachineArchitecture.ARM64) to "darwin-arm64",
+    targetPlatform(OperatingSystemFamily.LINUX, MachineArchitecture.ARM64) to "linux-arm64",
 )
 
 val binaries by configurations.creating {
