@@ -1,23 +1,12 @@
 plugins {
     id("build-logic.java-published-library")
     id("build-logic.test-junit5")
+    id("com.google.osdetector")
 }
 
 // https://github.com/gradle/gradle/pull/16627
 private inline fun <reified T : Named> AttributeContainer.attribute(attr: Attribute<T>, value: String) =
     attribute(attr, objects.named<T>(value))
-
-val testApp by sourceSets.creating
-
-val testAppJar by tasks.registering(Jar::class) {
-    group = LifecycleBasePlugin.BUILD_GROUP
-    description = "Creates a jar file for a small application for the profiler testing purposes"
-    archiveClassifier = "test-app"
-    from(testApp.output)
-    manifest {
-        attributes["Main-Class"] = "com.netcracker.profiler.testapp.Main"
-    }
-}
 
 // Note: the repository should be cloned under this path externally
 // GitHub Actions uses actions/checkout to clone the repository
@@ -37,13 +26,48 @@ val cloneBaseImageRepoIfNeeded by tasks.registering(Exec::class) {
     outputs.dir(baseImageRepo)
 }
 
-val copyInstallerZipToDockerArtifacts by tasks.registering(Copy::class) {
+val diagtoolsElements = configurations.dependencyScope("diagtoolsElements")
+
+dependencies {
+    diagtoolsElements(projects.diagtools)
+}
+
+val diagtoolsArchives = configurations.resolvable("diagtoolsArchives") {
+    extendsFrom(diagtoolsElements.get())
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.NATIVE_RUNTIME))
+        attribute(
+            OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE,
+            // We will test in a linux-based container
+            OperatingSystemFamily.LINUX
+        )
+        attribute(
+            MachineArchitecture.ARCHITECTURE_ATTRIBUTE,
+            // See https://github.com/trustin/os-maven-plugin/blob/43ed4d4bdc647ec369d152bfd18698f0997aa65b/src/main/java/kr/motd/maven/os/Detector.java#L192
+            when (osdetector.arch) {
+                "aarch_64" -> MachineArchitecture.ARM64
+                "x86_64" -> MachineArchitecture.X86_64
+                else -> TODO("Unsupported architecture: ${osdetector.arch}")
+            }
+        )
+    }
+}
+
+val copyInstallerZipToDockerArtifacts by tasks.registering(Sync::class) {
     description =
         "Copies profiler agent distribution to the Docker build directory (Docker can't use files outside of its build directory)"
     dependsOn(cloneBaseImageRepoIfNeeded)
     into(baseImageRepo.map { it.dir("local-artifacts") })
     from(installerZip)
+    from(diagtoolsArchives)
 }
+
+val buildMockCollectorImage by tasks.registering {
+    group = LifecycleBasePlugin.BUILD_GROUP
+    description = "Builds mock-collector Docker image for integration tests"
+}
+
+val coreBaseImageTag = "qubership/qubership-core-base-image:profiler-latest"
 
 val buildBaseImage by tasks.registering(Exec::class) {
     group = LifecycleBasePlugin.BUILD_GROUP
@@ -53,19 +77,37 @@ val buildBaseImage by tasks.registering(Exec::class) {
     workingDir(baseImageRepo)
     args("build")
     args("--file", "Dockerfile.java-alpine")
-    args("-t", "qubership/qubership-core-base-image:profiler-latest")
+    args("-t", coreBaseImageTag)
     args("--build-arg", "QUBERSHIP_PROFILER_ARTIFACT_SOURCE=local")
     args("--build-arg", "QUBERSHIP_PROFILER_VERSION=$version")
     args(".")
 }
 
+val testAppJarElements = configurations.dependencyScope("testAppJarElements") {
+    description = "Declares a dependency for test application"
+}
+
+val testAppJar = configurations.resolvable("testAppJar") {
+    description = "Resolves test application dependency"
+
+    extendsFrom(testAppJarElements.get())
+
+    attributes {
+        attribute(Category.CATEGORY_ATTRIBUTE, Category.LIBRARY)
+        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, LibraryElements.JAR)
+        attribute(Usage.USAGE_ATTRIBUTE, Usage.JAVA_RUNTIME)
+        attribute(Bundling.BUNDLING_ATTRIBUTE, Bundling.EXTERNAL)
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, buildParameters.targetJavaVersion)
+    }
+}
+
 tasks.test {
-    dependsOn(buildBaseImage, testAppJar)
+    dependsOn(buildBaseImage, buildMockCollectorImage, testAppJar)
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
             listOf(
-                "-Dqubership.profiler.test.java-base.root=${baseImageRepo.get().asFile.absolutePath}",
-                "-Dqubership.profiler.testapp.jar=${testAppJar.get().archiveFile.get().asFile.absolutePath}",
+                "-Dqubership.profiler.java-base-image.tag=$coreBaseImageTag",
+                "-Dqubership.profiler.testapp.jar=${testAppJar.get().singleFile.absolutePath}",
             )
         }
     )
@@ -87,7 +129,10 @@ val installerZipFiles = configurations.resolvable("installerZipFiles") {
 }
 
 dependencies {
-    testImplementation("org.testcontainers:junit-jupiter")
+    testAppJarElements(projects.testApp)
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation(projects.mockCollector)
+    testImplementation(projects.protoDefinition)
     installerZipElements(projects.boot)
     installerZipElements(projects.agent)
     installerZipElements(projects.runtime) {
