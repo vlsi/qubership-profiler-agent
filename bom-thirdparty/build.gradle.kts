@@ -31,5 +31,6 @@ dependencies {
         api("org.openjdk.jmc:flightrecorder:8.3.1")
         api("org.slf4j:slf4j-api:2.0.17")
         api("stax:stax-api:1.0.1")
+        api("io.micrometer:micrometer-core:1.15.5")
     }
 }

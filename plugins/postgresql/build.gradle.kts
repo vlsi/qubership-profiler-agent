@@ -6,7 +6,7 @@ plugins {
 
 dependencies {
     testImplementation("com.zaxxer:HikariCP")
-    testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
     testImplementation("org.postgresql:postgresql")
 }
