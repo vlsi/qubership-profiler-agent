@@ -1,21 +1,21 @@
 package com.netcracker.profiler.io;
 
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Profile;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.util.*;
 
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 
-@Component
-@Profile("filestorage")
+@Singleton
 public class CallReaderFactoryFile implements CallReaderFactory {
 
-    @Autowired
-    ApplicationContext context;
+    private final CallReaderFileFactory callReaderFileFactory;
+
+    @Inject
+    public CallReaderFactoryFile(CallReaderFileFactory callReaderFileFactory) {
+        this.callReaderFileFactory = callReaderFileFactory;
+    }
 
     public List<ICallReader> collectCallReaders(Map<String, String[]> params, TemporalRequestParams temporal, CallListener listener, CallFilterer filterer) throws IOException {
         return collectCallReaders(params, temporal, listener, filterer, null);
@@ -33,7 +33,7 @@ public class CallReaderFactoryFile implements CallReaderFactory {
             dumpDirs = dumpDirsArr == null ? null : new HashSet<String>(Arrays.asList(dumpDirsArr));
         }
 
-            cr = context.getBean(CallReaderFile.class, listener, filterer, nodes, readDictionary, dumpDirs);
+        cr = callReaderFileFactory.create(listener, filterer, nodes, readDictionary, dumpDirs);
         long clientServerTimeDiff = (long) (Math.abs(temporal.clientUTC - temporal.serverUTC) * 1.5);
         cr.setTimeFilterCondition(temporal.timerangeFrom - clientServerTimeDiff, temporal.timerangeTo + clientServerTimeDiff);
         return Collections.singletonList(cr);

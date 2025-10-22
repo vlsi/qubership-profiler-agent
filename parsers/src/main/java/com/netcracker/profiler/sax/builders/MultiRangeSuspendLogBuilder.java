@@ -1,59 +1,63 @@
 package com.netcracker.profiler.sax.builders;
 
-import com.netcracker.profiler.chart.Provider;
 import com.netcracker.profiler.io.SuspendLog;
 import com.netcracker.profiler.sax.raw.SuspendLogVisitor;
 import com.netcracker.profiler.util.ProfilerConstants;
 
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Profile;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
+import com.google.inject.assistedinject.Assisted;
 
 import java.util.Arrays;
+import java.util.function.Supplier;
 
-@Component
-@Scope("prototype")
-@Profile("filestorage")
-public class MultiRangeSuspendLogBuilder extends SuspendLogVisitor implements Provider<SuspendLog> {
-    private static int MAX_SIZE = 200000;
-    private static int DEFAULT_FIRST_RANGE_RATIO_PCT = 15;
-    private static int DEFAULT_MIDDLE_RANGE_RATIO_PCT = 70;
-    private static int DEFAULT_LAST_RANGE_RATIO_PCT = 15;
+import jakarta.inject.Inject;
 
-    private long middleRangeStartTime;
-    private long middleRangeEndTime;
-    private SuspendLogBuilder firstRangeSuspendLogBuilder;
-    private SuspendLogBuilder middleRangeSuspendLogBuilder;
-    private SuspendLogBuilder lastRangeSuspendLogBuilder;
-    private SuspendLog log;
+/**
+ * Prototype-scoped class - create instances via {@code MultiRangeSuspendLogBuilderFactory} or direct instantiation.
+ */
+public class MultiRangeSuspendLogBuilder extends SuspendLogVisitor implements Supplier<SuspendLog> {
+    private static final int MAX_SIZE = 200000;
+    private static final int DEFAULT_FIRST_RANGE_RATIO_PCT = 15;
+    private static final int DEFAULT_MIDDLE_RANGE_RATIO_PCT = 70;
+    private static final int DEFAULT_LAST_RANGE_RATIO_PCT = 15;
 
-    public MultiRangeSuspendLogBuilder(String rootReference, long middleRangeStartTime, long middleRangeEndTime, ApplicationContext context) {
-        this(1000, rootReference, middleRangeStartTime, middleRangeEndTime, context);
+    private final long middleRangeStartTime;
+    private final long middleRangeEndTime;
+    private final SuspendLogBuilder firstRangeSuspendLogBuilder;
+    private final SuspendLogBuilder middleRangeSuspendLogBuilder;
+    private final SuspendLogBuilder lastRangeSuspendLogBuilder;
+    private final SuspendLog log;
+
+    @Inject
+    public MultiRangeSuspendLogBuilder(
+            @Assisted("rootReference") String rootReference,
+            @Assisted("middleRangeStartTime") long middleRangeStartTime,
+            @Assisted("middleRangeEndTime") long middleRangeEndTime) {
+        this(1000, rootReference, middleRangeStartTime, middleRangeEndTime);
     }
 
-    public MultiRangeSuspendLogBuilder(int size, String rootReference, long middleRangeStartTime, long middleRangeEndTime, ApplicationContext context) {
-        this(size, MAX_SIZE, rootReference, middleRangeStartTime, middleRangeEndTime, context);
+    public MultiRangeSuspendLogBuilder(int size, String rootReference, long middleRangeStartTime, long middleRangeEndTime) {
+        this(size, MAX_SIZE, rootReference, middleRangeStartTime, middleRangeEndTime);
     }
 
-    public MultiRangeSuspendLogBuilder(int size, int maxSize, String rootReference, long middleRangeStartTime, long middleRangeEndTime, ApplicationContext context) {
-        this(ProfilerConstants.PROFILER_V1, size, maxSize, rootReference, middleRangeStartTime, middleRangeEndTime, context);
+    public MultiRangeSuspendLogBuilder(int size, int maxSize, String rootReference, long middleRangeStartTime, long middleRangeEndTime) {
+        this(ProfilerConstants.PROFILER_V1, size, maxSize, rootReference, middleRangeStartTime, middleRangeEndTime);
     }
 
-    protected MultiRangeSuspendLogBuilder(int api, int size, int maxSize, String rootReference, long middleRangeStartTime, long middleRangeEndTime,
-                                          ApplicationContext context) {
+    protected MultiRangeSuspendLogBuilder(int api, int size, int maxSize, String rootReference, long middleRangeStartTime, long middleRangeEndTime) {
         this(ProfilerConstants.PROFILER_V1, size, maxSize, rootReference, middleRangeStartTime, middleRangeEndTime,
-                DEFAULT_FIRST_RANGE_RATIO_PCT, DEFAULT_MIDDLE_RANGE_RATIO_PCT, DEFAULT_LAST_RANGE_RATIO_PCT, context);
+                DEFAULT_FIRST_RANGE_RATIO_PCT, DEFAULT_MIDDLE_RANGE_RATIO_PCT, DEFAULT_LAST_RANGE_RATIO_PCT);
     }
 
-    protected MultiRangeSuspendLogBuilder(int api, int size, int maxSize, String rootReference, long middleRangeStartTime, long middleRangeEndTime,
-                                          int firstRangeRatioPct, int middleRangeRatioPct, int lastRangeRatioPct, ApplicationContext context) {
+    protected MultiRangeSuspendLogBuilder(
+            int api, int size, int maxSize, String rootReference, long middleRangeStartTime, long middleRangeEndTime,
+            int firstRangeRatioPct, int middleRangeRatioPct, int lastRangeRatioPct) {
         super(api);
         this.middleRangeStartTime = middleRangeStartTime;
         this.middleRangeEndTime = middleRangeEndTime;
-        this.firstRangeSuspendLogBuilder = context.getBean(SuspendLogBuilder.class, api, (size * firstRangeRatioPct)/100, (maxSize * firstRangeRatioPct)/100, rootReference);
-        this.middleRangeSuspendLogBuilder = context.getBean(SuspendLogBuilder.class, api, (size * middleRangeRatioPct)/100, (maxSize * middleRangeRatioPct)/100, rootReference);
-        this.lastRangeSuspendLogBuilder = context.getBean(SuspendLogBuilder.class, api, (size * lastRangeRatioPct)/100, (maxSize * lastRangeRatioPct)/100, rootReference);
+        // Create SuspendLogBuilder instances directly instead of using ApplicationContext
+        this.firstRangeSuspendLogBuilder = new SuspendLogBuilder(api, (size * firstRangeRatioPct)/100, (maxSize * firstRangeRatioPct)/100, rootReference);
+        this.middleRangeSuspendLogBuilder = new SuspendLogBuilder(api, (size * middleRangeRatioPct)/100, (maxSize * middleRangeRatioPct)/100, rootReference);
+        this.lastRangeSuspendLogBuilder = new SuspendLogBuilder(api, (size * lastRangeRatioPct)/100, (maxSize * lastRangeRatioPct)/100, rootReference);
         this.log = new SuspendLog(new long[size], new int[size]);
     }
 

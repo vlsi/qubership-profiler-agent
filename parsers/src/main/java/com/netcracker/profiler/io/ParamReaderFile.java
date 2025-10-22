@@ -4,7 +4,10 @@ import com.netcracker.profiler.configuration.ParameterInfoDto;
 import com.netcracker.profiler.dump.DataInputStreamEx;
 import com.netcracker.profiler.util.IOHelper;
 
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
 import org.apache.commons.lang.StringUtils;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.EOFException;
 import java.io.File;
@@ -15,7 +18,34 @@ import java.util.*;
 public class ParamReaderFile extends ParamReader {
     File root;
 
-    public ParamReaderFile(File root) {
+    public static Class<? extends ParamReaderFile> getBestImplementation() {
+        if (doesClassExist("com.netcracker.profiler.agent.InflightCall_02")) {
+            return ParamReaderFromMemory_03.class;
+        }
+        if (doesClassExist("com.netcracker.profiler.agent.InflightCall_01")) {
+            return ParamReaderFromMemory_02.class;
+        }
+        if (doesClassExist("com.netcracker.profiler.agent.DumperPlugin_03")) {
+            return ParamReaderFromMemory_01.class;
+        }
+        if (doesClassExist("com.netcracker.profiler.agent.DumperPlugin_01") &&
+                doesClassExist("com.netcracker.profiler.agent.Configuration_01")) {
+            return ParamReaderFromMemory.class;
+        }
+        return ParamReaderFile.class;
+    }
+
+    private static boolean doesClassExist(String className) {
+        try {
+            Class.forName(className, false, ParamReader.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    @AssistedInject
+    public ParamReaderFile(@Assisted("root") @Nullable File root) {
         this.root = root;
     }
 

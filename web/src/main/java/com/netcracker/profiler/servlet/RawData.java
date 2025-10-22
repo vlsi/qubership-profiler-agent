@@ -1,7 +1,7 @@
 package com.netcracker.profiler.servlet;
 
 import com.netcracker.profiler.dump.DataInputStreamEx;
-import com.netcracker.profiler.dump.DumpRootResolver;
+import com.netcracker.profiler.guice.DumpRootLocation;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -10,15 +10,25 @@ import java.io.OutputStreamWriter;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * Retrieves raw stream from the
  */
+@Singleton
 public class RawData extends HttpServlet {
+    private final File dumpRoot;
+
+    @Inject
+    public RawData(@DumpRootLocation File dumpRoot) {
+        this.dumpRoot = dumpRoot;
+    }
+
     protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
         doGet(request, response);
     }
@@ -39,7 +49,7 @@ public class RawData extends HttpServlet {
             final String zipName = request.getPathInfo();
             zip.putNextEntry(new ZipEntry(zipName.substring(1, zipName.length() - 4)));
 
-            File root = new File(DumpRootResolver.dumpRoot).getParentFile();
+            File root = dumpRoot;
             File dirFile = new File(root, dir);
             File dirTypeFile = new File(dirFile, type);
             if(!dirTypeFile.toPath().normalize().startsWith(root.toPath())) {

@@ -1,14 +1,10 @@
 package com.netcracker.profiler.io;
 
-import org.springframework.context.annotation.Profile;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
-
 import java.util.List;
 
-@Component
-@Scope("prototype")
-@Profile("filestorage")
+/**
+ * Prototype-scoped class - create instances via {@code LoggedContainersInfoFactory}.
+ */
 public class LoggedContainersInfo {
     public List<String[]> listPodDetails(){
         return null;

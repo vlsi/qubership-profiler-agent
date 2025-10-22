@@ -7,19 +7,26 @@ import static org.apache.commons.lang.StringUtils.isNotBlank;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-import javax.xml.bind.DatatypeConverter;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 
+@Singleton
 public class DummySecurityService {
-    private boolean securityEnabled = false;
-    private User defaultUser;
-    private static volatile DummySecurityService instance;
     private static final Logger logger = LoggerFactory.getLogger(DummySecurityService.class);
 
-    public
-    User tryAuthenticate(String userName, String password) throws WinstoneAuthException {
+    private boolean securityEnabled = false;
+    private User defaultUser;
+
+    @Inject
+    public DummySecurityService() {
+        initialize();
+    }
+
+    public User tryAuthenticate(String userName, String password) throws WinstoneAuthException {
         if(!securityEnabled) {
             throw new IllegalStateException("Dummy security is disabled");
         }
@@ -52,24 +59,9 @@ public class DummySecurityService {
         try {
             MessageDigest md5 = MessageDigest.getInstance("MD5");
             md5.update(password.getBytes());
-            byte[] digest = md5.digest();
-            return DatatypeConverter.printHexBinary(digest);
+            return new BigInteger(1, md5.digest()).toString(16).toUpperCase();
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("Impossible to encrypt password", e);
         }
-    }
-
-    public static DummySecurityService getInstance() {
-        DummySecurityService localInstance = DummySecurityService.instance;
-        if (localInstance == null) {
-            synchronized (DummySecurityService.class) {
-                localInstance = DummySecurityService.instance;
-                if (localInstance == null) {
-                    instance = localInstance = new DummySecurityService();
-                    localInstance.initialize();
-                }
-            }
-        }
-        return localInstance;
     }
 }

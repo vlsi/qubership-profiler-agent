@@ -2,16 +2,25 @@ package com.netcracker.profiler.security;
 
 import java.io.IOException;
 
-import javax.servlet.Filter;
-import javax.servlet.FilterChain;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Inject;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.FilterConfig;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 public abstract class AbstractSecurityFilter implements Filter {
+
+    protected final DummySecurityService securityService;
+
+    @Inject
+    public AbstractSecurityFilter(DummySecurityService securityService) {
+        this.securityService = securityService;
+    }
+
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
 
@@ -20,7 +29,7 @@ public abstract class AbstractSecurityFilter implements Filter {
     @Override
     public final void doFilter(ServletRequest servletRequest, ServletResponse servletResponse,
                          FilterChain filterChain) throws IOException, ServletException {
-        if (DummySecurityService.getInstance().isSecurityEnabled() && servletRequest instanceof HttpServletRequest) {
+        if (securityService.isSecurityEnabled() && servletRequest instanceof HttpServletRequest) {
             doFilter((HttpServletRequest) servletRequest, (HttpServletResponse) servletResponse, filterChain);
         } else {
             filterChain.doFilter(servletRequest, servletResponse);

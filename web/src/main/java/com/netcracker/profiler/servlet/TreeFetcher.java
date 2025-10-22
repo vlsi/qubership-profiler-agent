@@ -10,6 +10,7 @@ import com.netcracker.profiler.output.layout.FileAppender;
 import com.netcracker.profiler.output.layout.Layout;
 import com.netcracker.profiler.output.layout.SinglePageLayout;
 import com.netcracker.profiler.output.layout.ZipLayout;
+import com.netcracker.profiler.sax.builders.SuspendLogBuilderFactory;
 import com.netcracker.profiler.servlet.layout.*;
 import com.netcracker.profiler.servlet.layout.ServletLayout;
 import com.netcracker.profiler.timeout.ProfilerTimeoutException;
@@ -22,15 +23,27 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.util.*;
 
-import javax.servlet.ServletConfig;
-import javax.servlet.ServletContext;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.servlet.ServletConfig;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
-
+@Singleton
 public class TreeFetcher extends HttpServletBase<CallTreeMediator, TreeFetcher.RequestContext> {
     private static SinglePageLayout.Template template;
+
+    private final FetchCallTreeFactory fetchCallTreeFactory;
+    private final SuspendLogBuilderFactory suspendLogBuilderFactory;
+
+    @Inject
+    public TreeFetcher(FetchCallTreeFactory fetchCallTreeFactory,
+                       SuspendLogBuilderFactory suspendLogBuilderFactory) {
+        this.fetchCallTreeFactory = fetchCallTreeFactory;
+        this.suspendLogBuilderFactory = suspendLogBuilderFactory;
+    }
 
     public static final String CHAIN_ID_KEY = "chain";
 
@@ -169,7 +182,7 @@ public class TreeFetcher extends HttpServletBase<CallTreeMediator, TreeFetcher.R
             String[] endParams = params.get("e");
             long begin = (beginParams != null && beginParams.length == 1) ? Long.parseLong(beginParams[0]) : Long.MIN_VALUE;
             long end = (endParams != null && endParams.length == 1) ? Long.parseLong(endParams[0]) : Long.MAX_VALUE;
-            return SpringBootInitializer.fetchCallTreeFactory().fetchCallTree(mediator, callIds, context.paramsTrimSize, begin, end);
+            return fetchCallTreeFactory.create(mediator, callIds, context.paramsTrimSize, begin, end);
         }
 
         dumpsFile = FileNameUtils.trimFileName(dumpsFile);
@@ -214,7 +227,7 @@ public class TreeFetcher extends HttpServletBase<CallTreeMediator, TreeFetcher.R
         }
 
         if (format == AnalyzeSourceFormat.DBMS_HPROF) {
-            return new FetchDbmsHprof(mediator, dumpsFile, SpringBootInitializer.getApplicationContext());
+            return new FetchDbmsHprof(mediator, dumpsFile, suspendLogBuilderFactory);
         }
 
         if (format == AnalyzeSourceFormat.STACKCOLLAPSE) {

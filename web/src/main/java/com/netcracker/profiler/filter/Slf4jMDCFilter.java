@@ -5,9 +5,11 @@ import org.slf4j.MDC;
 
 import java.io.IOException;
 
-import javax.servlet.*;
-import javax.servlet.http.HttpServletRequest;
+import jakarta.inject.Singleton;
+import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletRequest;
 
+@Singleton
 public class Slf4jMDCFilter implements Filter {
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {

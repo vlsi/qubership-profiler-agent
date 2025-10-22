@@ -5,25 +5,21 @@ import com.netcracker.profiler.io.SuspendLog;
 import com.netcracker.profiler.sax.raw.*;
 import com.netcracker.profiler.util.ProfilerConstants;
 
-import org.springframework.context.ApplicationContext;
-
 public class ProfiledTreeBuilder extends RepositoryVisitor {
     private final ProfiledTreeStreamVisitor sv;
     private final DictionaryBuilder db;
     private final SuspendLogBuilder sb;
     private final ClobValuesBuilder cb;
-    private final ApplicationContext context;
 
-    public ProfiledTreeBuilder(ProfiledTreeStreamVisitor sv, int paramsTrimSize, ApplicationContext context, String rootReference) {
-        this(ProfilerConstants.PROFILER_V1, sv, paramsTrimSize, context, rootReference);
+    public ProfiledTreeBuilder(ProfiledTreeStreamVisitor sv, int paramsTrimSize, SuspendLogBuilderFactory suspendLogBuilderFactory, String rootReference) {
+        this(ProfilerConstants.PROFILER_V1, sv, paramsTrimSize, suspendLogBuilderFactory, rootReference);
     }
 
-    protected ProfiledTreeBuilder(int api, ProfiledTreeStreamVisitor sv, int paramsTrimSize, ApplicationContext context, String rootReference) {
+    protected ProfiledTreeBuilder(int api, ProfiledTreeStreamVisitor sv, int paramsTrimSize, SuspendLogBuilderFactory suspendLogBuilderFactory, String rootReference) {
         super(api);
         this.sv = sv;
-        this.context = context;
         db = new DictionaryBuilder();
-        sb = context.getBean(SuspendLogBuilder.class, rootReference);
+        sb = suspendLogBuilderFactory.create(rootReference);
         cb = new ClobValuesBuilder(paramsTrimSize);
 
     }

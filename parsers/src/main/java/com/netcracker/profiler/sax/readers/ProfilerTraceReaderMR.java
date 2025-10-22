@@ -7,29 +7,27 @@ import com.netcracker.profiler.sax.raw.RepositoryVisitor;
 import com.netcracker.profiler.sax.raw.TreeRowid;
 import com.netcracker.profiler.timeout.ProfilerTimeoutException;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@Component
-@Scope("prototype")
+/**
+ * Prototype-scoped class - create instances via {@code ProfilerTraceReaderMRFactory}.
+ */
 public class ProfilerTraceReaderMR {
     private final MultiRepositoryVisitor mrv;
+    private final ProfilerTraceReaderFactory traceReaderFactory;
 
-    @Autowired
-    ProfilerTraceReaderFactory traceReaderFactory;
-
-    private ProfilerTraceReaderMR() {
-        throw new RuntimeException("no-args constructor not supported");
-    }
-
-    public ProfilerTraceReaderMR(MultiRepositoryVisitor mrv) {
+    @AssistedInject
+    public ProfilerTraceReaderMR(
+            @Assisted("mrv") MultiRepositoryVisitor mrv,
+            ProfilerTraceReaderFactory traceReaderFactory) {
         this.mrv = mrv;
+        this.traceReaderFactory = traceReaderFactory;
     }
 
     public void read(CallRowid[] callIds) {

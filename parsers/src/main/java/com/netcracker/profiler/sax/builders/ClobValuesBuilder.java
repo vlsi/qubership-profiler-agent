@@ -1,6 +1,5 @@
 package com.netcracker.profiler.sax.builders;
 
-import com.netcracker.profiler.chart.Provider;
 import com.netcracker.profiler.dom.ClobValues;
 import com.netcracker.profiler.io.exceptions.ErrorSupervisor;
 import com.netcracker.profiler.sax.raw.ClobValueVisitor;
@@ -9,8 +8,9 @@ import com.netcracker.profiler.sax.values.ClobValue;
 import com.netcracker.profiler.util.ProfilerConstants;
 
 import java.io.IOException;
+import java.util.function.Supplier;
 
-public class ClobValuesBuilder extends ClobValueVisitor implements Provider<ClobValues> {
+public class ClobValuesBuilder extends ClobValueVisitor implements Supplier<ClobValues> {
     private final ClobValues cv;
     private final int paramsTrimSize;
 

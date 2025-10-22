@@ -1,20 +1,19 @@
 package com.netcracker.profiler.sax.builders;
 
-import com.netcracker.profiler.chart.Provider;
 import com.netcracker.profiler.io.SuspendLog;
 import com.netcracker.profiler.sax.raw.SuspendLogVisitor;
 import com.netcracker.profiler.util.ProfilerConstants;
 
-import org.springframework.context.annotation.Profile;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
+import com.google.inject.assistedinject.Assisted;
 
-import javax.annotation.PostConstruct;
+import java.util.function.Supplier;
 
-@Component
-@Scope("prototype")
-@Profile("filestorage")
-public class SuspendLogBuilder extends SuspendLogVisitor implements Provider<SuspendLog> {
+import jakarta.inject.Inject;
+
+/**
+ * Prototype-scoped class - create instances via {@code SuspendLogBuilderFactory} or direct instantiation.
+ */
+public class SuspendLogBuilder extends SuspendLogVisitor implements Supplier<SuspendLog> {
     private static int MAX_SIZE = 100000;
 
     protected SuspendLog log;
@@ -26,7 +25,8 @@ public class SuspendLogBuilder extends SuspendLogVisitor implements Provider<Sus
     protected int maxSize;
     protected String rootReference;
 
-    public SuspendLogBuilder(String rootReference) {
+    @Inject
+    public SuspendLogBuilder(@Assisted("rootReference") String rootReference) {
         this(1000, rootReference);
     }
 
@@ -45,10 +45,7 @@ public class SuspendLogBuilder extends SuspendLogVisitor implements Provider<Sus
         this.dates = new long[size];
         this.delays = new int[size];
         this.rootReference = rootReference;
-    }
-
-    @PostConstruct
-    public void initLog(){
+        // Initialize log immediately instead of using @PostConstruct
         this.log = new SuspendLog(new long[0], new int[0]);
     }
 

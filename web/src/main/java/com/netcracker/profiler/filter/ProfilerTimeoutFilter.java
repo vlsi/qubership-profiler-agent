@@ -5,9 +5,11 @@ import com.netcracker.profiler.timeout.ProfilerTimeoutHandler;
 
 import java.io.IOException;
 
-import javax.servlet.*;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Singleton;
+import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletResponse;
 
+@Singleton
 public class ProfilerTimeoutFilter implements Filter {
     public void destroy() {
     }

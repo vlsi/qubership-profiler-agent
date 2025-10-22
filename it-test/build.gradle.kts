@@ -10,7 +10,6 @@ dependencies {
     implementation(projects.common)
     implementation(projects.instrumenter)
     implementation(projects.plugins.test)
-    testImplementation("org.springframework:spring-test")
     testFixturesImplementation(projects.boot)
     testFixturesImplementation(projects.common)
 }

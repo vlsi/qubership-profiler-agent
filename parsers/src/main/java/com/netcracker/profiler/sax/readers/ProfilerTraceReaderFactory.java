@@ -2,19 +2,8 @@ package com.netcracker.profiler.sax.readers;
 
 import com.netcracker.profiler.sax.raw.RepositoryVisitor;
 
-import org.springframework.context.ApplicationContext;
-import org.springframework.stereotype.Component;
+import com.google.inject.assistedinject.Assisted;
 
-@Component
-public class ProfilerTraceReaderFactory {
-
-    ApplicationContext context;
-
-    public ProfilerTraceReaderFactory(ApplicationContext context) {
-        this.context = context;
-    }
-
-    public ProfilerTraceReader newTraceReader(RepositoryVisitor rv, String rootReference){
-        return context.getBean(ProfilerTraceReader.class, rv, rootReference);
-    }
+public interface ProfilerTraceReaderFactory {
+    ProfilerTraceReader newTraceReader(@Assisted("rv") RepositoryVisitor rv, @Assisted("rootReference") String rootReference);
 }

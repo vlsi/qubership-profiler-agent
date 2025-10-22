@@ -29,7 +29,8 @@ plugins.withId("java") {
                 "com.netcracker.",
                 "",
                 "java.",
-                "javax."
+                "javax.",
+                "jakarta.",
             )
             removeUnusedImports()
             trimTrailingWhitespace()

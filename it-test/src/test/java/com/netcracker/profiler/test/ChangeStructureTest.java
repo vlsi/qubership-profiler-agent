@@ -9,7 +9,6 @@ import com.netcracker.profiler.test.pigs.TransactionPig;
 import com.netcracker.profiler.test.util.Randomizer;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -19,12 +18,13 @@ import java.lang.reflect.Method;
 
 public class ChangeStructureTest extends InitTransformers {
     @Test
-    public void instanceMethod() {
+    public void instanceMethod() throws Exception {
         ChangeStructurePig pig = new ChangeStructurePig();
         final int x = Randomizer.rnd.nextInt();
         final int y = Randomizer.rnd.nextInt();
 
-        int result = ReflectionTestUtils.invokeMethod(pig, "addedMethod$profiler", x, y);
+        Method method = pig.getClass().getDeclaredMethod("addedMethod$profiler", int.class, int.class);
+        int result = (int) method.invoke(pig, x, y);
         assertEquals(result, x + y);
     }
 
@@ -57,11 +57,12 @@ public class ChangeStructureTest extends InitTransformers {
     }
 
     @Test
-    public void addedMethod() {
+    public void addedMethod() throws Exception {
         ChangeStructurePig pig = new ChangeStructurePig();
         String test = "test";
         ChildChangeStructurePig ccsp = new ChildChangeStructurePig(test);
-        String result = ReflectionTestUtils.invokeMethod(pig, "addedMethodRunnable$profiler", ccsp);
+        Method method = pig.getClass().getDeclaredMethod("addedMethodRunnable$profiler", Runnable.class);
+        String result = (String) method.invoke(pig, ccsp);
         assertEquals(test, result);
     }
 

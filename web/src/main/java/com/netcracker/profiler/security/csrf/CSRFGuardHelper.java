@@ -2,7 +2,7 @@ package com.netcracker.profiler.security.csrf;
 
 import java.util.UUID;
 
-import javax.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpSession;
 
 public class CSRFGuardHelper {
     public static final String CSRF_TOKEN_P = "CSRF_TOKEN";

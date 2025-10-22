@@ -12,6 +12,6 @@ dependencies {
     implementation("net.sf.trove4j:trove4j")
     implementation("org.ow2.asm:asm-commons")
     implementation("org.ow2.asm:asm-util")
-    implementation("org.springframework.boot:spring-boot")
+    implementation("com.google.inject:guice")
     testImplementation("commons-io:commons-io")
 }

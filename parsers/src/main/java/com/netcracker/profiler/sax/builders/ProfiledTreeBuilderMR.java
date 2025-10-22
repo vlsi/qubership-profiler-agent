@@ -7,26 +7,24 @@ import com.netcracker.profiler.sax.raw.MultiRepositoryVisitor;
 import com.netcracker.profiler.sax.raw.RepositoryVisitor;
 import com.netcracker.profiler.util.ProfilerConstants;
 
-import org.springframework.context.ApplicationContext;
-
 public class ProfiledTreeBuilderMR extends MultiRepositoryVisitor {
     private final ProfiledTreeStreamVisitor sv;
     private final int paramsTrimSize;
-    private final ApplicationContext context;
+    private final SuspendLogBuilderFactory suspendLogBuilderFactory;
 
-    public ProfiledTreeBuilderMR(ProfiledTreeStreamVisitor sv, ApplicationContext context) {
-        this(ProfilerConstants.PROFILER_V1, sv, Integer.MAX_VALUE, context);
+    public ProfiledTreeBuilderMR(ProfiledTreeStreamVisitor sv, SuspendLogBuilderFactory suspendLogBuilderFactory) {
+        this(ProfilerConstants.PROFILER_V1, sv, Integer.MAX_VALUE, suspendLogBuilderFactory);
     }
 
-    public ProfiledTreeBuilderMR(ProfiledTreeStreamVisitor sv, int paramsTrimSize, ApplicationContext context) {
-        this(ProfilerConstants.PROFILER_V1, sv, paramsTrimSize, context);
+    public ProfiledTreeBuilderMR(ProfiledTreeStreamVisitor sv, int paramsTrimSize, SuspendLogBuilderFactory suspendLogBuilderFactory) {
+        this(ProfilerConstants.PROFILER_V1, sv, paramsTrimSize, suspendLogBuilderFactory);
     }
 
-    protected ProfiledTreeBuilderMR(int api, ProfiledTreeStreamVisitor sv, int paramsTrimSize, ApplicationContext context) {
+    protected ProfiledTreeBuilderMR(int api, ProfiledTreeStreamVisitor sv, int paramsTrimSize, SuspendLogBuilderFactory suspendLogBuilderFactory) {
         super(api);
         this.sv = sv;
         this.paramsTrimSize = paramsTrimSize;
-        this.context = context;
+        this.suspendLogBuilderFactory = suspendLogBuilderFactory;
     }
 
     @Override
@@ -36,7 +34,7 @@ public class ProfiledTreeBuilderMR extends MultiRepositoryVisitor {
         // Otherwise trees will get stuck until repository.visitDictionaryReady
         if (this.sv instanceof MergeTrees)
             delay = new MergeTrees(delay);
-        return new ProfiledTreeBuilder(delay, paramsTrimSize, context, rootReference);
+        return new ProfiledTreeBuilder(delay, paramsTrimSize, suspendLogBuilderFactory, rootReference);
     }
 
     @Override

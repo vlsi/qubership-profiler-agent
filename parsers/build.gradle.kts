@@ -9,11 +9,13 @@ dependencies {
     implementation(projects.common)
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("commons-lang:commons-lang")
-    implementation("javax:javaee-api")
+    implementation("jakarta.servlet:jakarta.servlet-api")
     implementation("org.openjdk.jmc:common")
     implementation("org.openjdk.jmc:flightrecorder")
-    implementation("org.springframework:spring-context")
+    implementation("com.google.inject:guice")
+    implementation("com.google.inject.extensions:guice-assistedinject")
     testImplementation("org.mockito:mockito-core")
+    testImplementation(projects.testkit)
 }
 
 // https://github.com/gradle/gradle/pull/16627

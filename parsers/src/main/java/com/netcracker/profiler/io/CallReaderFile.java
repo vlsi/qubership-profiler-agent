@@ -4,17 +4,17 @@ import com.netcracker.profiler.chart.UnaryFunction;
 import com.netcracker.profiler.configuration.ParameterInfoDto;
 import com.netcracker.profiler.dump.DataInputStreamEx;
 import com.netcracker.profiler.dump.DumperDetector;
+import com.netcracker.profiler.guice.DumpRootLocation;
+import com.netcracker.profiler.io.call.CallDataReaderFactory;
 import com.netcracker.profiler.sax.factory.SuspendLogFactory;
 import com.netcracker.profiler.timeout.ProfilerTimeoutHandler;
 import com.netcracker.profiler.util.ProfilerConstants;
 import com.netcracker.profiler.utils.CommonUtils;
 
+import com.google.inject.assistedinject.Assisted;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
 
 import java.io.EOFException;
 import java.io.File;
@@ -23,8 +23,11 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
-@Component
-@Scope("prototype")
+import jakarta.inject.Inject;
+
+/**
+ * Prototype-scoped class - create instances via {@code CallReaderFileFactory}.
+ */
 public class CallReaderFile extends CallReader {
     public static final boolean READ_CALL_RANGES = Boolean.parseBoolean(System.getProperty("com.netcracker.profiler.Profiler.READ_CALL_RANGES", "true"));
     public static final boolean READ_CALLS_DICTIONARY = Boolean.parseBoolean(System.getProperty("com.netcracker.profiler.Profiler.READ_CALLS_DICTIONARY", "true"));
@@ -32,14 +35,10 @@ public class CallReaderFile extends CallReader {
     public static final int CALLS_SCANNER_UPPER_BOUND_MINUTES = Integer.getInteger("profiler.CALLS_SCANNER_UPPER_BOUND_MINUTES", 60);
     private final static Logger logger = LoggerFactory.getLogger(CallReaderFile.class);
 
-    @Value("${com.netcracker.profiler.DUMP_ROOT_LOCATION}")
-    private File rootFile;
-
-    @Autowired
-    ParamReaderFactory paramReaderFactory;
-
-    @Autowired
-    SuspendLogFactory suspendLogFactory;
+    private final File rootFile;
+    private final ParamReaderFileFactory paramReaderFileFactory;
+    private final SuspendLogFactory suspendLogFactory;
+    private final CallDataReaderFactory callDataReaderFactory;
 
     private File inFlightRoot;
     private String inFlightRootPath;
@@ -48,8 +47,8 @@ public class CallReaderFile extends CallReader {
     private String beginPath;
     private String endPath;
 
-    private Set<String> nodes;
-    private Set<String> dumpDirs;
+    private final @Nullable Set<String> nodes;
+    private final @Nullable Set<String> dumpDirs;
     private boolean readDictionary = true;
 
     private long durationFrom = 0;
@@ -83,28 +82,28 @@ public class CallReaderFile extends CallReader {
         }
     };
 
-    private CallReaderFile() {
-        super(null, null);
-        throw new RuntimeException("No-args not supported");
-    }
-
-    public CallReaderFile(CallListener callback, CallFilterer cf) {
-        this(callback, cf, null);
-    }
-
-    public CallReaderFile(CallListener callback, CallFilterer cf, Set<String> nodes) {
-        this(callback, cf, nodes, true);
-    }
-
-    public CallReaderFile(CallListener callback, CallFilterer cf, Set<String> nodes, boolean readDictionary) {
-        this(callback, cf, nodes, readDictionary, null);
-    }
-
-    public CallReaderFile(CallListener callback, CallFilterer cf, Set<String> nodes, boolean readDictionary, Set<String> dumpDirs) {
+    /**
+     * @see CallReaderFileFactory
+     */
+    @Inject
+    public CallReaderFile(
+            @Assisted("callback") CallListener callback,
+            @Assisted("filterer") CallFilterer cf,
+            @Nullable @Assisted("nodes") Set<String> nodes,
+            @Assisted("readDictionary") boolean readDictionary,
+            @Nullable @Assisted("dumpDirs") Set<String> dumpDirs,
+            @DumpRootLocation File rootFile,
+            ParamReaderFileFactory paramReaderFileFactory,
+            SuspendLogFactory suspendLogFactory,
+            CallDataReaderFactory callDataReaderFactory) {
         super(callback, cf);
         this.nodes = nodes;
         this.readDictionary = readDictionary;
         this.dumpDirs = dumpDirs;
+        this.rootFile = rootFile;
+        this.paramReaderFileFactory = paramReaderFileFactory;
+        this.suspendLogFactory = suspendLogFactory;
+        this.callDataReaderFactory = callDataReaderFactory;
         if(cf instanceof DurationFilterer) {
             DurationFilterer durationFilterer = (DurationFilterer) cf;
             this.durationFrom = durationFilterer.getDurationFrom();
@@ -112,8 +111,13 @@ public class CallReaderFile extends CallReader {
         }
     }
 
+    @Override
+    protected CallDataReaderFactory getCallDataReaderFactory() {
+        return callDataReaderFactory;
+    }
+
     protected void innerFind() {
-        Object[] inFlights = paramReaderFactory.getInstance(null).getInflightCalls();
+        Object[] inFlights = paramReaderFileFactory.create(null).getInflightCalls();
         if (inFlights != null) {
             inFlightRoot = (File) inFlights[0];
             inFlightRootPath = inFlightRoot.getAbsolutePath();
@@ -186,7 +190,7 @@ public class CallReaderFile extends CallReader {
             }
 
             BitSet requiredIds = new BitSet();
-            final ParamReader paramReader = paramReaderFactory.getInstance(root.getAbsolutePath());
+            final ParamReader paramReader = paramReaderFileFactory.create(root);
             Map<String, ParameterInfoDto> paramInfo = paramReader.fillParamInfo(exceptions, root.getAbsolutePath());
             List<String> tags;
             boolean useCallsDictionary = false;
@@ -372,8 +376,8 @@ public class CallReaderFile extends CallReader {
 
         if (result.isEmpty()) return;
 
-        final List<String> tags = paramReaderFactory.getInstance(inFlightRoot.getAbsolutePath()).fillTags(requiredIds, exceptions);
-        final Map<String, ParameterInfoDto> paramInfo = paramReaderFactory.getInstance(inFlightRoot.getAbsolutePath()).fillParamInfo(exceptions, inFlightRoot.getAbsolutePath());
+        final List<String> tags = paramReaderFileFactory.create(inFlightRoot).fillTags(requiredIds, exceptions);
+        final Map<String, ParameterInfoDto> paramInfo = paramReaderFileFactory.create(inFlightRoot).fillParamInfo(exceptions, inFlightRoot.getAbsolutePath());
         callback.processCalls(getJSReference(inFlightRoot), result, tags, paramInfo, requiredIds);
     }
 

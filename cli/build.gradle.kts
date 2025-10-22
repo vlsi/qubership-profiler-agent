@@ -12,6 +12,8 @@ dependencies {
     implementation("ch.qos.logback:logback-classic")
     implementation("ch.qos.logback:logback-core")
     implementation("net.sourceforge.argparse4j:argparse4j")
+    implementation("com.google.inject:guice")
+    testImplementation(projects.testkit)
     runtimeOnly("javax:javaee-api")
 }
 

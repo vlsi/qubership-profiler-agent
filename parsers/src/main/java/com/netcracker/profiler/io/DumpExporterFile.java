@@ -1,16 +1,13 @@
 package com.netcracker.profiler.io;
 
-import org.springframework.context.annotation.Profile;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.io.OutputStream;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Singleton;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
-@Component
-@Profile("filestorage")
+@Singleton
 public class DumpExporterFile implements IDumpExporter {
     @Override
     public void exportDump(HttpServletRequest req, HttpServletResponse resp) throws IOException {

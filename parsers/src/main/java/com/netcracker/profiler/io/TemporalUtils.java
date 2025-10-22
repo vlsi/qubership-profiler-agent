@@ -1,7 +1,7 @@
 package com.netcracker.profiler.io;
 
 
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 
 public class TemporalUtils {
     public static TemporalRequestParams parseTemporal(HttpServletRequest request){

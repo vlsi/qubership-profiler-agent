@@ -4,7 +4,7 @@ import com.netcracker.profiler.configuration.ParameterInfoDto;
 import com.netcracker.profiler.dump.DataInputStreamEx;
 import com.netcracker.profiler.dump.ParamTypes;
 import com.netcracker.profiler.io.ParamReader;
-import com.netcracker.profiler.io.ParamReaderFactory;
+import com.netcracker.profiler.io.ParamReaderFileFactory;
 import com.netcracker.profiler.io.exceptions.ErrorSupervisor;
 import com.netcracker.profiler.sax.raw.*;
 import com.netcracker.profiler.sax.values.ClobValue;
@@ -16,8 +16,6 @@ import com.netcracker.profiler.util.IOHelper;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
 
 import java.io.EOFException;
 import java.io.File;
@@ -31,24 +29,15 @@ public abstract class ProfilerTraceReader {
     private final static Logger log = LoggerFactory.getLogger(ProfilerTraceReader.class);
 
     protected final RepositoryVisitor rv;
+    protected final ParamReaderFileFactory paramReaderFileFactory;
 
     protected String rootReference;
     protected List<TreeRowid> treeRowids = new ArrayList<>();
 
-    @Autowired
-    protected ApplicationContext applicationContext;
-
-    @Autowired
-    protected ParamReaderFactory paramReaderFactory;
-
-    public ProfilerTraceReader(RepositoryVisitor rv, String rootReference) {
+    public ProfilerTraceReader(RepositoryVisitor rv, String rootReference, ParamReaderFileFactory paramReaderFileFactory) {
         this.rv = rv;
         this.rootReference = rootReference;
-    }
-
-    public ProfilerTraceReader() {
-        this(null, null);
-        throw new RuntimeException("No-args not supported");
+        this.paramReaderFileFactory = paramReaderFileFactory;
     }
 
     public interface DumperConstants {
@@ -404,9 +393,11 @@ public abstract class ProfilerTraceReader {
         return uniqueClobIds;
     }
 
-    protected SuspendLogReader suspendLogReader(SuspendLogVisitor sv, long begin, long end) {
-        return applicationContext.getBean(SuspendLogReader.class, sv, rootReference, begin, end);
-    }
+    /**
+     * Create a SuspendLogReader for reading suspend logs.
+     * Subclasses must provide implementation based on their storage type.
+     */
+    protected abstract SuspendLogReader suspendLogReader(SuspendLogVisitor sv, long begin, long end);
 
     protected SuspendLogReader suspendLogReader(SuspendLogVisitor sv) {
         return suspendLogReader(sv, Long.MIN_VALUE, Long.MAX_VALUE);
@@ -426,7 +417,7 @@ public abstract class ProfilerTraceReader {
     }
 
     protected ParamReader paramReader() {
-        return paramReaderFactory.getInstance(rootReference);
+        return paramReaderFileFactory.create(rootReference == null ? null : new File(rootReference));
     }
 
     protected void readDictionary(BitSet ids) {

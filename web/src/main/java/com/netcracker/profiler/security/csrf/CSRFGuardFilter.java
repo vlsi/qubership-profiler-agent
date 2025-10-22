@@ -6,11 +6,13 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 
-import javax.servlet.*;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
+import jakarta.inject.Singleton;
+import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
+@Singleton
 public class CSRFGuardFilter implements Filter {
     private static final Logger log = LoggerFactory.getLogger(CSRFGuardFilter.class);
 

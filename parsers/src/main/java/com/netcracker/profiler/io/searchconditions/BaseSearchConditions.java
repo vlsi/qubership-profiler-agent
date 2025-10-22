@@ -7,27 +7,27 @@ import com.netcracker.profiler.io.Call;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.inject.assistedinject.Assisted;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
-@Component
-@Scope("prototype")
-@Profile("filestorage")
+import jakarta.inject.Inject;
+
+/**
+ * Prototype-scoped class - create instances via {@code BaseSearchConditionsFactory}.
+ */
 public class BaseSearchConditions {
     private static final Logger log = LoggerFactory.getLogger(BaseSearchConditions.class);
 
-    private String conditionsStr;
+    private final String conditionsStr;
     //root condition is normalized into normal disjunctive form: OR-> AND -> NOT structure
-    private LogicalCondition rootCondition;
+    private final LogicalCondition rootCondition;
     protected Date globalDateFrom;
     protected Date globalDateTo;
 
@@ -45,12 +45,11 @@ public class BaseSearchConditions {
     protected Map<String, String> namespaces = new HashMap<String, String>();
     protected Map<String, Date[]> podLifetimes;
 
-
-    protected BaseSearchConditions() {
-        throw new RuntimeException("no-args not supported");
-    }
-
-    public BaseSearchConditions(String conditionsStr, Date globalDateFrom, Date globalDateTo) throws IOException {
+    @Inject
+    public BaseSearchConditions(
+            @Assisted("searchConditionsStr") String conditionsStr,
+            @Assisted("dateFrom") Date globalDateFrom,
+            @Assisted("dateTo") Date globalDateTo) throws IOException {
         this.conditionsStr = conditionsStr;
         this.rootCondition = parseConditions(conditionsStr);
         this.globalDateFrom = globalDateFrom;

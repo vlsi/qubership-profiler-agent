@@ -4,11 +4,10 @@ import static com.netcracker.profiler.util.ProfilerConstants.CALL_HEADER_MAGIC;
 
 import com.netcracker.profiler.chart.UnaryFunction;
 import com.netcracker.profiler.dump.DataInputStreamEx;
-import com.netcracker.profiler.dump.DumpRootResolver;
+import com.netcracker.profiler.guice.DumpRootLocation;
 import com.netcracker.profiler.io.DurationParser;
 import com.netcracker.profiler.sax.readers.ProfilerTraceReaderFile;
 import com.netcracker.profiler.sax.values.ClobValue;
-import com.netcracker.profiler.servlet.SpringBootInitializer;
 import com.netcracker.profiler.util.IOHelper;
 import com.netcracker.profiler.utils.CommonUtils;
 
@@ -23,10 +22,12 @@ import java.util.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import jakarta.inject.Inject;
+
 /**
  * Exports subset of collected data.
  */
-public class ExportDump extends ListServers {
+public class ExportDump implements Command {
     public static final Logger log = LoggerFactory.getLogger(ExportDump.class);
     public static final String DEFAULT_FILE_NAME = "esc_startdate_enddate.zip";
 
@@ -55,6 +56,8 @@ public class ExportDump extends ListServers {
     int totalFiles;
     long totalBytes;
 
+    private final File dumpRoot;
+
     private final byte[] tmp = new byte[65536];
 
     private final static Comparator<Long> LONG_COMPARATOR = new Comparator<Long>() {
@@ -62,6 +65,17 @@ public class ExportDump extends ListServers {
             return o1.compareTo(o2);
         }
     };
+
+    private final static FileFilter DIRECTORY_FILTER = new FileFilter() {
+        public boolean accept(File pathname) {
+            return pathname.isDirectory();
+        }
+    };
+
+    @Inject
+    public ExportDump(@DumpRootLocation File dumpRoot) {
+        this.dumpRoot = dumpRoot;
+    }
 
     private static boolean containsOnlyDigits(String value) {
         for (int i = 0; i < value.length(); i++) {
@@ -133,9 +147,6 @@ public class ExportDump extends ListServers {
     };
 
     public int accept(Namespace args) {
-        setupDumpRoot(args);
-        SpringBootInitializer.init();
-
         TimeZone tz = TimeZone.getTimeZone(args.getString("time_zone"));
 
         String endDateStr = args.getString("end_date");
@@ -186,9 +197,8 @@ public class ExportDump extends ListServers {
         SimpleDateFormat sdf = new SimpleDateFormat("'" + File.separatorChar + "'yyyy'" + File.separatorChar + "'MM'" + File.separatorChar + "'dd");
         endPath = endDate == Long.MAX_VALUE ? null : sdf.format(endDate) + File.separatorChar + endDate;
 
-        File dumpRoot = getDumpRoot();
         if (dumpRoot == null) {
-            log.warn("No dump path found - {}. Please check path to ESC dump (--dump-root)", DumpRootResolver.dumpRoot);
+            log.warn("No dump path found. Please check path to ESC dump (--dump-root)");
             return -2;
         }
 

@@ -5,14 +5,22 @@ import static com.netcracker.profiler.security.SecurityConstants.LAST_USER_URI;
 
 import java.io.IOException;
 
-import javax.servlet.FilterChain;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.FilterConfig;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
+@Singleton
 public class DummySecurityFilter extends AbstractSecurityFilter {
+    @Inject
+    public DummySecurityFilter(DummySecurityService securityService) {
+        super(securityService);
+    }
+
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
 

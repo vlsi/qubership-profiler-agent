@@ -1,10 +1,10 @@
 package com.netcracker.profiler.cli;
 
 
-import com.netcracker.profiler.dump.DumpRootResolver;
+import com.netcracker.profiler.guice.DumpRootLocation;
 import com.netcracker.profiler.io.DurationParser;
+import com.netcracker.profiler.io.ExcelExporter;
 import com.netcracker.profiler.io.TemporalRequestParams;
-import com.netcracker.profiler.servlet.SpringBootInitializer;
 
 import net.sourceforge.argparse4j.inf.Namespace;
 import org.slf4j.Logger;
@@ -14,10 +14,14 @@ import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
 /**
  * Exports subset of collected data.
  */
-public class ExportExcel extends ListServers {
+@Singleton
+public class ExportExcel implements Command {
     public static final Logger log = LoggerFactory.getLogger(ExportExcel.class);
     public static final String DEFAULT_FILE_NAME = "esc_calls_startdate_enddate.xlsx";
 
@@ -31,11 +35,16 @@ public class ExportExcel extends ListServers {
     private int minDigitsInId;
     private boolean disableDefaultUrlReplacePatterns;
     List<String> urlReplacePatterns;
+    private final File dumpRoot;
+    private final ExcelExporter excelExporter;
+
+    @Inject
+    public ExportExcel(@DumpRootLocation File dumpRoot, ExcelExporter excelExporter) {
+        this.dumpRoot = dumpRoot;
+        this.excelExporter = excelExporter;
+    }
 
     public int accept(Namespace args) {
-        setupDumpRoot(args);
-        SpringBootInitializer.init();
-
         TimeZone tz = TimeZone.getTimeZone(args.getString("time_zone"));
 
         String endDateStr = args.getString("end_date");
@@ -82,9 +91,8 @@ public class ExportExcel extends ListServers {
     private int runExport() throws IOException {
         System.setProperty("com.netcracker.profiler.agent.Profiler.MAX_CALLS_FOR_AGGREGATE_TO_EXCEL", "-1");
         System.setProperty("com.netcracker.profiler.agent.Profiler.MAX_DISTINCT_CALLS_FOR_AGGREGATE_TO_EXCEL", "-1");
-        File dumpRoot = getDumpRoot();
         if (dumpRoot == null) {
-            log.warn("No dump path found - {}. Please check path to ESC dump (--dump-root)", DumpRootResolver.dumpRoot);
+            log.warn("No dump path found. Please check path to ESC dump (--dump-root)");
             return -2;
         }
 
@@ -100,7 +108,7 @@ public class ExportExcel extends ListServers {
             params.put("disableDefaultUrlReplacePatterns", new String[] {String.valueOf(disableDefaultUrlReplacePatterns)});
             params.put("nodes", selectedServers == null ? null : selectedServers.toArray(new String[] {}));
 
-            SpringBootInitializer.excelExporter().export(temporal, params, os);
+            excelExporter.export(temporal, params, os);
         } catch (FileNotFoundException e) {
             log.error("Unable to open output file " + fileName, e);
             throw e;

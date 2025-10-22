@@ -1,6 +1,7 @@
 package com.netcracker.profiler.cli;
 
 import com.netcracker.profiler.dump.DumpRootResolver;
+import com.netcracker.profiler.guice.ParsersModule;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -8,12 +9,15 @@ import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.ConsoleAppender;
+import com.google.inject.Guice;
+import com.google.inject.Injector;
 import net.sourceforge.argparse4j.ArgumentParserBuilder;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.impl.Arguments;
 import net.sourceforge.argparse4j.inf.*;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.util.TimeZone;
 
 /**
@@ -48,7 +52,7 @@ public class Main {
                 .addParser("list-servers")
                 .defaultHelp(true)
                 .help("list valid server names for export-dump command")
-                .setDefault(COMMAND_ID, new ListServers());
+                .setDefault(COMMAND_ID, ListServers.class);
         addDumpRootArg(listServers);
 
         Subparser exportDump = subparsers
@@ -58,7 +62,7 @@ public class Main {
                 .help("skips export, just scans the folders and prints the estimated size of the archive");
         exportDump.addArgument("-q", "--skip-details").action(Arguments.storeTrue())
                 .help("exports only high-level information, skips export of profiling trees");
-        addExportArgs(exportDump, new ExportDump(), ExportDump.DEFAULT_FILE_NAME);
+        addExportArgs(exportDump, ExportDump.class, ExportDump.DEFAULT_FILE_NAME);
 
         Subparser exportExcel = subparsers
                 .addParser("export-excel")
@@ -78,7 +82,7 @@ public class Main {
                         "$id$ : the same as *, but matched symbols will be replaced to $id$ in result. It should be used for replacing of ids.\n" +
                         "Examples: /api/csrd/threesixty/$id$/*\n" +
                         "**/wfm/appointment/$id$/*");
-        addExportArgs(exportExcel, new ExportExcel(), ExportExcel.DEFAULT_FILE_NAME);
+        addExportArgs(exportExcel, ExportExcel.class, ExportExcel.DEFAULT_FILE_NAME);
 
         if (args.length == 0) {
             parser.printHelp();
@@ -89,14 +93,32 @@ public class Main {
 
         configureLogger(ns);
 
-        Command cmd = ns.get(COMMAND_ID);
+        Injector injector = Guice.createInjector(new ParsersModule(getDumpServerLocation(ns)));
+
+        Class<? extends Command> cmdClass = ns.get(COMMAND_ID);
+        Command cmd = injector.getInstance(cmdClass);
+
         int code = cmd.accept(ns);
         if (code != 0) {
             System.exit(code);
         }
     }
 
-    private static Subparser addExportArgs(Subparser subparser, Command command, String defaultOutputFileName) {
+    private static File getDumpServerLocation(Namespace args) {
+        String dumpRoot = args.getString("dump_root");
+        if (dumpRoot == null) {
+            return null;
+        }
+        File root = new File(dumpRoot);
+        if ("dump".equals(root.getName())) {
+            dumpRoot += File.separatorChar + "default";
+        } else if (new File(root, "dump").exists()) {
+            dumpRoot += File.separatorChar + "dump" + File.separatorChar + "default";
+        }
+        return new File(dumpRoot);
+    }
+
+    private static Subparser addExportArgs(Subparser subparser, Class<? extends Command> command, String defaultOutputFileName) {
         subparser = subparser
                 .defaultHelp(true)
                 .epilog(DATE_FORMATS_EPILOG);
