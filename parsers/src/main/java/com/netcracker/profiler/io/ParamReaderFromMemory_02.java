@@ -3,10 +3,15 @@ package com.netcracker.profiler.io;
 import com.netcracker.profiler.agent.InflightCall;
 import com.netcracker.profiler.agent.InflightCall_01;
 
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
 import java.io.File;
 
 public class ParamReaderFromMemory_02 extends ParamReaderFromMemory_01 {
-    public ParamReaderFromMemory_02(File root) {
+    @AssistedInject
+    public ParamReaderFromMemory_02(@Assisted("root") @Nullable File root) {
         super(root);
         InflightCall_01.class.getName();
     }

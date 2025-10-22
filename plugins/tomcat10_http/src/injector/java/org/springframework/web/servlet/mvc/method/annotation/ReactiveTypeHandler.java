@@ -4,13 +4,14 @@ import com.netcracker.profiler.agent.Profiler;
 import com.netcracker.profiler.agent.http.HttpServletLogUtils;
 import com.netcracker.profiler.agent.http.ServletRequestAdapter;
 
-import jakarta.servlet.http.HttpServletResponse;
 import org.apache.catalina.connector.Request;
 import org.apache.catalina.connector.Response;
 import org.apache.catalina.connector.ResponseFacade;
 import org.springframework.http.server.ServletServerHttpResponse;
 
 import java.lang.reflect.Field;
+
+import jakarta.servlet.http.HttpServletResponse;
 
 public class ReactiveTypeHandler {
 

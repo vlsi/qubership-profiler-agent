@@ -3,28 +3,38 @@ package com.netcracker.profiler.io;
 import static com.netcracker.profiler.formatters.title.HttpTitleFormatter.*;
 
 import com.netcracker.profiler.formatters.title.UrlPatternReplacer;
-import com.netcracker.profiler.io.xlsx.AggregateCallsToXLSXListener;
-import com.netcracker.profiler.io.xlsx.CallsToXLSXListener;
+import com.netcracker.profiler.io.xlsx.AggregateCallsToXLSXListenerFactory;
+import com.netcracker.profiler.io.xlsx.CallsToXLSXListenerFactory;
 import com.netcracker.profiler.io.xlsx.ICallsToXLSXListener;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
-import org.springframework.stereotype.Component;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.*;
 
-@Component
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+@Singleton
 public class ExcelExporter {
     private static final Logger log = LoggerFactory.getLogger(ExcelExporter.class);
-    @Autowired
-    ApplicationContext context;
-    @Autowired
-    CallReaderFactory callReaderFactory;
+
+    private final AggregateCallsToXLSXListenerFactory aggregateListenerFactory;
+    private final CallsToXLSXListenerFactory callsListenerFactory;
+    private final CallReaderFactory callReaderFactory;
+
+    @Inject
+    public ExcelExporter(
+            AggregateCallsToXLSXListenerFactory aggregateListenerFactory,
+            CallsToXLSXListenerFactory callsListenerFactory,
+            CallReaderFactory callReaderFactory) {
+        this.aggregateListenerFactory = aggregateListenerFactory;
+        this.callsListenerFactory = callsListenerFactory;
+        this.callReaderFactory = callReaderFactory;
+    }
 
     public void export(TemporalRequestParams temporal, Map<String, String[]> params, OutputStream out) {
         export(temporal, params, out, "");
@@ -56,9 +66,9 @@ public class ExcelExporter {
             formatContext.put(URL_PATTERN_REPLACER, urlPatternReplacer);
             formatContext.put(DISABLE_DEFAULT_URL_REPLACE_PATTERNS, disableDefaultUrlReplacePatterns);
 
-            callListener = context.getBean(AggregateCallsToXLSXListener.class, cf, bufferedOutputStream, formatContext);
+            callListener = aggregateListenerFactory.create(cf, bufferedOutputStream, formatContext);
         } else {
-            callListener = context.getBean(CallsToXLSXListener.class, serverAddress, cf, bufferedOutputStream);
+            callListener = callsListenerFactory.create(serverAddress, cf, bufferedOutputStream);
         }
         try {
             List<ICallReader> readers = collectCallReaders(params, callListener, temporal, nodes);

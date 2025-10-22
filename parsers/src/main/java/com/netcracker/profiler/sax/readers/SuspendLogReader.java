@@ -5,11 +5,10 @@ import com.netcracker.profiler.io.exceptions.ErrorSupervisor;
 import com.netcracker.profiler.sax.raw.SuspendLogCollapsingVisitor;
 import com.netcracker.profiler.sax.raw.SuspendLogVisitor;
 
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
 
 import java.io.EOFException;
 import java.io.File;
@@ -17,9 +16,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Enumeration;
 
-@Component
-@Scope("prototype")
-@Profile("filestorage")
+/**
+ * Prototype-scoped class - create instances via {@code SuspendLogReaderFactory} or direct instantiation.
+ */
 public class SuspendLogReader {
     public static final Logger log = LoggerFactory.getLogger(SuspendLogReader.class);
     protected final SuspendLogVisitor sv;
@@ -27,14 +26,22 @@ public class SuspendLogReader {
     private long begin;
     private long end;
 
-    public SuspendLogReader(SuspendLogVisitor sv, String dataFolderPath, long begin, long end) {
+    @AssistedInject
+    public SuspendLogReader(
+            @Assisted("sv") SuspendLogVisitor sv,
+            @Assisted("dataFolderPath") String dataFolderPath,
+            @Assisted("begin") long begin,
+            @Assisted("end") long end) {
         this.sv = sv;
         this.dataFolder = new File(dataFolderPath);
         this.begin = begin;
         this.end = end;
     }
 
-    public SuspendLogReader(SuspendLogVisitor sv, String dataFolderPath) {
+    @AssistedInject
+    public SuspendLogReader(
+            @Assisted("sv") SuspendLogVisitor sv,
+            @Assisted("dataFolderPath") String dataFolderPath) {
         this(sv, dataFolderPath, Long.MIN_VALUE, Long.MAX_VALUE);
     }
 

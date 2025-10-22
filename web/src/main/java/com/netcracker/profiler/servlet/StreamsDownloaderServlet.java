@@ -6,24 +6,31 @@ import com.netcracker.profiler.io.TemporalUtils;
 
 import java.io.IOException;
 
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
+@Singleton
 public class StreamsDownloaderServlet extends HttpServlet {
+
+    private final IDumpExporter dumpExporter;
+
+    @Inject
+    public StreamsDownloaderServlet(IDumpExporter dumpExporter) {
+        this.dumpExporter = dumpExporter;
+    }
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         TemporalRequestParams temporal = TemporalUtils.parseTemporal(req);
-        IDumpExporter exporter = SpringBootInitializer.dumpExporter();
         String podName = req.getParameter("podName");
         String streamName = req.getParameter("streamName");
 
         resp.setContentType("application/x-msdownload");
         resp.setHeader("Content-disposition", "attachment; filename=gc.zip");
-        exporter.exportGC(podName, streamName, resp.getOutputStream(), temporal);
+        dumpExporter.exportGC(podName, streamName, resp.getOutputStream(), temporal);
     }
-
-
 }

@@ -7,14 +7,16 @@ import com.netcracker.profiler.io.CallFilterer;
 import com.netcracker.profiler.io.aggregate.Aggregator;
 import com.netcracker.profiler.io.aggregate.model.AggregateRow;
 
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
+import com.google.inject.assistedinject.Assisted;
 
 import java.io.OutputStream;
 import java.util.*;
 
-@Component
-@Scope("prototype")
+import jakarta.inject.Inject;
+
+/**
+ * Prototype-scoped class - create instances via {@code AggregateCallsToXLSXListenerFactory}.
+ */
 public class AggregateCallsToXLSXListener implements ICallsToXLSXListener {
     protected CallToXLSX formatter;
     private CallFilterer cf;
@@ -23,7 +25,11 @@ public class AggregateCallsToXLSXListener implements ICallsToXLSXListener {
     private Map<String, Object> formatContext;
     private boolean errorHappened;
 
-    public AggregateCallsToXLSXListener(CallFilterer cf, OutputStream out, Map<String, Object> formatContext) {
+    @Inject
+    public AggregateCallsToXLSXListener(
+            @Assisted("cf") CallFilterer cf,
+            @Assisted("out") OutputStream out,
+            @Assisted("formatContext") Map<String, Object> formatContext) {
         this.cf = cf;
         this.formatContext = formatContext;
 

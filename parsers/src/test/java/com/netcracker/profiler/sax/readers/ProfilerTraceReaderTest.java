@@ -1,14 +1,10 @@
 package com.netcracker.profiler.sax.readers;
 
+import static com.netcracker.profiler.testkit.resources.URLExtensions.getResourceAsFile;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.netcracker.profiler.dump.DataInputStreamEx;
-import com.netcracker.profiler.sax.raw.ClobReaderFlyweight;
-import com.netcracker.profiler.sax.raw.ClobReaderFlyweightFile;
-import com.netcracker.profiler.sax.raw.RepositoryVisitor;
-import com.netcracker.profiler.sax.raw.TraceVisitor;
-import com.netcracker.profiler.sax.raw.TreeRowid;
-import com.netcracker.profiler.sax.raw.TreeTraceVisitor;
+import com.netcracker.profiler.sax.raw.*;
 import com.netcracker.profiler.sax.readers.ProfilerTraceReader.ClobReadMode;
 import com.netcracker.profiler.sax.readers.ProfilerTraceReader.ClobReadTypes;
 import com.netcracker.profiler.sax.values.ClobValue;
@@ -16,7 +12,6 @@ import com.netcracker.profiler.sax.values.ValueHolder;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.util.ResourceUtils;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -56,17 +51,20 @@ class MockTreeTraceVisitor extends TreeTraceVisitor {
 class MockProfilerTraceReader extends ProfilerTraceReader {
     public String dataFolder;
     public MockProfilerTraceReader(RepositoryVisitor rv, String rootReference) {
-        super(rv, rootReference);
+        super(rv, rootReference, null);
+    }
+
+    @Override
+    protected SuspendLogReader suspendLogReader(SuspendLogVisitor sv, long begin, long end) {
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     public File getFile() {
-        File file = null;
         try {
-            file = ResourceUtils.getFile("classpath:storage/test_trace");
+            return getResourceAsFile(getClass(), "/storage/test_trace");
         } catch (FileNotFoundException e) {
             throw new RuntimeException(e);
         }
-        return file;
     }
 
     @Override
@@ -86,7 +84,7 @@ class MockProfilerTraceReader extends ProfilerTraceReader {
 public class ProfilerTraceReaderTest {
     @Test
     public void testLastOnlyClobs() throws IOException {
-        File file = ResourceUtils.getFile("classpath:storage/test_trace/trace/000001");
+        File file = getResourceAsFile(getClass(), "/storage/test_trace/trace/000001");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.LAST_ONLY, ClobReadTypes.ALL_VALUES);
         List<ClobValue> clobArray = new ArrayList<ClobValue>(clobs);
         ClobValue clob = clobArray.get(0);
@@ -99,7 +97,7 @@ public class ProfilerTraceReaderTest {
     @Test
     public void testFirstAndLastClobs() throws IOException {
 
-        File file = ResourceUtils.getFile("classpath:storage/test_trace/trace/000001");
+        File file = getResourceAsFile(getClass(), "/storage/test_trace/trace/000001");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.FIRST_AND_LAST, ClobReadTypes.ALL_VALUES);
         List<ClobValue> clobArray = new ArrayList<ClobValue>(clobs);
         Collections.sort(clobArray);
@@ -117,7 +115,7 @@ public class ProfilerTraceReaderTest {
 
     @Test
     public void testFirstOnlyClobs() throws IOException {
-        File file = ResourceUtils.getFile("classpath:storage/test_trace/trace/000001");
+        File file = getResourceAsFile(getClass(), "/storage/test_trace/trace/000001");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.FIRST_ONLY, ClobReadTypes.ALL_VALUES);
         List<ClobValue> clobArray = new ArrayList<ClobValue>(clobs);
         assertEquals(1, clobArray.size());
@@ -129,7 +127,7 @@ public class ProfilerTraceReaderTest {
 
     @Test
     public void testAllClobs() throws IOException {
-        File file = ResourceUtils.getFile("classpath:storage/test_trace");
+        File file = getResourceAsFile(getClass(), "/storage/test_trace");
         Set<ClobValue> clobs = MockProfilerTraceReader.readClobIdsOnly(file, ClobReadMode.ALL_VALUES, ClobReadTypes.ALL_VALUES);
         assertEquals(0, clobs.size());
     }

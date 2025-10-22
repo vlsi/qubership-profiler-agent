@@ -3,8 +3,9 @@ package org.jboss.resteasy.core;
 import com.netcracker.profiler.agent.Profiler;
 
 import io.quarkus.resteasy.runtime.standalone.VertxHttpRequest;
-import jakarta.ws.rs.core.HttpHeaders;
 import org.jboss.resteasy.spi.HttpRequest;
+
+import jakarta.ws.rs.core.HttpHeaders;
 
 public class MethodInjectorImpl {
 

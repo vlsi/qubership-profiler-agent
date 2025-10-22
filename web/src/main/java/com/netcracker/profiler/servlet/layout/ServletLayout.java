@@ -5,8 +5,8 @@ import com.netcracker.profiler.output.layout.Layout;
 import java.io.IOException;
 import java.io.OutputStream;
 
-import javax.servlet.ServletOutputStream;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.http.HttpServletResponse;
 
 public class ServletLayout extends Layout {
     protected HttpServletResponse resp;

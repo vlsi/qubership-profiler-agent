@@ -1,13 +1,11 @@
 package com.netcracker.profiler.io;
 
 import com.netcracker.profiler.configuration.ParameterInfoDto;
+import com.netcracker.profiler.guice.DumpRootLocation;
 
+import com.google.inject.assistedinject.Assisted;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Profile;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -15,26 +13,28 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.*;
 
-@Component
-@Scope("prototype")
-@Profile("filestorage")
+import jakarta.inject.Inject;
+
+/**
+ * Prototype-scoped class - create instances via {@link CallToJSFactory}.
+ */
 public class CallToJS implements CallListener {
     private final static Logger log = LoggerFactory.getLogger(CallToJS.class);
     protected final PrintWriter out;
     String prevDumpDir;
     BitSet prevIds = new BitSet();
 
-    @Value("${com.netcracker.profiler.DUMP_ROOT_LOCATION:#{null}}")
-    private File rootFile;
-    private CallFilterer cf;
+    private final File rootFile;
+    private final CallFilterer cf;
 
-    private CallToJS() {
-        throw new RuntimeException("No-args not supported");
-    }
-
-    public CallToJS(PrintWriter out, CallFilterer cf) {
+    @Inject
+    public CallToJS(
+            @Assisted("out") PrintWriter out,
+            @Assisted("cf") CallFilterer cf,
+            @DumpRootLocation File rootFile) {
         this.out = out;
         this.cf = cf;
+        this.rootFile = rootFile;
     }
 
     protected void printAdditionalRootReferenceDetails(String rootReference) throws IOException {

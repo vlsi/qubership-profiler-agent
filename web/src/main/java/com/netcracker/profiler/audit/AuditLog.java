@@ -3,7 +3,7 @@ package com.netcracker.profiler.audit;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
 
-import javax.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpSession;
 
 public class AuditLog {
     protected final Logger log;

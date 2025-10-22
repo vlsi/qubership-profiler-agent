@@ -1,5 +1,6 @@
 package com.netcracker.profiler.sax.readers;
 
+import static com.netcracker.profiler.testkit.resources.URLExtensions.getResourceAsFile;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -9,20 +10,32 @@ import com.netcracker.profiler.io.CallFilterer;
 import com.netcracker.profiler.io.CallListener;
 import com.netcracker.profiler.io.CallReader;
 import com.netcracker.profiler.io.SuspendLog;
+import com.netcracker.profiler.io.call.CallDataReader;
+import com.netcracker.profiler.io.call.CallDataReaderFactory;
+import com.netcracker.profiler.io.call.CallDataReader_03;
+import com.netcracker.profiler.io.call.CallDataReader_04;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.util.ResourceUtils;
 
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.List;
 
 class MockCallReader extends CallReader {
     public MockCallReader(CallListener callback, CallFilterer cf) {
         super(callback, cf);
+    }
+
+    @Override
+    protected CallDataReaderFactory getCallDataReaderFactory() {
+        HashMap<Integer, CallDataReader> readers = new HashMap<>();
+        readers.put(3, new CallDataReader_03());
+        readers.put(4, new CallDataReader_04());
+        return new CallDataReaderFactory(readers);
     }
 
     @Override
@@ -55,7 +68,7 @@ public class CallReaderTest {
 
     @Test
     public void testfindCallsInStream() throws IOException, NoSuchFieldException, SecurityException, IllegalArgumentException, IllegalAccessException {
-        File file = ResourceUtils.getFile("classpath:storage/test_call.bin");
+        File file = getResourceAsFile(getClass(), "/storage/test_call.bin");
         DataInputStreamEx calls = DataInputStreamEx.openDataInputStream(file);
         MockCallReader spy = new MockCallReader(null, null);
         SuspendLog suspendLog = SuspendLog.EMPTY;

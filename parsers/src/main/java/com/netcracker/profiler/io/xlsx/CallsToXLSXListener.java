@@ -4,17 +4,17 @@ import com.netcracker.profiler.configuration.ParameterInfoDto;
 import com.netcracker.profiler.io.Call;
 import com.netcracker.profiler.io.CallFilterer;
 
-import org.springframework.context.annotation.Profile;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
+import com.google.inject.assistedinject.Assisted;
 
 import java.io.OutputStream;
 import java.net.URLEncoder;
 import java.util.*;
 
-@Component
-@Scope("prototype")
-@Profile("filestorage")
+import jakarta.inject.Inject;
+
+/**
+ * Prototype-scoped class - create instances via {@code CallsToXLSXListenerFactory}.
+ */
 public class CallsToXLSXListener implements ICallsToXLSXListener {
     // Excel supports cell text up to 32767, so we will add '...' at the end to show that value is truncated
     private static final int MAX_CELL_TEXT_LENGTH = 32760;
@@ -23,7 +23,11 @@ public class CallsToXLSXListener implements ICallsToXLSXListener {
     protected CallToXLSX formatter;
     private CallFilterer cf;
 
-    public CallsToXLSXListener(String serverAddress, CallFilterer cf, OutputStream out) {
+    @Inject
+    public CallsToXLSXListener(
+            @Assisted("serverAddress") String serverAddress,
+            @Assisted("cf") CallFilterer cf,
+            @Assisted("out") OutputStream out) {
         this.serverAddress = serverAddress;
         this.cf = cf;
 

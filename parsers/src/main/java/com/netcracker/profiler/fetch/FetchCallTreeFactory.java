@@ -1,22 +1,26 @@
 package com.netcracker.profiler.fetch;
 
+import com.netcracker.profiler.dom.ProfiledTreeStreamVisitor;
 import com.netcracker.profiler.io.CallRowid;
-import com.netcracker.profiler.output.CallTreeMediator;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
-import org.springframework.stereotype.Component;
+import com.google.inject.assistedinject.Assisted;
 
-@Component
-public class FetchCallTreeFactory {
-    @Autowired
-    ApplicationContext context;
+/**
+ * Factory interface for creating FetchCallTree instances.
+ * Guice's AssistedInject will auto-generate the implementation via FactoryModuleBuilder in ParsersModule.
+ */
+public interface FetchCallTreeFactory {
+    FetchCallTree create(
+        @Assisted("sv") ProfiledTreeStreamVisitor sv,
+        @Assisted("callIds") CallRowid[] callIds,
+        @Assisted("paramsTrimSize") int paramsTrimSize
+    );
 
-    public FetchCallTree fetchCallTree(CallTreeMediator mediator, CallRowid[] callIds, int paramsTrimSize) {
-        return context.getBean(FetchCallTree.class, mediator, callIds, paramsTrimSize);
-    }
-
-    public FetchCallTree fetchCallTree(CallTreeMediator mediator, CallRowid[] callIds, int paramsTrimSize, long begin, long end){
-        return context.getBean(FetchCallTree.class, mediator, callIds, paramsTrimSize, begin, end);
-    }
+    FetchCallTree create(
+        @Assisted("sv") ProfiledTreeStreamVisitor sv,
+        @Assisted("callIds") CallRowid[] callIds,
+        @Assisted("paramsTrimSize") int paramsTrimSize,
+        @Assisted("begin") long begin,
+        @Assisted("end") long end
+    );
 }

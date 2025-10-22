@@ -1,20 +1,12 @@
 package com.netcracker.profiler.io;
 
-import com.netcracker.profiler.sax.factory.SuspendLogFactory;
 
-import org.springframework.context.ApplicationContext;
-
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.Writer;
 import java.util.*;
 
 public class SuspendLog {
     public static final SuspendLog EMPTY = new SuspendLog(new long[0], new int[0]);
     public SuspendLogCursor cursor;
     protected ISuspendLogCollection suspendLogCollection;
-    protected ApplicationContext applicationContext;
     protected String podName;
     protected long loadedTo;
     protected long loadedFrom;
@@ -34,10 +26,8 @@ public class SuspendLog {
         this.cursor = cursor();
     }
 
-    public SuspendLog(ApplicationContext applicationContext, String podName) {
-        this.applicationContext = applicationContext;
+    public SuspendLog(String podName) {
         this.podName = podName;
-
         this.cursor = cursor();
     }
 
@@ -138,26 +128,5 @@ public class SuspendLog {
 
     public int size() {
         return suspendLogCollection.size();
-    }
-
-    public static void main(String[] args) throws IOException {
-        SuspendLog suspendLog = new SuspendLogFactory(null).readSuspendLog("testpodname");
-        Writer wr = new BufferedWriter(new FileWriter(args[1]));
-        final ISuspendLogCollection suspendLogCollection = suspendLog.suspendLogCollection;
-        long first = 0, prev = 0;
-        if (suspendLogCollection.size() > 0) {
-            prev = first = suspendLogCollection.getDate(0) - suspendLogCollection.getDelay(0);
-        }
-        wr.append("START\tEND\tSTART_OFFSET\tSTART_DELTA\tDELAY\n");
-        for (int i = 0; i < suspendLogCollection.size(); i++) {
-            final long start = suspendLogCollection.getDate(i) - suspendLogCollection.getDelay(i);
-            wr.append(Long.toString(start)).append('\t');
-            wr.append(Long.toString(suspendLogCollection.getDate(i))).append('\t');
-            wr.append(Long.toString(start - first)).append('\t');
-            wr.append(Long.toString(start - prev)).append('\t');
-            prev = start;
-            wr.append(Long.toString(suspendLogCollection.getDelay(i))).append('\n');
-        }
-        wr.close();
     }
 }

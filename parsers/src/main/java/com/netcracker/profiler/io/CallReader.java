@@ -44,6 +44,12 @@ public abstract class CallReader implements ICallReader {
     }
 
     /**
+     * Get the CallDataReaderFactory for creating format-specific readers.
+     * Subclasses must provide the factory instance.
+     */
+    protected abstract CallDataReaderFactory getCallDataReaderFactory();
+
+    /**
      * Finds all the calls that match filter criteria
      */
     public final void find() {
@@ -84,7 +90,7 @@ public abstract class CallReader implements ICallReader {
             callBeginTime = time;
             minCallBeginTime = Math.min(minCallBeginTime, time);
 
-            CallDataReader reader = CallDataReaderFactory.createReader(fileFormat);
+            CallDataReader reader = getCallDataReaderFactory().createReader(fileFormat);
             callDataReader = reader;
 
             Call call = new Call();

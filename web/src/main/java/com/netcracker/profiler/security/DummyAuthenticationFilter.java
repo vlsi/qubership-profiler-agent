@@ -11,16 +11,24 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 
-import javax.servlet.FilterChain;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.FilterConfig;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
+@Singleton
 public class DummyAuthenticationFilter extends AbstractSecurityFilter {
 
     private static final Logger logger = LoggerFactory.getLogger(DummyAuthenticationFilter.class);
+
+    @Inject
+    public DummyAuthenticationFilter(DummySecurityService securityService) {
+        super(securityService);
+    }
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
@@ -35,7 +43,7 @@ public class DummyAuthenticationFilter extends AbstractSecurityFilter {
         String userPassword = httpRequest.getParameter(USER_PASSWORD_PARAMETER);
         try {
             if (isNotEmpty(userName) && isNotEmpty(userPassword)) {
-                User currentUser = DummySecurityService.getInstance().tryAuthenticate(userName, userPassword);
+                User currentUser = securityService.tryAuthenticate(userName, userPassword);
                 session.setAttribute(AUTHENTICATED_USER, currentUser);
                 String redirectTo = (String) session.getAttribute(LAST_USER_URI);
                 session.removeAttribute(redirectTo);

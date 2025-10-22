@@ -17,7 +17,6 @@ public class SuspendLogReaderTest {
         URL resource = getClass().getResource("/suspend_logs/1505741810159");
         File f = new File(resource.toURI());
         SuspendLogBuilder sb = new SuspendLogBuilder(2, 4, null);
-        sb.initLog();
         SuspendLogReader sr = new SuspendLogReader(sb, f.getAbsolutePath());
         sr.read();
         SuspendLog sl = sb.get();

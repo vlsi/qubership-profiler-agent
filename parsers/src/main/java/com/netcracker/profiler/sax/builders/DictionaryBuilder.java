@@ -1,12 +1,13 @@
 package com.netcracker.profiler.sax.builders;
 
-import com.netcracker.profiler.chart.Provider;
 import com.netcracker.profiler.configuration.ParameterInfoDto;
 import com.netcracker.profiler.dom.TagDictionary;
 import com.netcracker.profiler.sax.raw.DictionaryVisitor;
 import com.netcracker.profiler.util.ProfilerConstants;
 
-public class DictionaryBuilder extends DictionaryVisitor implements Provider<TagDictionary> {
+import java.util.function.Supplier;
+
+public class DictionaryBuilder extends DictionaryVisitor implements Supplier<TagDictionary> {
     private final TagDictionary dict;
 
     public DictionaryBuilder() {

@@ -1,5 +1,6 @@
 package com.netcracker.profiler.servlet;
 
+import com.netcracker.profiler.io.ExcelExporter;
 import com.netcracker.profiler.io.TemporalRequestParams;
 import com.netcracker.profiler.io.TemporalUtils;
 
@@ -10,13 +11,23 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
+@Singleton
 public class ExcelExporterServlet extends HttpServlet {
     private static final Logger log = LoggerFactory.getLogger(ExcelExporterServlet.class);
+
+    private final ExcelExporter excelExporter;
+
+    @Inject
+    public ExcelExporterServlet(ExcelExporter excelExporter) {
+        this.excelExporter = excelExporter;
+    }
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
@@ -26,7 +37,7 @@ public class ExcelExporterServlet extends HttpServlet {
         resp.setHeader("Content-disposition", "attachment; filename=calls.xlsx");
         Map<String, String[]> params = new HashMap<>(req.getParameterMap());
         splitParams(params, "nodes", "urlReplacePatterns");
-        SpringBootInitializer.excelExporter().export(temporal, params, resp.getOutputStream(), serverAddress);
+        excelExporter.export(temporal, params, resp.getOutputStream(), serverAddress);
     }
 
     private void splitParams(Map<String, String[]> params, String ... keys) {

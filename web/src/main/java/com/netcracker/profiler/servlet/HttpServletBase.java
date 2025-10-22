@@ -6,10 +6,10 @@ import com.netcracker.profiler.output.layout.Layout;
 
 import java.io.IOException;
 
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 public abstract class HttpServletBase<Mediator, Context> extends HttpServlet {
     protected long parseLong(HttpServletRequest request, String paramName, long defaultValue) throws IllegalArgumentException {

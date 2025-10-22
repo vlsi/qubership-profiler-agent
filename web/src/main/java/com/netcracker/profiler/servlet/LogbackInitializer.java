@@ -14,8 +14,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 
-import javax.servlet.ServletContextEvent;
-import javax.servlet.ServletContextListener;
+import jakarta.servlet.ServletContextEvent;
+import jakarta.servlet.ServletContextListener;
 
 public class LogbackInitializer implements ServletContextListener {
     private static final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(LogbackInitializer.class.getName());

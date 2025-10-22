@@ -6,10 +6,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-import javax.servlet.ServletContext;
+import jakarta.servlet.ServletContext;
 
 /**
- * Appends the required files retrieved from {@link javax.servlet.ServletContext}.
+ * Appends the required files retrieved from {@link jakarta.servlet.ServletContext}.
  */
 public class ServletResourceAppender implements FileAppender {
     private final ServletContext context;

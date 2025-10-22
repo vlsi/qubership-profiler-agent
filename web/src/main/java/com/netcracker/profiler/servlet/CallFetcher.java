@@ -1,11 +1,10 @@
 package com.netcracker.profiler.servlet;
 
-
+import com.netcracker.profiler.guice.IsReadFromDump;
 import com.netcracker.profiler.io.*;
 import com.netcracker.profiler.servlet.util.DumperStatusProvider;
 import com.netcracker.profiler.util.TimeHelper;
 
-import org.apache.commons.lang.BooleanUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,34 +15,40 @@ import java.io.PrintWriter;
 import java.net.URLEncoder;
 import java.util.*;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.inject.Inject;
+import jakarta.inject.Provider;
+import jakarta.inject.Singleton;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
-public class CallFetcher extends javax.servlet.http.HttpServlet {
+@Singleton
+public class CallFetcher extends jakarta.servlet.http.HttpServlet {
     private static final Logger log = LoggerFactory.getLogger(CallFetcher.class);
 
     private final static int RESPONSE_BUFFER_SIZE = Integer.getInteger(CallFetcher.class.getName() + ".RESPONSE_BUFFER_SIZE", 256);
 
-//
-//    static {
-//        try{
-//            if(System.getenv(CassandraConfig.CASSANDRA_HOST_ENV) != null) {
-//                SpringApplication app = new SpringApplication(CallFetcher.class);
-//                app.setWebApplicationType(WebApplicationType.NONE);
-//                app.run();
-////                SpringApplication.run(CallFetcher.class, new String[]{});
-//            }
-//        }catch (Throwable e){
-//            e.printStackTrace();
-//        }
-//        log.info("spring boot started");
-//    }
+    private final CallReaderFactory callReaderFactory;
+    private final CallToJSFactory callToJSFactory;
+    private final Provider<LoggedContainersInfo> loggedContainersInfoProvider;
+    private final String isReadFromDump;
 
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws javax.servlet.ServletException, IOException {
+    @Inject
+    public CallFetcher(
+            CallReaderFactory callReaderFactory,
+            CallToJSFactory callToJSFactory,
+            Provider<LoggedContainersInfo> loggedContainersInfoProvider,
+            @IsReadFromDump String isReadFromDump) {
+        this.callReaderFactory = callReaderFactory;
+        this.callToJSFactory = callToJSFactory;
+        this.loggedContainersInfoProvider = loggedContainersInfoProvider;
+        this.isReadFromDump = isReadFromDump;
+    }
+
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws jakarta.servlet.ServletException, IOException {
         doGet(request, response);
     }
 
-    protected void doGet(final HttpServletRequest request, final HttpServletResponse response) throws javax.servlet.ServletException, IOException {
+    protected void doGet(final HttpServletRequest request, final HttpServletResponse response) throws jakarta.servlet.ServletException, IOException {
         boolean isExternalScript = request.getServletPath().endsWith(".js");
         if (isExternalScript){
             response.setBufferSize(RESPONSE_BUFFER_SIZE);
@@ -68,7 +73,7 @@ public class CallFetcher extends javax.servlet.http.HttpServlet {
             List<ICallReader> readers = collectCallReaders(request, out, temporal);
 
             out.print("var er=isDump.addProperty(\"");
-            out.print(readingFromFileDump());
+            out.print(isReadFromDump);
             out.print("\"");
             out.println(");");
 
@@ -121,16 +126,12 @@ public class CallFetcher extends javax.servlet.http.HttpServlet {
         }
     }
 
-    protected boolean readingFromFileDump(){
-        return BooleanUtils.toBoolean(SpringBootInitializer.getIsReadFromDumpProperty());
-    }
-
     protected CallReaderFactory callReaderFactory() {
-        return SpringBootInitializer.callReaderFactory();
+        return callReaderFactory;
     }
 
-    protected CallToJS callToJs( PrintWriter out, CallFilterer cf){
-        return SpringBootInitializer.callToJs(out, cf);
+    protected CallToJS callToJs(PrintWriter out, CallFilterer cf){
+        return callToJSFactory.create(out, cf);
     }
 
     private List<ICallReader> collectCallReaders(HttpServletRequest request, PrintWriter out, TemporalRequestParams temporal) throws IOException {
@@ -141,24 +142,6 @@ public class CallFetcher extends javax.servlet.http.HttpServlet {
                 callToJs(out, cf),
                 cf
         );
-
-//        String searchConditionsStr = request.getParameter("searchConditions");
-//        if(!StringUtils.isBlank(searchConditionsStr) && !"undefined".equalsIgnoreCase(searchConditionsStr)){
-//            SearchConditions conditions = new SearchConditions(searchConditionsStr, new Date(temporal.timerangeFrom), new Date(temporal.timerangeTo));
-//            for(LoadRequest loadRequest: conditions.loadRequests()){
-//                CallReader cr = CallReader.newReader(new CallToJS(out), filterByDuration(temporal.durationFrom, temporal.durationTo), loadRequest.getPodName());
-//                long clientServerTimeDiff = (long) (Math.abs(temporal.clientUTC - temporal.serverUTC) * 1.5);
-//                cr.setTimeFilterCondition(loadRequest.getDateFrom().getTime() - clientServerTimeDiff, loadRequest.getDateTo().getTime() + clientServerTimeDiff);
-//                readers.add(cr);
-//            }
-//        } else {
-//            CallReader cr = CallReader.newReader(new CallToJS(out), filterByDuration(temporal.durationFrom, temporal.durationTo), null);
-//            long clientServerTimeDiff = (long) (Math.abs(temporal.clientUTC - temporal.serverUTC) * 1.5);
-//            cr.setTimeFilterCondition(temporal.timerangeFrom - clientServerTimeDiff, temporal.timerangeTo + clientServerTimeDiff);
-//            readers.add(cr);
-//        }
-//
-//        return readers;
     }
 
     private void printStartupRequirements(PrintWriter out) throws IOException {
@@ -178,7 +161,7 @@ public class CallFetcher extends javax.servlet.http.HttpServlet {
     }
 
     protected List<String[]> getAvailableServices() {
-        return SpringBootInitializer.loggedContainersInfo().listPodDetails();
+        return loggedContainersInfoProvider.get().listPodDetails();
     }
 
     private void printAvailableServices(PrintWriter out){

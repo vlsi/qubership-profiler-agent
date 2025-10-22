@@ -1,6 +1,5 @@
 package com.netcracker.profiler.sax.builders;
 
-import com.netcracker.profiler.chart.Provider;
 import com.netcracker.profiler.io.Hotspot;
 import com.netcracker.profiler.io.HotspotTag;
 import com.netcracker.profiler.io.SuspendLog;
@@ -9,8 +8,9 @@ import com.netcracker.profiler.sax.values.ValueHolder;
 import com.netcracker.profiler.util.ProfilerConstants;
 
 import java.util.Arrays;
+import java.util.function.Supplier;
 
-public class TreeBuilderTrace extends TreeTraceVisitor implements Provider<Hotspot> {
+public class TreeBuilderTrace extends TreeTraceVisitor implements Supplier<Hotspot> {
     private final Hotspot root;
     protected Hotspot[] callTree = new Hotspot[1000];
     protected Hotspot[] stack = new Hotspot[1000];

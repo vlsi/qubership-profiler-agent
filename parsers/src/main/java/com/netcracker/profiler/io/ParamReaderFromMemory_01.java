@@ -5,12 +5,17 @@ import com.netcracker.profiler.agent.DumperPlugin;
 import com.netcracker.profiler.agent.DumperPlugin_03;
 import com.netcracker.profiler.agent.InflightCall;
 
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
 import java.io.File;
 import java.util.Arrays;
 import java.util.List;
 
 public class ParamReaderFromMemory_01 extends ParamReaderFromMemory {
-    public ParamReaderFromMemory_01(File root) {
+    @AssistedInject
+    public ParamReaderFromMemory_01(@Assisted("root") @Nullable File root) {
         super(root);
         DumperPlugin_03.class.getName();
     }

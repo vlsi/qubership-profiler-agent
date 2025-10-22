@@ -5,26 +5,25 @@ import com.netcracker.profiler.io.FileWalker;
 import com.netcracker.profiler.io.InputStreamProcessor;
 import com.netcracker.profiler.io.exceptions.ErrorSupervisor;
 import com.netcracker.profiler.sax.builders.ProfiledTreeBuilderMR;
+import com.netcracker.profiler.sax.builders.SuspendLogBuilderFactory;
 import com.netcracker.profiler.sax.raw.RepositoryVisitor;
 import com.netcracker.profiler.sax.readers.DbmsHprofReader;
-
-import org.springframework.context.ApplicationContext;
 
 import java.io.*;
 
 public class FetchDbmsHprof implements Runnable {
     private final ProfiledTreeStreamVisitor sv;
     private final String dumpsFile;
-    private ApplicationContext context;
+    private final SuspendLogBuilderFactory suspendLogBuilderFactory;
 
-    public FetchDbmsHprof(ProfiledTreeStreamVisitor sv, String dumpsFile, ApplicationContext applicationContext) {
+    public FetchDbmsHprof(ProfiledTreeStreamVisitor sv, String dumpsFile, SuspendLogBuilderFactory suspendLogBuilderFactory) {
         this.sv = sv;
         this.dumpsFile = dumpsFile;
-        this.context = applicationContext;
+        this.suspendLogBuilderFactory = suspendLogBuilderFactory;
     }
 
     public void run() {
-        final ProfiledTreeBuilderMR treeBuilderMR = new ProfiledTreeBuilderMR(sv, context);
+        final ProfiledTreeBuilderMR treeBuilderMR = new ProfiledTreeBuilderMR(sv, suspendLogBuilderFactory);
         InputStreamProcessor parseHprof = new InputStreamProcessor() {
             public boolean process(InputStream is, String name) {
                 Reader reader;

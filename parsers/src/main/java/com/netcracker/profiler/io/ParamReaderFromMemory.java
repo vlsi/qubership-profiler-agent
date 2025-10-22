@@ -3,11 +3,16 @@ package com.netcracker.profiler.io;
 import com.netcracker.profiler.agent.*;
 import com.netcracker.profiler.configuration.ParameterInfoDto;
 
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
 import java.io.File;
 import java.util.*;
 
 public class ParamReaderFromMemory extends ParamReaderFile {
-    public ParamReaderFromMemory(File root) {
+    @AssistedInject
+    public ParamReaderFromMemory(@Assisted("root") @Nullable File root) {
         super(root);
         Configuration_01.class.getName();
         DumperPlugin_01.class.getName();

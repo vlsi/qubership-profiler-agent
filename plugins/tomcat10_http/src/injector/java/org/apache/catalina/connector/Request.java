@@ -1,8 +1,5 @@
 package org.apache.catalina.connector;
 
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -11,6 +8,9 @@ import java.util.Collection;
 import java.util.Enumeration;
 import java.util.Locale;
 import java.util.Map;
+
+import jakarta.servlet.*;
+import jakarta.servlet.http.*;
 
 public class Request implements jakarta.servlet.http.HttpServletRequest {
     public native String getAuthType();
