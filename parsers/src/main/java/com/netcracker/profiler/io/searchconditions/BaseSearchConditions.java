@@ -8,7 +8,6 @@ import com.netcracker.profiler.io.Call;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.assistedinject.Assisted;
-import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -340,10 +339,10 @@ public class BaseSearchConditions {
             };
         }
 
-        int bracketOpen = StringUtils.indexOf(dateStr, '(');
-        int bracketClose = StringUtils.lastIndexOf(dateStr, ')');
-        String function = StringUtils.substring(dateStr, bracketOpen);
-        String operand = StringUtils.substring(dateStr, bracketOpen + 1, bracketClose);
+        int bracketOpen = dateStr.indexOf('(');
+        int bracketClose = dateStr.lastIndexOf(')');
+        String function = dateStr.substring(bracketOpen);
+        String operand = dateStr.substring(bracketOpen + 1, bracketClose);
 
         long time = resolveDateFunction(function);
         long delta = resolveDateOperand(operand);
@@ -359,7 +358,7 @@ public class BaseSearchConditions {
     }
 
     private long resolveDateOperand(String operand){
-        String amountStr = StringUtils.substring(operand, 0, operand.length()-1);
+        String amountStr = operand.substring(0, operand.length()-1);
         long amount = Long.parseLong(amountStr);
         char unit = operand.charAt(operand.length()-1);
         switch(unit){

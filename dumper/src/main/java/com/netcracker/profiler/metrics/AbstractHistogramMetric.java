@@ -2,10 +2,10 @@ package com.netcracker.profiler.metrics;
 
 import com.netcracker.profiler.agent.HistogramIterationType;
 import com.netcracker.profiler.agent.MetricType;
+import com.netcracker.profiler.util.StringUtils;
 
 import org.HdrHistogram.HistogramIterationValue;
 import org.HdrHistogram.SynchronizedHistogram;
-import org.apache.commons.lang.StringUtils;
 
 import java.util.HashSet;
 import java.util.Map;

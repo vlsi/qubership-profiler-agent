@@ -1,6 +1,6 @@
 package com.netcracker.profiler.dump;
 
-import org.apache.commons.lang.math.NumberUtils;
+import com.netcracker.profiler.util.StringUtils;
 
 import java.io.File;
 import java.io.FileFilter;
@@ -60,7 +60,7 @@ public class DumpFilesFinder {
             return;
         }
         if (root.isDirectory()) {
-            if(level == 1 && !NumberUtils.isNumber(root.getName())) {
+            if(level == 1 && !StringUtils.isNumeric(root.getName())) {
                 return;
             }
             File[] files = root.listFiles(DIRECTORY_FINDER);

@@ -9,5 +9,4 @@ dependencies {
     implementation(projects.common)
     implementation("org.slf4j:slf4j-api")
     implementation("ch.qos.logback:logback-classic")
-    implementation("org.apache.commons:commons-lang3")
 }

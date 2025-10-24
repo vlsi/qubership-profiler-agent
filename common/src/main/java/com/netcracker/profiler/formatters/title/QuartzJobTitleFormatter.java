@@ -4,8 +4,6 @@ import static com.netcracker.profiler.formatters.title.TitleCommonTools.*;
 
 import com.netcracker.profiler.agent.ParameterInfo;
 
-import org.apache.commons.lang.StringUtils;
-
 import java.util.*;
 
 public class QuartzJobTitleFormatter extends AbstractTitleFormatter {
@@ -23,7 +21,7 @@ public class QuartzJobTitleFormatter extends AbstractTitleFormatter {
         addParameter(title, tagToIdMap, params, " ", "job.id", new Function<Collection<String>, String>() {
             @Override
             public String apply(Collection<String> jobIDs) {
-                return "(" + StringUtils.join(jobIDs, ",") + ")";
+                return "(" + String.join(",", jobIDs) + ")";
             }
         });
         if ("7020873015013388042".equals(jobType)) {

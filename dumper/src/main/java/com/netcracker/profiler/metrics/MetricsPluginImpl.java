@@ -1,9 +1,9 @@
 package com.netcracker.profiler.metrics;
 
 import com.netcracker.profiler.agent.*;
+import com.netcracker.profiler.util.StringUtils;
 
 import gnu.trove.set.hash.THashSet;
-import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

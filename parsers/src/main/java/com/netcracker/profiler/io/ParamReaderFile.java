@@ -3,10 +3,10 @@ package com.netcracker.profiler.io;
 import com.netcracker.profiler.configuration.ParameterInfoDto;
 import com.netcracker.profiler.dump.DataInputStreamEx;
 import com.netcracker.profiler.util.IOHelper;
+import com.netcracker.profiler.util.StringUtils;
 
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
-import org.apache.commons.lang.StringUtils;
 import org.jspecify.annotations.Nullable;
 
 import java.io.EOFException;

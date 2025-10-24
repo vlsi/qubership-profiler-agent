@@ -10,7 +10,6 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("com.google.inject.extensions:guice-assistedinject")
     implementation("com.google.inject:guice")
-    implementation("commons-lang:commons-lang")
     implementation("jakarta.servlet:jakarta.servlet-api")
     implementation("org.jspecify:jspecify")
     implementation("org.openjdk.jmc:common")
