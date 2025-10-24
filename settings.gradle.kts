@@ -26,6 +26,19 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 // Note: it cannot be inferred from the directory name as developer might clone the project to folder with any name
 rootProject.name = "qubership-profiler"
 
+gradle.allprojects {
+    if (path != ":plugins") {
+        buildscript {
+            dependencies {
+                classpath(platform("com.fasterxml.jackson:jackson-bom:2.20.0"))
+                constraints {
+                    classpath("org.eclipse.jgit:org.eclipse.jgit:7.4.0.202509020913-r")
+                }
+            }
+        }
+    }
+}
+
 includeBuild("build-logic")
 
 // Renovate treats names as dependency coordinates when vararg include(...) is used, so we have separate include calls here
