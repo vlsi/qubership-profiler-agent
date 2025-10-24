@@ -1,7 +1,7 @@
 package com.netcracker.profiler.io;
 
 import com.google.inject.assistedinject.Assisted;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import java.io.File;
 

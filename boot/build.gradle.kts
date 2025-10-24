@@ -12,7 +12,7 @@ dependencies {
     testImplementation("org.openjdk.jcstress:jcstress-core")
     testAnnotationProcessor(platform(projects.bomTesting))
     testAnnotationProcessor("org.openjdk.jcstress:jcstress-core")
-//    testRuntimeOnly(projects.jcstressJupiterEngine)
+    testRuntimeOnly(projects.jcstressJupiterEngine)
     kaptTest(platform(projects.bomTesting))
     kaptTest("org.openjdk.jcstress:jcstress-core")
 }

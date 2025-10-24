@@ -12,7 +12,7 @@ import com.netcracker.profiler.util.ProfilerConstants;
 import com.netcracker.profiler.utils.CommonUtils;
 
 import com.google.inject.assistedinject.Assisted;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
