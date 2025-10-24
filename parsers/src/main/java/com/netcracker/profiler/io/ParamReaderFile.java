@@ -7,7 +7,7 @@ import com.netcracker.profiler.util.IOHelper;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import org.apache.commons.lang.StringUtils;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import java.io.EOFException;
 import java.io.File;
