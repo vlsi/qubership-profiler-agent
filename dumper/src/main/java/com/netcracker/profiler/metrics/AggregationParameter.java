@@ -1,7 +1,7 @@
 package com.netcracker.profiler.metrics;
 
+
 import gnu.trove.set.hash.THashSet;
-import org.apache.commons.lang.StringUtils;
 
 public class AggregationParameter {
     private String aggregationParamName;
@@ -14,7 +14,7 @@ public class AggregationParameter {
 
     @Override
     public String toString() {
-        return aggregationParamName + "=\"" + StringUtils.join(aggregationParamValues, ", ").replace("\"", "") + "\"";
+        return aggregationParamName + "=\"" + String.join(", ", aggregationParamValues).replace("\"", "") + "\"";
     }
 
     @Override

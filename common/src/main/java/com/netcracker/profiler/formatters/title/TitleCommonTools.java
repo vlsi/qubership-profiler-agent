@@ -5,7 +5,6 @@ import com.netcracker.profiler.agent.ProfilerData;
 
 import gnu.trove.map.hash.TIntObjectHashMap;
 import gnu.trove.set.hash.THashSet;
-import org.apache.commons.lang.StringUtils;
 
 import java.util.*;
 
@@ -26,7 +25,7 @@ public class TitleCommonTools {
     }
 
     public static String getParameter(Map<String, Integer> tagToIdMap, Object params, String name) {
-        return StringUtils.join(getParameterValues(tagToIdMap, params, name), " ");
+        return String.join(" ", getParameterValues(tagToIdMap, params, name));
     }
 
     public static boolean addParameter(ProfilerTitleBuilder title, Map<String, Integer> tagToIdMap, Object params, String header, String parameterName, Function<Collection<String>, String> formatFunction) {
@@ -42,7 +41,7 @@ public class TitleCommonTools {
         return addParameter(title, tagToIdMap, params, header, parameterName, new Function<Collection<String>, String>() {
             @Override
             public String apply(Collection<String> x) {
-                String result = StringUtils.join(x, ", ");
+                String result = String.join(", ", x);
                 if(x.size()>1) {
                     result = "["+result+"]";
                 }

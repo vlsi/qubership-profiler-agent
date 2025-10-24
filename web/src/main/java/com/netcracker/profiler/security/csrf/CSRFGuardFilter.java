@@ -1,6 +1,7 @@
 package com.netcracker.profiler.security.csrf;
 
-import org.apache.commons.lang.StringUtils;
+import com.netcracker.profiler.util.StringUtils;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

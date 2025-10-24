@@ -22,6 +22,7 @@ import com.netcracker.profiler.stream.ICompressedLocalAndRemoteOutputStream;
 import com.netcracker.profiler.util.DumperCallsExporter;
 import com.netcracker.profiler.util.MetricsCollector;
 import com.netcracker.profiler.util.MurmurHash;
+import com.netcracker.profiler.util.StringUtils;
 import com.netcracker.profiler.util.ThrowableHelper;
 import com.netcracker.profiler.util.cache.TLimitedLongLongHashMap;
 
@@ -29,7 +30,6 @@ import gnu.trove.iterator.TIntObjectIterator;
 import gnu.trove.map.hash.TIntIntHashMap;
 import gnu.trove.procedure.TIntObjectProcedure;
 import gnu.trove.set.hash.THashSet;
-import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

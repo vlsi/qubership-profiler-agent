@@ -18,9 +18,9 @@ import com.netcracker.profiler.instrument.enhancement.EnhancementRegistryImpl;
 import com.netcracker.profiler.instrument.enhancement.EnhancerPlugin;
 import com.netcracker.profiler.io.DurationParser;
 import com.netcracker.profiler.io.SizeParser;
+import com.netcracker.profiler.util.StringUtils;
 import com.netcracker.profiler.util.XMLHelper;
 
-import org.apache.commons.lang.StringUtils;
 import org.objectweb.asm.Opcodes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

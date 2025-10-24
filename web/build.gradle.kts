@@ -12,7 +12,6 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("com.google.inject.extensions:guice-servlet")
     implementation("com.google.inject:guice")
-    implementation("commons-lang:commons-lang")
     implementation("org.openjdk.jmc:common")
     implementation("org.openjdk.jmc:flightrecorder")
 }

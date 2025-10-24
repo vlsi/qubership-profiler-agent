@@ -2,8 +2,7 @@ package com.netcracker.profiler.metrics;
 
 import com.netcracker.profiler.agent.Metric;
 import com.netcracker.profiler.agent.MetricType;
-
-import org.apache.commons.lang.StringUtils;
+import com.netcracker.profiler.util.StringUtils;
 
 import java.util.HashSet;
 

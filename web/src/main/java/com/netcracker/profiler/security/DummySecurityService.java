@@ -2,7 +2,7 @@ package com.netcracker.profiler.security;
 
 import static com.netcracker.profiler.security.SecurityConstants.USERNAME_EV;
 import static com.netcracker.profiler.security.SecurityConstants.USER_PASSWORD_EV;
-import static org.apache.commons.lang.StringUtils.isNotBlank;
+import static com.netcracker.profiler.util.StringUtils.isNotBlank;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

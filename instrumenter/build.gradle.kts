@@ -10,7 +10,6 @@ dependencies {
     implementation(projects.pluginRuntime)
     implementation("ch.qos.logback:logback-classic")
     implementation("ch.qos.logback:logback-core")
-    implementation("commons-lang:commons-lang")
     implementation("javax:javaee-api")
     implementation("net.sf.trove4j:trove4j")
     implementation("org.ow2.asm:asm-commons")

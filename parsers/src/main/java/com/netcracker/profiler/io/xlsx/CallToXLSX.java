@@ -1,6 +1,6 @@
 package com.netcracker.profiler.io.xlsx;
 
-import org.apache.commons.lang.StringEscapeUtils;
+import com.netcracker.profiler.io.JSHelper;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -77,7 +77,7 @@ public class CallToXLSX {
             if (value instanceof Number) {
                 printColumn(col, "n", "<v>", value.toString(), "</v>");
             } else if (value instanceof String) {
-                printColumn(col, "inlineStr", "<is><t>", StringEscapeUtils.escapeXml((String) value), "</t></is>");
+                printColumn(col, "inlineStr", "<is><t>", JSHelper.escapeHTML((String) value), "</t></is>");
             }
 
         }

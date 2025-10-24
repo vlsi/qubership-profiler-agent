@@ -4,8 +4,6 @@ import static com.netcracker.profiler.formatters.title.TitleCommonTools.*;
 
 import com.netcracker.profiler.agent.ParameterInfo;
 
-import org.apache.commons.lang.StringUtils;
-
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -66,7 +64,7 @@ public class HttpTitleFormatter extends AbstractTitleFormatter {
                 }
                 title.deleteLastChars(2);
                 if (!webQueries.isEmpty()) {
-                    title.append(", ").append(webQueries.size()).append(" query strings: ").append(StringUtils.join(webQueries, ", "));
+                    title.append(", ").append(webQueries.size()).append(" query strings: ").append(String.join(", ", webQueries));
                 }
             }
         }
@@ -74,7 +72,7 @@ public class HttpTitleFormatter extends AbstractTitleFormatter {
                 new Function<Collection<String>, String>() {
                     @Override
                     public String apply(Collection<String> remoteAddresses) {
-                        return StringUtils.join(new HashSet(remoteAddresses), ", ");
+                        return String.join(", ", new HashSet(remoteAddresses));
                     }
                 });
         addGenericParams(title, tagToIdMap, params, defaultListParams, SKIP_PARAMS);

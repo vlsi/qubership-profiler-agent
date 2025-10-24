@@ -4,7 +4,7 @@ import static com.netcracker.profiler.security.SecurityConstants.AUTHENTICATED_U
 import static com.netcracker.profiler.security.SecurityConstants.LAST_USER_URI;
 import static com.netcracker.profiler.security.SecurityConstants.USER_NAME_PARAMETER;
 import static com.netcracker.profiler.security.SecurityConstants.USER_PASSWORD_PARAMETER;
-import static org.apache.commons.lang.StringUtils.isNotEmpty;
+import static com.netcracker.profiler.util.StringUtils.isNotEmpty;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -4,9 +4,9 @@ import com.netcracker.profiler.agent.*;
 import com.netcracker.profiler.dump.DumpRootResolver;
 import com.netcracker.profiler.io.JSHelper;
 import com.netcracker.profiler.servlet.util.DumperStatusProvider;
+import com.netcracker.profiler.util.StringUtils;
 import com.netcracker.profiler.util.ThrowableHelper;
 
-import org.apache.commons.lang.math.NumberUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
@@ -161,7 +161,7 @@ public class ConfigImpl {
         response.setContentType("application/x-javascript; charset=utf-8");
         final PrintWriter out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(response.getOutputStream(), "utf-8")), false);
         String id = request.getParameter("id");
-        if(!NumberUtils.isDigits(id)) {
+        if(!StringUtils.isNumeric(id)) {
             out.print("alert('Wrong id passed to /config/reload_status');");
             out.flush();
             return;

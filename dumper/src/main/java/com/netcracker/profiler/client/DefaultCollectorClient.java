@@ -9,8 +9,8 @@ import com.netcracker.profiler.cloud.transport.EndlessSocketInputStream;
 import com.netcracker.profiler.cloud.transport.FieldIO;
 import com.netcracker.profiler.cloud.transport.ProfilerProtocolBlacklistedException;
 import com.netcracker.profiler.cloud.transport.ProfilerProtocolException;
+import com.netcracker.profiler.util.StringUtils;
 
-import org.apache.commons.lang.StringUtils;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -202,7 +202,7 @@ public class DefaultCollectorClient implements DumperCollectorClient {
             log.debug("Connecting to {}:{}. SSL: {}", host, port, ssl);
             result = initSocketOrSSL(host, port, ssl);
         } catch (java.net.ConnectException e) {
-            String newHost = StringUtils.replace(host, "esc-static-service", "esc-collector-service");
+            String newHost = host.replace("esc-static-service", "esc-collector-service");
             if (newHost.equals(host)) {
                 throw new ProfilerProtocolException("Failed to connect to " + host + ":" + port);
             }
