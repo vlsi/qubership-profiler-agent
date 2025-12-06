@@ -53,11 +53,12 @@
 **Status:** **FIXED** - Changed 42 occurrences to use writeAll()
 **Impact:** Prevents corrupted ZIP files on disk full or quota exceeded
 
-### ❌ Issue #7: Process Discovery Index Bug
+### ✅ Issue #7: Process Discovery Index Bug
 **File:** `src/actions/process.zig:30-32`
 **Problem:** Prints wrong process info when filtering java processes
-**Fix:** Track ProcessInfo instead of just PIDs, or use parallel array
-**Impact:** Shows incorrect cmdline for processes
+**Fix:** Store full ProcessInfo in filtered list instead of just PIDs
+**Status:** **FIXED** - Now displays correct cmdline for each process
+**Impact:** Accurate process information in multi-process scenarios
 
 ### ❌ Issue #8: No Actual Compression in ZIP
 **File:** `src/actions/compress.zig:59`
@@ -206,5 +207,5 @@
 **Total Issues:** 25
 **Valid Issues:** 24
 **Invalid/False Positives:** 1 (#1)
-**Fixed:** 2 (#4, #6)
-**Remaining Valid Issues:** 22
+**Fixed:** 3 (#4, #6, #7)
+**Remaining Valid Issues:** 21

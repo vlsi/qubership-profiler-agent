@@ -9,34 +9,32 @@ pub fn findJavaProcess(allocator: std.mem.Allocator, name: []const u8) !u32 {
     const processes = try os_impl.findProcessesByName(allocator, name);
     defer os_impl.freeProcessList(processes);
 
-    // Filter for Java processes
-    var java_pids = std.ArrayList(u32).empty;
-    defer java_pids.deinit(allocator);
+    // Filter for Java processes - store full ProcessInfo for accurate display
+    var java_processes = std.ArrayList(os_impl.ProcessInfo).empty;
+    defer java_processes.deinit(allocator);
 
     for (processes) |proc| {
         // Check if it's a Java process
         if (isJavaProcess(proc)) {
-            try java_pids.append(allocator, proc.pid);
+            try java_processes.append(allocator, proc);
         }
     }
 
-    if (java_pids.items.len == 0) {
+    if (java_processes.items.len == 0) {
         std.debug.print("No Java process found matching '{s}'\n", .{name});
         return error.ProcessNotFound;
     }
 
-    if (java_pids.items.len > 1) {
+    if (java_processes.items.len > 1) {
         std.debug.print("Multiple Java processes found matching '{s}':\n", .{name});
-        for (java_pids.items, 0..) |pid, i| {
-            if (i < processes.len) {
-                std.debug.print("  PID {d}: {s}\n", .{ pid, processes[i].cmdline });
-            }
+        for (java_processes.items) |proc| {
+            std.debug.print("  PID {d}: {s}\n", .{ proc.pid, proc.cmdline });
         }
         std.debug.print("Please specify --pid explicitly\n", .{});
         return error.MultipleProcesses;
     }
 
-    return java_pids.items[0];
+    return java_processes.items[0].pid;
 }
 
 /// Check if a process is a Java process
