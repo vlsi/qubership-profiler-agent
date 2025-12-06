@@ -46,11 +46,12 @@
 **Fix:** Stream data in 8KB chunks
 **Impact:** Memory pressure, 1GB file size limit
 
-### ❌ Issue #6: Write Return Values Discarded
-**File:** `src/actions/compress.zig:73+` (20+ locations)
+### ✅ Issue #6: Write Return Values Discarded
+**File:** `src/actions/compress.zig:73+` (42 locations)
 **Problem:** `_ = try output_file.write()` ignores partial writes
-**Fix:** Use `writeAll()` or check bytes written
-**Impact:** Corrupted files on disk full
+**Fix:** Replace all `write()` calls with `writeAll()`
+**Status:** **FIXED** - Changed 42 occurrences to use writeAll()
+**Impact:** Prevents corrupted ZIP files on disk full or quota exceeded
 
 ### ❌ Issue #7: Process Discovery Index Bug
 **File:** `src/actions/process.zig:30-32`
@@ -205,5 +206,5 @@
 **Total Issues:** 25
 **Valid Issues:** 24
 **Invalid/False Positives:** 1 (#1)
-**Fixed:** 1 (#4)
-**Remaining Valid Issues:** 23
+**Fixed:** 2 (#4, #6)
+**Remaining Valid Issues:** 22

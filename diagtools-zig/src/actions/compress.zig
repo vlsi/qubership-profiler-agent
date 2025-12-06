@@ -70,40 +70,40 @@ fn writeZipFile(
 
     // Write local file header
     std.mem.writeInt(u32, &buf, signature, .little);
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u16, buf[0..2], version, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], flags, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], method, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], mod_time, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], mod_date, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     const crc_pos = try output_file.getPos();
     std.mem.writeInt(u32, &buf, 0, .little); // CRC32 (placeholder)
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, 0, .little); // Compressed size (placeholder)
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, 0, .little); // Uncompressed size (placeholder)
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u16, buf[0..2], filename_len, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], extra_len, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
-    _ = try output_file.write(basename);
+    try output_file.writeAll(basename);
 
     // Write file data (store method - no compression)
     const data_start = try output_file.getPos();
@@ -121,19 +121,19 @@ fn writeZipFile(
     const crc32 = hasher.final();
 
     // Write data without compression (store method)
-    _ = try output_file.write(all_data);
+    try output_file.writeAll(all_data);
     const compressed_size: u32 = @intCast(all_data.len);
 
     // Update header with actual CRC and sizes
     try output_file.seekTo(crc_pos);
     std.mem.writeInt(u32, &buf, crc32, .little);
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, compressed_size, .little);
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, @intCast(uncompressed_size), .little);
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     // Seek to end for central directory
     try output_file.seekTo(data_start + compressed_size);
@@ -142,85 +142,85 @@ fn writeZipFile(
     const central_dir_offset = try output_file.getPos();
 
     std.mem.writeInt(u32, &buf, 0x02014b50, .little); // Central directory signature
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u16, buf[0..2], 20, .little); // Version made by
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], version, .little); // Version needed to extract
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], flags, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], method, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], mod_time, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], mod_date, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u32, &buf, crc32, .little);
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, compressed_size, .little);
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, @intCast(uncompressed_size), .little);
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u16, buf[0..2], filename_len, .little);
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], 0, .little); // Extra field length
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], 0, .little); // File comment length
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], 0, .little); // Disk number start
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], 0, .little); // Internal file attributes
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u32, &buf, 0, .little); // External file attributes
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, @intCast(local_header_offset), .little); // Relative offset of local header
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
-    _ = try output_file.write(basename);
+    try output_file.writeAll(basename);
 
     // Write End of Central Directory Record
     const end_of_central_dir_offset = try output_file.getPos();
     const central_dir_size = end_of_central_dir_offset - central_dir_offset;
 
     std.mem.writeInt(u32, &buf, 0x06054b50, .little); // End of central dir signature
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u16, buf[0..2], 0, .little); // Number of this disk
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], 0, .little); // Disk where central directory starts
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], 1, .little); // Number of central directory records on this disk
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], 1, .little); // Total number of central directory records
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u32, &buf, @intCast(central_dir_size), .little); // Size of central directory
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u32, &buf, @intCast(central_dir_offset), .little); // Offset of start of central directory
-    _ = try output_file.write(&buf);
+    try output_file.writeAll(&buf);
 
     std.mem.writeInt(u16, buf[0..2], 0, .little); // ZIP file comment length
-    _ = try output_file.write(buf[0..2]);
+    try output_file.writeAll(buf[0..2]);
 }
 
 /// Delete the source file after successful compression
