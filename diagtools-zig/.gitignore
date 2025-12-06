@@ -1,0 +1,22 @@
+# Zig build artifacts
+zig-cache/
+zig-out/
+
+# Dependencies
+.zigmod/
+deps.zig
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+diagtools.log
