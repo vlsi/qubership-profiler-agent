@@ -189,8 +189,15 @@ fn cleanOldLogs(_: std.mem.Allocator, max_age_ms: i64) !void {
         // Convert nanoseconds to milliseconds for comparison
         const file_mtime_ms: i64 = @intCast(@divFloor(file_stat.mtime, 1_000_000));
 
+        // Skip files with future timestamps (clock skew, timezone issues)
+        if (file_mtime_ms > current_time) {
+            std.debug.print("  Warning: File {s} has future timestamp, skipping\n", .{entry.name});
+            continue;
+        }
+
         if (file_mtime_ms < cutoff_time) {
-            const age_days = @divFloor(current_time - file_mtime_ms, (1000 * 60 * 60 * 24));
+            const age_ms = current_time - file_mtime_ms;
+            const age_days = @divFloor(age_ms, (1000 * 60 * 60 * 24));
             std.debug.print("  Deleting old log: {s} (age: {d} days)\n", .{
                 entry.name,
                 age_days,

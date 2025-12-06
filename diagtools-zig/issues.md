@@ -29,11 +29,12 @@
 **Fix:** Implement platform-specific locking (flock/fcntl/LockFile)
 **Impact:** Race conditions with multiple instances
 
-### ❌ Issue #4: Negative Timestamp Handling
+### ✅ Issue #4: Negative Timestamp Handling
 **File:** `src/commands/schedule.zig:193`
 **Problem:** No check for negative time delta (clock skew)
-**Fix:** Add `if (age_ms < 0) continue;` check
-**Impact:** Integer overflow in division
+**Fix:** Add check for future timestamps before calculating age
+**Status:** **FIXED** - Added validation to skip files with future timestamps
+**Impact:** Prevents integer overflow and undefined behavior
 
 ---
 
@@ -204,5 +205,5 @@
 **Total Issues:** 25
 **Valid Issues:** 24
 **Invalid/False Positives:** 1 (#1)
-**Fixed:** 0
-**Remaining Valid Issues:** 24
+**Fixed:** 1 (#4)
+**Remaining Valid Issues:** 23
