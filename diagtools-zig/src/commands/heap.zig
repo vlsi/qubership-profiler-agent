@@ -24,7 +24,12 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
         } else if (std.mem.eql(u8, arg, "--pid") or std.mem.eql(u8, arg, "-p")) {
             i += 1;
             if (i >= args.len) return error.MissingPidValue;
-            pid = try std.fmt.parseInt(u32, args[i], 10);
+            const pid_value = try std.fmt.parseInt(u32, args[i], 10);
+            if (pid_value == 0) {
+                std.debug.print("Error: PID cannot be 0\n", .{});
+                return error.InvalidPid;
+            }
+            pid = pid_value;
         } else if (std.mem.eql(u8, arg, "--name") or std.mem.eql(u8, arg, "-n")) {
             i += 1;
             if (i >= args.len) return error.MissingNameValue;

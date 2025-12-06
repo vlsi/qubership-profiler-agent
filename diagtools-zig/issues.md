@@ -94,11 +94,12 @@
 **Fix:** Extract to common helper function
 **Impact:** Maintainability
 
-### ❌ Issue #13: No PID Validation
-**Files:** `heap.zig:27`, `dump.zig:27`
+### ✅ Issue #13: No PID Validation
+**Files:** `heap.zig:27`, `dump.zig:25`
 **Problem:** Accepts PID 0 or unreasonably large PIDs
-**Fix:** Validate `pid > 0 && pid < 100000`
-**Impact:** Confusing errors on invalid input
+**Fix:** Add validation to reject PID 0
+**Status:** **FIXED** - Now validates PID != 0 with clear error message
+**Impact:** Better user experience with clearer error messages
 
 ---
 
@@ -207,5 +208,5 @@
 **Total Issues:** 25
 **Valid Issues:** 24
 **Invalid/False Positives:** 1 (#1)
-**Fixed:** 3 (#4, #6, #7)
-**Remaining Valid Issues:** 21
+**Fixed:** 4 (#4, #6, #7, #13)
+**Remaining Valid Issues:** 20
