@@ -40,11 +40,12 @@
 
 ## 🟠 HIGH - Should Fix
 
-### ❌ Issue #5: ZIP Loads Entire File Into Memory
+### ✅ Issue #5: ZIP Loads Entire File Into Memory
 **File:** `src/actions/compress.zig:116`
 **Problem:** Reads up to 1GB at once, hard limit, blocking
 **Fix:** Stream data in 8KB chunks
-**Impact:** Memory pressure, 1GB file size limit
+**Status:** **FIXED** - Replaced readToEndAlloc with chunk-based streaming (8KB buffer)
+**Impact:** No memory pressure, no file size limit, constant 8KB memory usage
 
 ### ✅ Issue #6: Write Return Values Discarded
 **File:** `src/actions/compress.zig:73+` (42 locations)
@@ -208,5 +209,5 @@
 **Total Issues:** 25
 **Valid Issues:** 24
 **Invalid/False Positives:** 1 (#1)
-**Fixed:** 4 (#4, #6, #7, #13)
-**Remaining Valid Issues:** 20
+**Fixed:** 5 (#4, #5, #6, #7, #13)
+**Remaining Valid Issues:** 19

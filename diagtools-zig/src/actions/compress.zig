@@ -28,13 +28,8 @@ pub fn compressFile(allocator: std.mem.Allocator, source_path: []const u8, dest_
     }
     defer output_file.close();
 
-    // Use arena allocator for temporary allocations during compression
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const temp_allocator = arena.allocator();
-
     // Write ZIP file
-    try writeZipFile(temp_allocator, source_file, output_file, source_path, source_size);
+    try writeZipFile(source_file, output_file, source_path, source_size);
 
     std.debug.print("Compression complete: {s} ({d} bytes)\n", .{ output_path, try output_file.getPos() });
 
@@ -43,7 +38,6 @@ pub fn compressFile(allocator: std.mem.Allocator, source_path: []const u8, dest_
 
 /// Write a ZIP file containing a single file
 fn writeZipFile(
-    allocator: std.mem.Allocator,
     source_file: std.fs.File,
     output_file: std.fs.File,
     filename: []const u8,
@@ -112,17 +106,23 @@ fn writeZipFile(
 
     try source_file.seekTo(0);
 
-    // Read all data
-    const all_data = try source_file.readToEndAlloc(allocator, 1024 * 1024 * 1024); // Max 1GB
-    defer allocator.free(all_data);
+    // Stream data in chunks (8KB at a time)
+    const chunk_size = 8192;
+    var buffer: [chunk_size]u8 = undefined;
+    var total_written: u64 = 0;
 
-    // Calculate CRC32
-    hasher.update(all_data);
+    while (true) {
+        const bytes_read = try source_file.read(&buffer);
+        if (bytes_read == 0) break;
+
+        const chunk = buffer[0..bytes_read];
+        hasher.update(chunk);
+        try output_file.writeAll(chunk);
+        total_written += bytes_read;
+    }
+
     const crc32 = hasher.final();
-
-    // Write data without compression (store method)
-    try output_file.writeAll(all_data);
-    const compressed_size: u32 = @intCast(all_data.len);
+    const compressed_size: u32 = @intCast(total_written);
 
     // Update header with actual CRC and sizes
     try output_file.seekTo(crc_pos);
