@@ -112,6 +112,13 @@ pub fn uploadFileFromEnv(allocator: std.mem.Allocator, file_path: []const u8) !v
         return error.MissingUrl;
     };
 
+    // Validate URL format
+    if (!std.mem.startsWith(u8, url, "http://") and !std.mem.startsWith(u8, url, "https://")) {
+        std.debug.print("Error: DIAGCOLLECTOR_URL must start with http:// or https://\n", .{});
+        std.debug.print("Got: {s}\n", .{url});
+        return error.InvalidUrl;
+    }
+
     const token = std.posix.getenv("DIAGCOLLECTOR_TOKEN");
 
     try uploadFile(allocator, file_path, url, token);

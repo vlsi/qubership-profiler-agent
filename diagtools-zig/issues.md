@@ -191,11 +191,12 @@
 **Fix:** Just open file, handle error
 **Impact:** Race condition window
 
-### ❌ Issue #25: No URL Validation
+### ✅ Issue #25: No URL Validation
 **File:** `upload.zig:105`
 **Problem:** Unchecked URL from environment
 **Fix:** Validate URL format
-**Impact:** Confusing curl errors
+**Status:** **FIXED** - Added validation for http:// and https:// prefixes
+**Impact:** Clear error messages instead of confusing curl errors
 
 ---
 
@@ -216,7 +217,7 @@
 **Total Issues:** 25
 **Valid Issues:** 20
 **Invalid/False Positives:** 5 (#1, #12, #17*, #18, #21)
-**Fixed:** 9 (#4, #5, #6, #7, #9, #10, #11, #13, #17)
-**Remaining Valid Issues:** 11
+**Fixed:** 10 (#4, #5, #6, #7, #9, #10, #11, #13, #17, #25)
+**Remaining Valid Issues:** 10
 
 *Issue #17 was fixed as part of Issue #11
