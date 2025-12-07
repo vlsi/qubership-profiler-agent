@@ -96,7 +96,8 @@
 **Files:** `linux.zig`, `macos.zig`, `windows.zig`
 **Problem:** Same errdefer pattern in all platform files
 **Fix:** Extract to common helper function
-**Impact:** Maintainability
+**Status:** **FALSE POSITIVE** - errdefer blocks are idiomatic, extraction would complicate
+**Impact:** Not applicable
 
 ### ✅ Issue #13: No PID Validation
 **Files:** `heap.zig:27`, `dump.zig:25`
@@ -127,17 +128,19 @@
 **Fix:** Add doc comments following Zig conventions
 **Impact:** API clarity
 
-### ❌ Issue #17: Hardcoded Buffer Sizes
+### ✅ Issue #17: Hardcoded Buffer Sizes
 **Files:** `linux.zig:49,72`, `macos.zig:78`
 **Problem:** Magic numbers for buffer sizes
 **Fix:** Named constants: `PROC_STAT_MAX_SIZE = 4096`
-**Impact:** Code readability
+**Status:** **FIXED** - Already resolved as part of Issue #11
+**Impact:** Improved code readability
 
 ### ❌ Issue #18: No Path Validation
 **Files:** `heap.zig:125`, `dump.zig`
 **Problem:** Generated paths not sanitized
 **Fix:** Validate/sanitize filenames
-**Impact:** Potential path injection
+**Status:** **FALSE POSITIVE** - Paths generated from validated PIDs and timestamps only
+**Impact:** Not applicable
 
 ---
 
@@ -159,7 +162,8 @@
 **File:** `upload.zig:61`
 **Problem:** `allocPrintSentinel(..., 0)` instead of `allocPrintZ`
 **Fix:** Use `allocPrintZ` for null-terminated strings
-**Impact:** API correctness
+**Status:** **FALSE POSITIVE** - allocPrintZ doesn't exist in Zig 0.15.2
+**Impact:** Not applicable
 
 ---
 
@@ -210,7 +214,9 @@
 ---
 
 **Total Issues:** 25
-**Valid Issues:** 24
-**Invalid/False Positives:** 1 (#1)
-**Fixed:** 8 (#4, #5, #6, #7, #9, #10, #11, #13)
-**Remaining Valid Issues:** 16
+**Valid Issues:** 20
+**Invalid/False Positives:** 5 (#1, #12, #17*, #18, #21)
+**Fixed:** 9 (#4, #5, #6, #7, #9, #10, #11, #13, #17)
+**Remaining Valid Issues:** 11
+
+*Issue #17 was fixed as part of Issue #11
