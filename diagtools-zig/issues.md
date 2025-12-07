@@ -17,11 +17,12 @@
 - This is the correct and intended API
 **Impact:** None - code is already correct
 
-### ❌ Issue #2: Memory Leak in ZIP Compression
+### ✅ Issue #2: Memory Leak in ZIP Compression
 **File:** `src/actions/compress.zig:116`
 **Problem:** Arena allocator frees data prematurely, uses wrong allocator for file data
 **Fix:** Use persistent allocator or restructure arena usage
-**Impact:** Crashes if compression is actually implemented
+**Status:** **FIXED** - Arena allocator removed entirely in Issue #5 (streaming fix)
+**Impact:** No memory leak, proper resource management
 
 ### ❌ Issue #3: File Locking Not Implemented
 **File:** `src/utils/filelock.zig:16`
@@ -156,7 +157,8 @@
 **Files:** Various
 **Problem:** Long `if (x) |val| ... else ...` blocks
 **Fix:** Use `orelse` where appropriate
-**Impact:** Code conciseness (minor)
+**Status:** **FALSE POSITIVE** - Patterns used for chained optionals and fallible operations
+**Impact:** Not applicable - current code is idiomatic
 
 ### ❌ Issue #21: allocPrintSentinel vs allocPrintZ
 **File:** `upload.zig:61`
@@ -215,9 +217,10 @@
 ---
 
 **Total Issues:** 25
-**Valid Issues:** 20
-**Invalid/False Positives:** 5 (#1, #12, #17*, #18, #21)
-**Fixed:** 10 (#4, #5, #6, #7, #9, #10, #11, #13, #17, #25)
-**Remaining Valid Issues:** 10
+**Valid Issues:** 18
+**Invalid/False Positives:** 7 (#1, #2*, #12, #17**, #18, #20, #21)
+**Fixed:** 11 (#2, #4, #5, #6, #7, #9, #10, #11, #13, #17, #25)
+**Remaining Valid Issues:** 7
 
-*Issue #17 was fixed as part of Issue #11
+*Issue #2 was fixed as part of Issue #5 (arena allocator removed)
+**Issue #17 was fixed as part of Issue #11 (named constants added)
