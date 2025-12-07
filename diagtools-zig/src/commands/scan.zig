@@ -19,7 +19,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     }
 
     if (args.len == 0) {
-        std.debug.print("Error: No file patterns specified\n\n", .{});
+        std.debug.print("Error: No file patterns specified\n", .{});
         try printHelp();
         return error.MissingPatterns;
     }

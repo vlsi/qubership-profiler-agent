@@ -45,7 +45,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
             try handleConfigServerConfig();
         }
     } else {
-        std.debug.print("Error: No config backend enabled\n\n", .{});
+        std.debug.print("Error: No config backend enabled\n", .{});
         std.debug.print("Enable one of:\n", .{});
         std.debug.print("  - Consul: Set CONSUL_ENABLED=true and CONSUL_ADDRESS\n", .{});
         std.debug.print("  - Config Server: Set CONFIG_SERVER to server URL\n\n", .{});
