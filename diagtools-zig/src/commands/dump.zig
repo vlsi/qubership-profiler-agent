@@ -3,6 +3,9 @@ const process = @import("../actions/process.zig");
 const compress = @import("../actions/compress.zig");
 const upload = @import("../actions/upload.zig");
 
+/// Collects diagnostic data (thread dumps and top output) from a running Java process.
+/// The target process can be specified by PID, process name, or JAVA_PROCESS_NAME environment variable.
+/// Generated files can optionally be compressed and/or uploaded to a diagnostic collector.
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // Simple argument parsing
     var pid: ?u32 = null;

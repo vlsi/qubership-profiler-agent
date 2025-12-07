@@ -10,7 +10,10 @@ const UPLOAD_TIMEOUT_SECONDS = 300; // 5 minutes timeout for uploads
 const HTTP_SUCCESS_MIN = 200; // Minimum HTTP success status code
 const HTTP_SUCCESS_MAX = 299; // Maximum HTTP success status code
 
-/// Upload a file to a URL using HTTP multipart POST
+/// Uploads a file to a URL using HTTP multipart POST via libcurl.
+/// The file is sent as form data with the field name "file".
+/// Optional bearer token authentication is supported.
+/// Returns an error if upload fails or receives a non-2xx HTTP status.
 pub fn uploadFile(
     allocator: std.mem.Allocator,
     file_path: []const u8,
@@ -105,7 +108,9 @@ pub fn uploadFile(
     }
 }
 
-/// Upload file using environment variables for configuration
+/// Uploads a file using configuration from environment variables.
+/// Requires DIAGCOLLECTOR_URL to be set. DIAGCOLLECTOR_TOKEN is optional.
+/// Validates URL format before attempting upload.
 pub fn uploadFileFromEnv(allocator: std.mem.Allocator, file_path: []const u8) !void {
     const url = std.posix.getenv("DIAGCOLLECTOR_URL") orelse {
         std.debug.print("Error: DIAGCOLLECTOR_URL environment variable not set\n", .{});

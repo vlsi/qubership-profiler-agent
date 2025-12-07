@@ -5,6 +5,9 @@ const process = @import("../actions/process.zig");
 const compress = @import("../actions/compress.zig");
 const upload = @import("../actions/upload.zig");
 
+/// Captures a heap dump from a running Java process using jmap.
+/// The target process can be specified by PID, process name, or JAVA_PROCESS_NAME environment variable.
+/// Generated .hprof files can optionally be compressed to .zip and/or uploaded to a diagnostic collector.
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // Simple argument parsing
     var pid: ?u32 = null;

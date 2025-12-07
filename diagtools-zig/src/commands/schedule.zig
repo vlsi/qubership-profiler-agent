@@ -5,6 +5,9 @@ const scan_cmd = @import("scan.zig");
 // Scheduling constants
 const POLL_INTERVAL_MS = 100; // How often to check if it's time to run (100ms)
 
+/// Runs diagnostic collection tasks on a schedule in an infinite loop.
+/// Performs dump, scan, and log cleanup operations at configurable intervals.
+/// Intervals are controlled via environment variables (DIAGNOSTIC_DUMP_INTERVAL, etc.).
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var show_help = false;
 

@@ -4,8 +4,10 @@ const std = @import("std");
 const ZIP_VERSION = 20; // ZIP specification version 2.0
 const STREAM_BUFFER_SIZE = 8192; // 8KB buffer for streaming I/O
 
-/// Compress a file to ZIP format
-/// If dest_path is null, appends .zip to source_path
+/// Compresses a file to ZIP format using the store method (no deflate compression).
+/// Streams the file in 8KB chunks to handle large files without loading into memory.
+/// Returns the path to the created ZIP file (caller owns the memory).
+/// If dest_path is null, appends .zip to source_path.
 pub fn compressFile(allocator: std.mem.Allocator, source_path: []const u8, dest_path: ?[]const u8) ![]const u8 {
     // Determine output path
     const output_path = if (dest_path) |path|
@@ -226,7 +228,9 @@ fn writeZipFile(
     try output_file.writeAll(buf[0..2]);
 }
 
-/// Delete the source file after successful compression
+/// Compresses a file to ZIP format and deletes the source file upon success.
+/// Useful for converting large diagnostic files (e.g., .hprof) to save disk space.
+/// Returns the path to the created ZIP file (caller owns the memory).
 pub fn compressAndDeleteSource(allocator: std.mem.Allocator, source_path: []const u8, dest_path: ?[]const u8) ![]const u8 {
     const output_path = try compressFile(allocator, source_path, dest_path);
     errdefer allocator.free(output_path);

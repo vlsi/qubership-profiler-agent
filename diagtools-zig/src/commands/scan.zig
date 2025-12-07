@@ -2,6 +2,9 @@ const std = @import("std");
 const compress = @import("../actions/compress.zig");
 const upload = @import("../actions/upload.zig");
 
+/// Scans for diagnostic files matching specified patterns.
+/// Automatically compresses .hprof files to .hprof.zip.
+/// Uploads files to DIAGCOLLECTOR_URL if set, then deletes successfully uploaded files.
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var show_help = false;
 
