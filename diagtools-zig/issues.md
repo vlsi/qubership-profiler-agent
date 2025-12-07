@@ -187,11 +187,12 @@
 
 ## Security Considerations
 
-### ❌ Issue #24: TOCTOU in File Scanning
+### ✅ Issue #24: TOCTOU in File Scanning
 **File:** `scan.zig:150`
 **Problem:** Check existence then open later (race)
 **Fix:** Just open file, handle error
-**Impact:** Race condition window
+**Status:** **FIXED** - Removed access() check, file existence checked when processing
+**Impact:** Eliminated race condition window
 
 ### ✅ Issue #25: No URL Validation
 **File:** `upload.zig:105`
@@ -219,8 +220,8 @@
 **Total Issues:** 25
 **Valid Issues:** 18
 **Invalid/False Positives:** 7 (#1, #2*, #12, #17**, #18, #20, #21)
-**Fixed:** 11 (#2, #4, #5, #6, #7, #9, #10, #11, #13, #17, #25)
-**Remaining Valid Issues:** 7
+**Fixed:** 12 (#2, #4, #5, #6, #7, #9, #10, #11, #13, #17, #24, #25)
+**Remaining Valid Issues:** 6
 
 *Issue #2 was fixed as part of Issue #5 (arena allocator removed)
 **Issue #17 was fixed as part of Issue #11 (named constants added)

@@ -146,12 +146,9 @@ fn scanPattern(allocator: std.mem.Allocator, pattern: []const u8, files: *std.Ar
         std.mem.indexOf(u8, pattern, "?") != null;
 
     if (!has_wildcard) {
-        // No wildcard - check if file exists
-        std.fs.cwd().access(pattern, .{}) catch |err| {
-            std.debug.print("Warning: File not found: {s} ({any})\n", .{ pattern, err });
-            return;
-        };
-
+        // No wildcard - add the file path directly
+        // File existence will be checked when actually processing the file
+        // This avoids TOCTOU race condition
         const file_path = try allocator.dupe(u8, pattern);
         try files.append(allocator, file_path);
         return;
