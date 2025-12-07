@@ -143,17 +143,15 @@ pub fn getProcessInfo(allocator: std.mem.Allocator, pid: u32) !ProcessInfo {
 }
 
 test "macos process discovery" {
+    const builtin = @import("builtin");
+    // Only run this test on macOS
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
     const testing = std.testing;
     const allocator = testing.allocator;
 
     // Test getting info for PID 1 (launchd)
-    const proc = getProcessInfo(allocator, 1) catch |err| {
-        // On systems without proper permissions, skip test
-        if (err == error.ProcessNotFound or err == error.AccessDenied) {
-            return error.SkipZigTest;
-        }
-        return err;
-    };
+    const proc = try getProcessInfo(allocator, 1);
     var mutable_proc = proc;
     defer mutable_proc.deinit();
 

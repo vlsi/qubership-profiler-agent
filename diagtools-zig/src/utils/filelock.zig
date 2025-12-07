@@ -13,7 +13,7 @@ pub const FileLock = struct {
         errdefer file.close();
 
         // Platform-specific locking will be implemented here
-        _ = file;
+        // TODO: Implement actual locking (Issue #3)
 
         return FileLock{ .file = file };
     }

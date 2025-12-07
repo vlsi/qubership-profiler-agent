@@ -143,18 +143,16 @@ pub fn getProcessInfo(allocator: std.mem.Allocator, pid: u32) !ProcessInfo {
 }
 
 test "windows process discovery" {
+    const builtin = @import("builtin");
+    // Only run this test on Windows
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+
     const testing = std.testing;
     const allocator = testing.allocator;
 
     // Test getting info for current process
     const current_pid = windows.kernel32.GetCurrentProcessId();
-    const proc = getProcessInfo(allocator, current_pid) catch |err| {
-        // On systems without proper permissions, skip test
-        if (err == error.ProcessNotFound or err == error.AccessDenied) {
-            return error.SkipZigTest;
-        }
-        return err;
-    };
+    const proc = try getProcessInfo(allocator, current_pid);
     var mutable_proc = proc;
     defer mutable_proc.deinit();
 

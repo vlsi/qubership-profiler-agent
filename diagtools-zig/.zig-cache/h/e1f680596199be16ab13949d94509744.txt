@@ -844,6 +844,6 @@
 9533 331486014 1765098558440499733 8b80d1124dfcf64d2607a6de353810f0 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/actions/compress.zig
 3498 331406661 1765048506055384478 8d887a87be8ee3c8c242e5d4d5922be1 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/actions/upload.zig
 1312 331399677 1765046017411952761 4e650e74861be30a6f5593edafff58de 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/common.zig
-4151 331420475 1765054531822258246 d73f68a89fdff3642878af02ecbd2947 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/linux.zig
-5362 331420539 1765054543101236508 327787f565c40498072cf5eb2212a89e 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/macos.zig
-5034 331420576 1765054555840556763 410b6f43a26f496988419d67fcdd6025 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/windows.zig
+4058 331504035 1765108857975180536 4fd92a8708f5dff204b0c9ab63c8660e 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/linux.zig
+5281 331504021 1765108845400162714 2d67f378ae5bfe5c61be388ec50faa09 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/macos.zig
+4957 331504052 1765108869894511319 f9177a1026a0c87b08e40f65123e757a 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/windows.zig

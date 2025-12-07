@@ -107,17 +107,15 @@ pub fn getProcessInfo(allocator: std.mem.Allocator, pid: u32) !ProcessInfo {
 }
 
 test "linux process discovery" {
+    const builtin = @import("builtin");
+    // Only run this test on Linux
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
     const testing = std.testing;
     const allocator = testing.allocator;
 
     // Test getting info for PID 1 (init/systemd)
-    const proc = getProcessInfo(allocator, 1) catch |err| {
-        // On systems without /proc or insufficient permissions, skip test
-        if (err == error.FileNotFound or err == error.AccessDenied) {
-            return error.SkipZigTest;
-        }
-        return err;
-    };
+    const proc = try getProcessInfo(allocator, 1);
     var mutable_proc = proc;
     defer mutable_proc.deinit();
 

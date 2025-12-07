@@ -1,10 +1,9 @@
 0
 15678 331335849 1760154801000000000 f0bdf7a0d76753ffab1319907ec69cf1 1 compiler/test_runner.zig
-3574 331411940 1765051237814051146 2367e428d5715cc33badb74705b4a818 0 src/main.zig
+4058 331504035 1765108857975180536 4fd92a8708f5dff204b0c9ab63c8660e 0 src/os/linux.zig
 22376 331355089 1760154801000000000 2d968f90418b6afe5ba91eaa2e18ba71 1 ubsan_rt.zig
-2815 275694046 1745041822000000000 9e22886fb6495516746674acd4e22e97 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk/usr/lib/libcurl.tbd
 7957 331355018 1760154801000000000 0ebbb46b337b65e85e7d177cfc93d2ca 1 std/std.zig
-3574 331411940 1765051237814051146 2367e428d5715cc33badb74705b4a818 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/main.zig
+4058 331504035 1765108857975180536 4fd92a8708f5dff204b0c9ab63c8660e 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/linux.zig
 2525 331354474 1760154801000000000 71e0dabdb301ba10f8ca420941767e70 1 std/BitStack.zig
 100909 331354506 1760154801000000000 13a2e2104f4f0987e695d4e96ddf1e3d 1 std/Build.zig
 4266 331354586 1760154801000000000 16fdba428de22eb1305e855dec42f9a9 1 std/buf_map.zig
@@ -75,15 +74,10 @@
 1242 331355088 1760154801000000000 c5e5cebc2cfc9353dc65aa5193442b60 1 std/zon.zig
 28071 331355016 1760154801000000000 76d2b688d1d45fbb74ca560efdaac238 1 std/start.zig
 5929 331354722 1760154801000000000 a75e2588e1a73369810b6ba7657e4bfd 1 std/crypto/tlcsprng.zig
-6345 331426569 1765056028934308122 a707d7294af423de95044068f2976341 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/commands/heap.zig
-9860 331426661 1765056041501760378 381245314be44a6a7ac4864b250edb7e 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/commands/dump.zig
-8974 331420419 1765054506808000404 1ba6fba7091090ae7f302c2d62516a5c 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/commands/scan.zig
-9060 331422060 1765054872146792840 ed7523d78ce71deec99891326f3e332f 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/commands/schedule.zig
-7143 331411773 1765051120424317461 6a880e99ec0c89bbec5efa562ec71e69 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/commands/config.zig
+1312 331399677 1765046017411952761 4e650e74861be30a6f5593edafff58de 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/common.zig
 59803 331354480 1760154801000000000 b6406a99c6bcfa6765bfb08eafcbff0d 1 std/Build/Cache.zig
 38694 331354500 1760154801000000000 4bafc6be1344a4b0b4bfce1abc099568 1 std/Build/Step.zig
 26376 331354482 1760154801000000000 bb934510edbc055949ffff1646e5e1e6 1 std/Build/Module.zig
-11083 331336151 1760154801000000000 3c8016eb348fede9a19b94ec4869d8a6 1 compiler_rt.zig
 43006 331354503 1760154801000000000 01457aac972ac3a8e51fa2185c19c1be 1 std/Build/Watch.zig
 17168 331354481 1760154801000000000 907b4dad04e8cdc9fb34a46e35e44fb3 1 std/Build/Fuzz.zig
 30754 331354504 1760154801000000000 9a7faf2066913f9911ffcf2596f0704c 1 std/Build/WebServer.zig
@@ -119,6 +113,7 @@
 665 331354547 1760154801000000000 1dec26e22b22006cd47d45b427f8a00c 1 std/Target/generic.zig
 1207 331354549 1760154801000000000 2119135642c6ce06557e5005da5d27d3 1 std/Target/lanai.zig
 6753 331354550 1760154801000000000 da13f92a1b8d03cc797a3beeaa2922d6 1 std/Target/loongarch.zig
+11083 331336151 1760154801000000000 3c8016eb348fede9a19b94ec4869d8a6 1 compiler_rt.zig
 7140 331354551 1760154801000000000 85a640161b5e75f1b0e44aafa7b2ac12 1 std/Target/m68k.zig
 16348 331354552 1760154801000000000 12a09875d65985836758c030c651b686 1 std/Target/mips.zig
 2227 331354553 1760154801000000000 f424aba074f946c774143fd6a0cc9b02 1 std/Target/msp430.zig
@@ -841,10 +836,5 @@
 419 331354917 1760154801000000000 ed7dfc04a5d0c4f0853edb5414ce981e 1 std/os/linux/bpf/btf_ext.zig
 24293 331354918 1760154801000000000 0c7d3ee9ea8e698a843ee6039fd161c4 1 std/os/linux/bpf/helpers.zig
 3221 331354665 1760154801000000000 fda67b74062c7f535bb0a6d0f1fe74fb 1 std/crypto/codecs/asn1/der/ArrayListReverse.zig
-3428 331426299 1765055936082540864 3bb2322d8392b23689ef9152868e8e6e 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/actions/process.zig
-9533 331486014 1765098558440499733 8b80d1124dfcf64d2607a6de353810f0 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/actions/compress.zig
-3498 331406661 1765048506055384478 8d887a87be8ee3c8c242e5d4d5922be1 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/actions/upload.zig
-1312 331399677 1765046017411952761 4e650e74861be30a6f5593edafff58de 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/common.zig
-4058 331504035 1765108857975180536 4fd92a8708f5dff204b0c9ab63c8660e 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/linux.zig
 5281 331504021 1765108845400162714 2d67f378ae5bfe5c61be388ec50faa09 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/macos.zig
 4957 331504052 1765108869894511319 f9177a1026a0c87b08e40f65123e757a 0 /Users/vlsi/Documents/code/qubership/qubership-profiler-zig/diagtools-zig/src/os/windows.zig
