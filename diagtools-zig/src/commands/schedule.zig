@@ -2,6 +2,9 @@ const std = @import("std");
 const dump_cmd = @import("dump.zig");
 const scan_cmd = @import("scan.zig");
 
+// Scheduling constants
+const POLL_INTERVAL_MS = 100; // How often to check if it's time to run (100ms)
+
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var show_help = false;
 
@@ -67,7 +70,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
         // Sleep for a short interval before checking again
         // Ctrl+C will terminate the process during this sleep
-        std.Thread.sleep(100_000_000); // 100ms
+        std.Thread.sleep(POLL_INTERVAL_MS * std.time.ns_per_ms);
     }
 }
 

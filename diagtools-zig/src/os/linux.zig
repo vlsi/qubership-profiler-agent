@@ -1,6 +1,10 @@
 const std = @import("std");
 const ProcessInfo = @import("common.zig").ProcessInfo;
 
+// Buffer sizes for reading /proc files
+const PROC_STAT_MAX_SIZE = 4096; // Max size for /proc/[pid]/stat
+const PROC_CMDLINE_MAX_SIZE = 8192; // Max size for /proc/[pid]/cmdline
+
 pub fn findProcessesByName(allocator: std.mem.Allocator, name: []const u8) ![]ProcessInfo {
     var result = std.ArrayList(ProcessInfo).empty;
     errdefer {
@@ -46,7 +50,7 @@ pub fn getProcessInfo(allocator: std.mem.Allocator, pid: u32) !ProcessInfo {
     const stat_content = std.fs.readFileAlloc(
         allocator,
         stat_path,
-        4096,
+        PROC_STAT_MAX_SIZE,
     ) catch |err| switch (err) {
         error.FileNotFound => return error.ProcessNotFound,
         else => return err,
@@ -69,7 +73,7 @@ pub fn getProcessInfo(allocator: std.mem.Allocator, pid: u32) !ProcessInfo {
     const cmdline_content = std.fs.readFileAlloc(
         allocator,
         cmdline_path,
-        8192,
+        PROC_CMDLINE_MAX_SIZE,
     ) catch |err| switch (err) {
         error.FileNotFound => return error.ProcessNotFound,
         else => {

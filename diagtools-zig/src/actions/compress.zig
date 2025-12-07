@@ -1,5 +1,9 @@
 const std = @import("std");
 
+// ZIP format constants
+const ZIP_VERSION = 20; // ZIP specification version 2.0
+const STREAM_BUFFER_SIZE = 8192; // 8KB buffer for streaming I/O
+
 /// Compress a file to ZIP format
 /// If dest_path is null, appends .zip to source_path
 pub fn compressFile(allocator: std.mem.Allocator, source_path: []const u8, dest_path: ?[]const u8) ![]const u8 {
@@ -48,7 +52,7 @@ fn writeZipFile(
 
     // ZIP Local File Header
     const signature: u32 = 0x04034b50; // Local file header signature
-    const version: u16 = 20; // Version needed to extract (2.0)
+    const version: u16 = ZIP_VERSION; // Version needed to extract
     const flags: u16 = 0; // General purpose bit flag
     const method: u16 = 0; // Compression method (0 = store, no compression)
     const mod_time: u16 = 0; // Last mod file time (MS-DOS format)
@@ -106,9 +110,8 @@ fn writeZipFile(
 
     try source_file.seekTo(0);
 
-    // Stream data in chunks (8KB at a time)
-    const chunk_size = 8192;
-    var buffer: [chunk_size]u8 = undefined;
+    // Stream data in chunks
+    var buffer: [STREAM_BUFFER_SIZE]u8 = undefined;
     var total_written: u64 = 0;
 
     while (true) {
@@ -144,7 +147,7 @@ fn writeZipFile(
     std.mem.writeInt(u32, &buf, 0x02014b50, .little); // Central directory signature
     try output_file.writeAll(&buf);
 
-    std.mem.writeInt(u16, buf[0..2], 20, .little); // Version made by
+    std.mem.writeInt(u16, buf[0..2], ZIP_VERSION, .little); // Version made by
     try output_file.writeAll(buf[0..2]);
 
     std.mem.writeInt(u16, buf[0..2], version, .little); // Version needed to extract

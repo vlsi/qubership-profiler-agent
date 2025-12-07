@@ -5,6 +5,11 @@ const c = @cImport({
     @cInclude("curl/curl.h");
 });
 
+// HTTP upload constants
+const UPLOAD_TIMEOUT_SECONDS = 300; // 5 minutes timeout for uploads
+const HTTP_SUCCESS_MIN = 200; // Minimum HTTP success status code
+const HTTP_SUCCESS_MAX = 299; // Maximum HTTP success status code
+
 /// Upload a file to a URL using HTTP multipart POST
 pub fn uploadFile(
     allocator: std.mem.Allocator,
@@ -68,8 +73,8 @@ pub fn uploadFile(
     // Follow redirects
     _ = c.curl_easy_setopt(curl, c.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
 
-    // Set timeout (5 minutes)
-    _ = c.curl_easy_setopt(curl, c.CURLOPT_TIMEOUT, @as(c_long, 300));
+    // Set timeout
+    _ = c.curl_easy_setopt(curl, c.CURLOPT_TIMEOUT, @as(c_long, UPLOAD_TIMEOUT_SECONDS));
 
     // Enable verbose output in debug builds
     if (@import("builtin").mode == .Debug) {
@@ -94,7 +99,7 @@ pub fn uploadFile(
 
     std.debug.print("Upload completed with HTTP status: {d}\n", .{response_code});
 
-    if (response_code < 200 or response_code >= 300) {
+    if (response_code < HTTP_SUCCESS_MIN or response_code > HTTP_SUCCESS_MAX) {
         std.debug.print("Server returned error status code\n", .{});
         return error.ServerError;
     }
