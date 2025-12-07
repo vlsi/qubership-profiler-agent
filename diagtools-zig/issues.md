@@ -28,7 +28,8 @@
 **File:** `src/utils/filelock.zig:16`
 **Problem:** `acquire()` is a no-op, just creates file without locking
 **Fix:** Implement platform-specific locking (flock/fcntl/LockFile)
-**Impact:** Race conditions with multiple instances
+**Status:** **FALSE POSITIVE** - Filelock module exists but is never used in the codebase
+**Impact:** None - dead code that's only included in tests
 
 ### ✅ Issue #4: Negative Timestamp Handling
 **File:** `src/commands/schedule.zig:193`
@@ -175,13 +176,15 @@
 **File:** `compress.zig`
 **Problem:** Many small writes = many syscalls
 **Fix:** Wrap in `std.io.bufferedWriter`
-**Impact:** 10-100x faster writes
+**Status:** **FALSE POSITIVE** - ZIP format requires seeking to update headers, incompatible with buffered writing
+**Impact:** Not applicable - current design is correct
 
 ### ❌ Issue #23: Repeated Allocations in Loops
 **File:** `scan.zig`
 **Problem:** Allocates path buffer each iteration
 **Fix:** Reuse ArrayList buffer
-**Impact:** Reduced allocations
+**Status:** **FALSE POSITIVE** - Path allocations are necessary to store in result list
+**Impact:** Not applicable - allocations are required by design
 
 ---
 
@@ -218,10 +221,11 @@
 ---
 
 **Total Issues:** 25
-**Valid Issues:** 18
-**Invalid/False Positives:** 7 (#1, #2*, #12, #17**, #18, #20, #21)
+**Valid Issues:** 15
+**Invalid/False Positives:** 10 (#1, #2*, #3, #12, #17**, #18, #20, #21, #22, #23)
 **Fixed:** 12 (#2, #4, #5, #6, #7, #9, #10, #11, #13, #17, #24, #25)
-**Remaining Valid Issues:** 6
+**Remaining Valid Issues:** 3 (#8, #14, #15, #16, #19)
+**Note:** Issues #8 (deflate compression), #14-16, #19 are low priority enhancements
 
 *Issue #2 was fixed as part of Issue #5 (arena allocator removed)
 **Issue #17 was fixed as part of Issue #11 (named constants added)
