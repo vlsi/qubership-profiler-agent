@@ -2,7 +2,7 @@
 
 Contract documents for the profiler-backend migration to the new architecture: no Postgres, in-memory call assembly + WAL + spill + parquet in S3, query fan-out over a Headless Service.
 
-The rationale and the high-level roadmap live in `/profiler-plan.md` at the repo root.
+The rationale and the high-level roadmap live in [profiler-plan.md](./profiler-plan.md) (sources: working notes in [profiler-mom.md](./profiler-mom.md), code-vs-plan delta in [profiler-plan-summary.md](./profiler-plan-summary.md)).
 
 ## Layout
 
@@ -26,3 +26,5 @@ The rationale and the high-level roadmap live in `/profiler-plan.md` at the repo
 ## Stage 0 progress
 
 Tracked in [stage0-progress.md](./stage0-progress.md).
+
+Deferred ideas that surfaced during contract design but are intentionally out of MVP scope: [deferred.md](./deferred.md).

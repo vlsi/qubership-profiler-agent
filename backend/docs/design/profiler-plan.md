@@ -247,6 +247,7 @@ Work that runs in parallel with the main stages and does not fit any single one.
 5. **RWX PV is not required.** State separation: shared multi-reader → S3 (object storage, not RWX); per-replica hot state → RWO PV via StatefulSet `volumeClaimTemplates`; query → stateless without PV. Discovery via Headless Service + DNS.
 6. **Query reads from two tiers (hot collector + cold S3).** Fan-out + merge + dedup by PK. Hot cutoff = flush interval.
 7. **Migrating `@netcracker/*` → AntD only in Stage 5.** Until then we don't touch the UI.
+8. **Consolidate the parser onto `backend/libs/parser/pipe/`.** The repo currently ships two parallel implementations: pull-style `streams/` (used by `ParsePodTcpDump` for offline replay of captured TCP dumps) and push-style `pipe/` (channel-based, suitable for live TCP ingestion). Every protocol change has to be made in both places; tests are duplicated. Decision: `pipe/` is the single source of truth going forward. `streams/` callers (offline replay tooling) get a thin "feed the whole buffer through `pipe/` and collect events from channels" adapter, and `streams/` is then deleted. Not blocking — execute opportunistically when shared parser code is being touched (e.g. while adding `RESET_STREAM` / `KEEP_ALIVE` handling), not as a standalone refactor. Until consolidation lands, **new protocol/format changes go into `pipe/` only**; do not extend `streams/`.
 
 ---
 
