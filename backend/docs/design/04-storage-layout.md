@@ -30,7 +30,7 @@ The same image runs `collect`, `query`, `maintain`, and `all`. Distroless + stat
 
 ### 3.1 Why StatefulSet (not Deployment)
 
-- **Per-replica RWO PV** — each collector needs its own private PV for dictionary WAL, chunks staging, pending parquet, and `metadata.sqlite` (`01-write-contract.md` §8). `volumeClaimTemplates` on a StatefulSet provisions one PVC per pod ordinal; Deployment cannot do this.
+- **Per-replica RWO PV** — each collector needs its own private PV for the dictionary/calls WAL, trace segments, sealed parquet, and `metadata.sqlite` (`01-write-contract.md` §8). `volumeClaimTemplates` on a StatefulSet provisions one PVC per pod ordinal; Deployment cannot do this.
 - **Stable DNS identity** — each pod gets `collector-0`, `collector-1`, … with a stable A-record under the headless service. `<replica>` is encoded in the parquet object key (`01-write-contract.md` §7), so pod identity must be stable across restarts.
 - **Ordered rollout** — by default, StatefulSet rolls pods sequentially, which means at most one collector is in the `LOADING/RECOVERY` state at a time. Cluster never loses more than one replica's worth of hot data simultaneously.
 
@@ -159,15 +159,16 @@ Agents do not need to be aware of the topology. The collector binary stamps `res
 
 ### 3.5 PVC sizing
 
-Default: `20Gi` per replica. Composition:
+Default: `20Gi` per replica. The trace segments dominate; the seal-model metadata (`calls.wal` + `metadata.sqlite`) is a distant second. Figures below assume a per-replica ingest rate `r` (with `R` replicas sharing the 100 K calls/s target, `r = 100000 / R`) and ~250 B per Call record.
 
 - `dictionary.wal` + `params.wal` + `suspend.wal` — tens of MB typically; dominated by long-running pod-restarts.
-- Chunks staging — bounded by `PROFILER_CHUNKS_STAGING_MAX_BYTES` (default `10GB`, `01-write-contract.md` §9).
-- Pending parquet — bounded by flush triggers; typically <1 GB.
-- Hot-retention parquet — bounded by `(uploaded parquet rate) × HOT_RETENTION`; rough guide `5 min × HOT_RETENTION/5min × parquet_size` ≈ 3 × `parquet_max_size` per retention class ≈ 1 GB.
-- `metadata.sqlite` — tens of MB.
+- Trace segments — the largest component, capped by `PROFILER_CHUNKS_STAGING_MAX_BYTES` (default `10GB`, `01-write-contract.md` §9).
+- `calls.wal` — full Call records for the un-sealed window (≈ one bucket plus grace, ~6 min): `r × 360 s × 250 B`. At `r = 25 K/s` (R = 4) ≈ 2.2 GB; at `r = 50 K/s` (R = 2) ≈ 4.5 GB.
+- `metadata.sqlite` — the call index. Calls drop out of the hot index at seal and are then served from the sealed local parquet (`02-read-contract.md` §3), so the index spans ~6 min, not the full `hot_retention`: ≈ `r × 360 s × 150 B` including secondary indexes. At `r = 25 K/s` ≈ 2 GB; at `r = 50 K/s` ≈ 4 GB. (Keeping the index for the whole 15 min hot window instead is roughly 2.5× this.)
+- Seal scratch (`parquet-sealing/`) — one bucket's parquet in flight; transient, cleared on each seal.
+- Hot-retention parquet — bounded by `(uploaded parquet rate) × HOT_RETENTION` ≈ 3 × `parquet_max_size` per retention class ≈ 1 GB.
 
-`20Gi` gives headroom for ~2× the staging budget plus all the rest. Operators can override per-environment via Helm values.
+Fit against `20Gi`: at `r = 25 K/s` (R = 4) the sum is ≈ 10 + 2.2 + 2 + 1 ≈ 15 GB — comfortable. At `r = 50 K/s` (R = 2) it is ≈ 10 + 4.5 + 4 + 1 ≈ 20 GB — at the edge. So the 100 K/s target wants **R ≥ 3–4 collectors**, or a larger PVC or a smaller segment cap. The RAM budget (`PROFILER_MEM_BUDGET`, `01-write-contract.md` §4.6) is a separate lever: `chunk_index` and seal-pass buffers are bounded by eviction, not by this PVC. Operators override per-environment via Helm values.
 
 ## 4. `query` workload — Deployment + ClusterIP
 

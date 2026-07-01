@@ -1,6 +1,8 @@
 # 01 — Write contract
 
-> Status: **draft**, awaiting review. Wire-protocol invariants (Section 1) verified against agent code; per-call trace bytes are assembled by the collector at chunk granularity (Section 4). No agent or protocol changes are required by this contract.
+> Status: **draft**, awaiting review. Wire-protocol invariants (Section 1) verified against agent code. No agent or protocol changes are required by this contract for the MVP.
+
+> **2026-07-01 redesign — now in the body.** The hot-store (gzip segments + SQLite index) and seal-pass model replaced the earlier write-path-parquet design and is folded into §2–§6 and §8–§9 below. Decision history and rationale: `stage0-progress.md` decisions log (2026-07-01 entries).
 
 This document defines what the new Go collector writes to local PV and to S3, and on which events. It is the source of truth for Stages 1, 2, 6.
 
@@ -18,6 +20,8 @@ The agent opens a long-lived TCP connection to the collector and multiplexes sev
 | `sql`, `xml` | Captured payload bodies referenced from calls. | Many per pod-restart |
 
 Important consequence: **the collector does not assemble calls.** A `Call` record arrives only when the root call has closed on the agent side. The collector's job is to demultiplex streams, persist them, and emit a parquet row per `Call`.
+
+**Optional channel gzip.** `ProtocolConst.ZIPPING_ENABLED` (default `false`, `proto-definition/.../ProtocolConst.java:46`) gzips the whole multiplexed channel; when it is on, the collector must gunzip before it can demux `RCV_DATA`. The collector supports both modes.
 
 ### Verified against agent code
 
@@ -37,17 +41,17 @@ Sources: `dumper/src/main/java/com/netcracker/profiler/Dumper.java`, `boot/src/m
 
 ## 2. What the collector persists
 
-There are four distinct artifacts. They live in different storage tiers because they have different access patterns, durability requirements, and lifetimes.
+The collector keeps five artifacts. They live in different storage tiers because their access patterns, durability requirements, and lifetimes differ.
 
 | Artifact | Storage | Why |
 |---|---|---|
-| Dictionary WAL | Local RWO PV, append-only file | Required for restart recovery. Without it, after a collector restart the trace bytes already received but not yet decoded are unreadable. |
-| Raw chunks staging | Local RWO PV, append-only file(s) | Buffers incoming chunks of all threads as received. Source for per-call reassembly (§4). Refcounted; deleted when every parquet row that sourced from it has been uploaded to S3. |
-| Per-call blob | Inside parquet (`trace_blob` column) | Reassembled by the collector at chunk granularity at write time. Lifetime = parquet row lifetime. |
-| Pending parquet | Local RWO PV, parquet writer state | Current "writing" parquet file for each retention class. Closed and uploaded on flush. |
-| Closed parquet | S3 | Read by query (cold path) and by maintenance (retention). |
+| Dictionary / params / suspend WAL | Local RWO PV, append-only file | Required for restart recovery and for decoding trace bytes already received. The agent does not retransmit these streams (§3). |
+| `calls.wal` | Local RWO PV, append-only file | Full Call records as received, one file per pod-restart. Source for the seal pass (§6) and for hot single-row `/calls/{pk}` fetches, located by the SQLite offset. |
+| Trace segments | Local RWO PV, gzip segment files | The hot store: the raw interleaved trace stream, written once (§4.4). Source for per-call blob assembly at seal time. Refcounted; unlinked once every call whose chunks it holds is sealed and uploaded. |
+| `metadata.sqlite` | Local RWO PV, SQLite | The call index (PK + filter columns + `calls.wal` offset), the segment catalog (logical byte range per segment), refcounts, seal watermarks, and upload checkpoints. No bulk bytes. |
+| Parquet | Local RWO PV, then S3 | Materialized by the seal pass (§6), never on the write path. Sealed once, kept locally for `hot_retention` past upload (§6.3), authoritative in S3. |
 
-In-memory state is small: dictionary (full copy for fast lookups), open parquet writers, and per-thread accumulators `accumulator[threadId]` — ordered lists of `(staging_file, offset, length)` triples pointing at chunks of the currently-open root call (§4.3). There is no in-memory call-tree assembly; the collector never decodes individual events at write time.
+In-memory state is small: the dictionary (a full copy for fast lookups) and the per-thread `chunk_index[threadId]` — ordered lists of `(segment_file, offset, length)` for that thread's logical chunks still within the hot window (§4.3). Parquet writers exist only transiently, inside a running seal pass. The collector parses trace events to find chunk and call boundaries (§4.1), but it does not build an in-memory call tree; the blob is a byte range, assembled at seal and decoded into a tree only on the read path.
 
 ## 3. Dictionary WAL
 
@@ -116,50 +120,62 @@ Parquet rows have a per-bucket retention of up to 30 days (`long_clean`, `any_er
 
 **Growth during live pod-restart:** the dictionary is append-only (§1 V3). If a collector crashes and recovers mid-flight, the WAL is replayed; the on-disk monotonic `version` counter is rebuilt from the highest entry's index. Clients revalidating an old ETag get the fresh snapshot.
 
+### 3.7 Reconnect continuity
+
+A dropped agent connection never heals in place: the agent tears its dumper down to `initialize()` (`lastWrittenDictionaryTag = 0`) and reconnects, re-sending the whole dictionary from index 0 with the reset flag set (`resetRequired = 1`). Each reconnect is a new TCP accept, so the collector stamps a fresh `restartTime` and treats it as a new, independent pod-restart. Because the agent re-sends the full dictionary, that pod-restart is self-contained — the replica that receives it is never dictionary-less, even when it differs from the one that held the previous connection, and replicas need not share dictionary state. The `resetRequired = 1` flag is what tells the collector the incoming dictionary starts from index 0. This is why the collector-stamped `restartTime` at TCP accept (§1 V4) is safe: reconnect does not need cross-connection continuity. Full code trace: `stage0-progress.md` decisions log (2026-07-01).
+
 ## 4. Per-call trace blob assembly
 
 ### 4.1 Why per-call reassembly
 
-The trace stream is chunk-interleaved (§1 V5): bytes of one root call are scattered across N chunks of the same thread, with chunks of other threads in between. We cannot serve "the bytes for call X" as a single byte range from the wire stream.
+The trace stream is chunk-interleaved (§1 V5): bytes of one root call are scattered across N chunks of the same thread, with chunks of other threads in between. We cannot serve "the bytes for call X" as a single byte range from the raw stream.
 
-The collector materializes each root call's bytes into a contiguous per-call blob at chunk granularity, in real time as Call records close. The blob is embedded in the parquet row as the `trace_blob` column.
+The collector extracts each root call's bytes into a contiguous per-call blob and embeds it in the parquet row as the `trace_blob` column. Extraction is **event-level and driven by the Call record**: the collector parses trace events to find chunk and call boundaries. It is not a blind chunk-memcpy — a chunk carries no length prefix, so its end can only be found by parsing events to `EVENT_FINISH_RECORD`, and a root call's end can only be found by tracking call depth to the depth-0 exit (verified against `libs/parser/pipe/traces.go:65-150`).
 
-This is a chunk-level memcpy. The collector does NOT parse events inside chunks at write time — only the 16-byte chunk header.
+### 4.2 Chunk model and the three framing levels
 
-### 4.2 Chunk model
+Do not conflate three different "chunk" notions:
 
-Each chunk begins with `[threadId:long, startTime:long]` (16 bytes), followed by events, terminated by `EVENT_FINISH_RECORD` (`Dumper.java:881-1004`, `LocalBuffer.SIZE=4096` events ≈ tens of KB on the wire). The full body of one chunk belongs to one thread. Within a chunk, multiple short root calls of that thread may open and close — tolerated as "neighbor noise" inside the per-call blob (§4.5).
+- **`COMMAND_RCV_DATA` payload** — up to `DATA_BUFFER_SIZE` = 1 KB of one stream's bytes (`proto-definition/.../ProtocolConst.java:4`; the agent chops at `DefaultCollectorClient.java:314`). The collector concatenates these per stream before anything else.
+- **Logical trace chunk** — `[threadId:long, startTime:long]` (16 bytes) + events + `EVENT_FINISH_RECORD`, `LocalBuffer`-sized (≈ tens of KB, `LocalBuffer.SIZE = 4096` events). One chunk's body belongs to one thread, and one chunk spans many `RCV_DATA` payloads. The trace stream also opens with a one-time `timerStartTime` (8 bytes) before the first chunk; event times are deltas off it (`libs/parser/pipe/traces.go:39,65`), so a blob is decodable only together with that epoch.
+- **Go `Chunk` type** — a rolling-stream handle in the existing parser, unrelated to either of the above.
 
-### 4.3 Reassembly algorithm
+Within one logical chunk, multiple short root calls of a thread may open and close (§4.5).
 
-Per-thread state held in RAM:
+### 4.3 Indexing on the write path, assembly at seal
 
-- `accumulator[threadId]` — ordered list of `(staging_file, offset, length)` for chunks of T's currently-open root call.
+Blob assembly does not happen on the write path. The write path only captures bytes and builds the index; the seal pass (§6.5) assembles the blobs. This keeps ingest a single sequential append and lets one seal pass decompress each segment exactly once.
 
-On each incoming chunk:
+Per-thread state held in RAM (mirrored in the SQLite segment catalog for recovery):
 
-1. Append the chunk verbatim to the current `chunks/<seq>.bin` staging file on PV (§4.4).
-2. Parse the 16-byte header → extract `threadId`.
-3. Append `(staging_file, offset_in_file, chunk_length)` to `accumulator[threadId]`.
+- `chunk_index[threadId]` — ordered list of `(segment_file, offset, length)` for that thread's logical chunks still within the hot window.
 
-On each incoming `Call` record for thread T (delivered on the calls stream):
+On the demultiplexed trace stream, as bytes arrive:
 
-1. memcpy each chunk referenced by `accumulator[T]` from its staging file into a contiguous in-memory blob.
-2. Write the parquet row with `trace_blob` = blob; route by retention class (§6.4).
-3. Reset `accumulator[T]`. **Carry the last chunk over** to the new accumulator — it may contain the start of T's next root call. That chunk is read twice and its bytes are duplicated into both blobs.
+1. Append the raw stream to the current gzip segment file on the PV (§4.4); track the running logical offset.
+2. Parse forward: read the 16-byte chunk header, then events, to `EVENT_FINISH_RECORD` — this delimits the chunk. Record `(segment_file, offset, length, threadId)` in `chunk_index[threadId]` and in the SQLite segment catalog.
 
-The carry-over rule is the only source of byte duplication; bounded by one chunk per pair of consecutive same-thread root calls.
+On each `Call` record for thread T (calls stream), keyed by its pointer `(trace_file_index, buffer_offset, record_index)`:
 
-### 4.4 Staging files on PV
+1. Append the full record to `calls.wal`.
+2. Insert one row into the SQLite call index: PK, filter columns (§5.2), `bucket = floor(ts_ms)`, the start pointer, and the `calls.wal` offset. Mark `bucket` dirty for the seal loop (§6.1).
+
+No blob is assembled and no parquet is written here. The blob's byte range — walk T's chunk chain from the pointer, tracking depth (`enter +1`, `exit −1`, skip tags) to the depth-0 exit — is resolved later by the seal pass, together with the external value-stream references the blob carries (`bigParams` / `bigParamsDedup`, and any `sql` / `xml`).
+
+Indexing is order-independent: it keys off the Call pointer, not the arrival order of the two streams. A Call record whose trace bytes are not yet fully parsed is still indexed; the seal pass runs only after the bucket's grace, by which point the trace has caught up. Calls with no Call record (filtered by the agent's persistence gate, `Dumper.java`) are never sealed, matching the agent's intent.
+
+### 4.4 Segment files on PV (hot store)
 
 ```
-/data/pods/<ns>/<svc>/<pod>/<restartTime>/chunks/<seq>.bin
+/data/pods/<ns>/<svc>/<pod>/<restartTime>/{trace,sql,xml}/<rolling_seq>.gz
 ```
 
-- Append-only. Each chunk written verbatim (including the 16-byte header), so a staging file is itself a valid chunk stream.
-- Rotated when size exceeds `PROFILER_CHUNKS_STAGING_FILE_SIZE` (default 256 MB). New file `<seq+1>.bin` opened; accumulators continue uninterrupted.
-- Refcounted in the SQLite metadata DB (§8): incremented when an accumulator first references a file, decremented when each referencing parquet row uploads to S3.
-- Deletable once refcount = 0.
+The hot store is the three offset-addressable bulk streams: `trace`, plus the external value streams `sql` and `xml` that a blob points into. All three are written the same way.
+
+- **One segment file per agent stream file.** The collector opens a segment on each `COMMAND_INIT_STREAM_V2` and names it by the stream's `rolling_seq` (`backend/libs/parser/parser.go`); the demultiplexed bytes for that handle are appended and gzip-compressed once, with no WAL double-write (the agent's `<seq>.gz` model, `CompressedLocalAndRemoteOutputStream.java:210-216`). Keeping segments 1:1 with the agent's files lets a Call pointer `(trace_file_index, buffer_offset)` and a trace tag's `(rolling_seq, offset)` resolve by opening `<stream>/<rolling_seq>.gz` and seeking — no offset-translation table. The collector governs segment size through `requiredRotationSize` in the `INIT_STREAM_V2` response; a smaller segment favours partial reads, a larger one favours compression.
+- **Addressing.** `trace` chunks are located by the Call pointer (§4.3); `sql` / `xml` values by the `(rolling_seq, offset)` that a `PARAM_BIG_DEDUP` / `PARAM_BIG` trace tag carries (`backend/libs/parser/pipe/traces.go`). The catalog stores each segment's `(stream, rolling_seq)` and decompressed length; `trace` segments also carry a chunk time range.
+- **Refcount and eviction.** Refcounted in SQLite (§8): a segment is deletable once every sealed row whose blob sources from it has been uploaded (refcount 0), or once it is evicted under the overload policy. Refcounts span buckets — one segment can carry chunks or values for several buckets' calls.
+- These segment files ARE the hot store: `/internal/v1/calls/{pk}/trace` reads them directly (`02-read-contract.md` §3).
 
 ### 4.5 Reader semantics
 
@@ -172,29 +188,34 @@ Noise is bounded by `LocalBuffer.SIZE` (4096 events ≈ tens of KB per side).
 
 ### 4.6 Recovery and budget
 
-**Disk budget:** `PROFILER_CHUNKS_STAGING_MAX_BYTES` (default 10 GB) bounds total staging-file disk usage per replica. Eviction:
+**Disk budget:** `PROFILER_CHUNKS_STAGING_MAX_BYTES` (default 10 GB) bounds total trace-segment disk usage per replica. Eviction is class-aware, dropping fast, short-duration calls first:
 
-1. First, drop staging files whose refcount is zero.
-2. If still over budget, drop the oldest staging files even with pending refs. Affected blobs are emitted with `trace_blob = NULL` and `truncated_reason = disk_budget` (§5.2); metrics counter incremented.
+1. First, drop segments whose refcount is zero.
+2. If still over budget, drop the oldest segments even with pending refs. A call that then reaches the seal pass (§6.5) with its source segments gone is sealed with `trace_blob = NULL` and `truncated_reason = disk_budget` (§5.2); metrics counter incremented.
 
-**Memory budget:** accumulator state in RAM is capped by `PROFILER_MEM_BUDGET`. Under pressure, the oldest open accumulator is force-emitted as `truncated_reason = mem_pressure`.
+**Memory budget:** `PROFILER_MEM_BUDGET` caps the RAM held by `chunk_index[*]` and the per-call buffers of any running seal pass. Under pressure the collector seals the oldest bucket first to drain its buffers, then applies the class-aware drop above. It never drives the PV to `ENOSPC`; it degrades by dropping the trace body while keeping Call metadata.
 
-**Idle timeout:** if an accumulator receives no chunks for `PROFILER_IDLE_ACCUMULATOR_TIMEOUT` (default 10 min) and no Call record arrives, the blob is emitted as `truncated_reason = idle_timeout` — these are calls whose Call record was lost or whose thread died.
+**Idle timeout:** `PROFILER_IDLE_ACCUMULATOR_TIMEOUT` (default 10 min) bounds how long a thread's chunk index is held with no new chunks and no Call record. On expiry the index entries are released; the call is treated as never closed and is not sealed (dropped, §4.3) — its Call record was lost or its thread died.
 
-**Crash recovery:** on collector restart, walk staging files in `chunks/`, replay chunk headers, and rebuild `accumulator[*]`. The SQLite metadata DB carries refcounts and the "last uploaded parquet" checkpoint; pending parquet writers are reconstructed from staging files + their `Call` records held in `parquet-pending/`.
+**Crash recovery:** on collector restart, scan the gzip trace segments in `trace/`, re-parse chunk headers and events, and rebuild `chunk_index[*]` and the SQLite segment catalog. `metadata.sqlite` carries refcounts, seal watermarks, and upload checkpoints. Unclosed calls (no Call record received) are dropped, not reconstructed (`03-lifecycle.md` §3.7); the durable copy of any already-sealed call is in parquet + S3.
 
 ## 5. Calls stream → parquet
 
 ### 5.1 Pipeline
 
-For each `Call` record arriving on the calls stream:
+The calls stream feeds two stages separated in time: the write path indexes each record as it arrives; the seal pass (§6.5) materializes the parquet rows once the bucket is complete.
 
-1. Resolve dictionary words for `Method` and any tag IDs in `Params`.
-2. Take the pre-assembled blob from `accumulator[Call.thread_id]` (§4.3); reset that accumulator and carry the last chunk forward.
-3. Derive `retention_class` from `(duration_ms, error_flag)` (§6.4) and pick the corresponding open parquet writer for the current time bucket.
-4. Append a row to that writer.
+**Write path, per `Call` record:**
 
-Calls that fail step 1 (missing dictionary entry) are written with `trace_blob` NULL and `truncated_reason = dict_miss`. Calls that hit the cache budgets in §4.6 are written with `trace_blob` NULL and the corresponding truncation reason. Counters exposed as Prometheus metrics.
+1. Resolve dictionary words for `Method` and any tag IDs in `Params`; derive `retention_class` from `(duration_ms, error_flag)` (§6.4). Both go into the SQLite filter columns, so hot queries do not need the blob.
+2. Append the full record to `calls.wal`; insert the SQLite index row (PK, filter columns, `bucket`, start pointer, `calls.wal` offset); mark `bucket` dirty.
+
+**Seal pass, per `(pod-restart, bucket)`** (§6.5):
+
+3. For each call in the bucket, assemble the blob by its pointer `(trace_file_index, buffer_offset, record_index)` (§4.3) during the segment-ordered walk.
+4. Write the row — filter columns from the SQLite index, the remaining columns from `calls.wal`, `trace_blob` from the assembly — to the retention-class writer for the bucket.
+
+A call whose dictionary entry is missing is sealed with `trace_blob` NULL and `truncated_reason = dict_miss`; a call whose source segments were evicted under the §4.6 budgets is sealed with `trace_blob` NULL and the matching reason. Counters are exposed as Prometheus metrics.
 
 ### 5.2 Parquet schema
 
@@ -206,7 +227,7 @@ schema CallV2 {
   ts_ms             INT64                      -- call start, Unix ms UTC; primary time axis
   pod_id            BYTE_ARRAY (UTF8) DICT     -- "<ns>/<service>/<pod>"; dictionary-encoded for compact storage
   restart_time_ms   INT64                      -- pod-restart boundary; dedupe key component
-  trace_file_index  INT32                      -- PK component; chunk-staging file ordinal at the start of the call's bytes
+  trace_file_index  INT32                      -- PK component; agent trace-stream file index at the start of the call's bytes
   buffer_offset     INT32                      -- PK component; offset within trace_file_index where the call's first chunk begins
   record_index      INT32                      -- PK component; event index of the root ENTER within that chunk
   thread_name       BYTE_ARRAY (UTF8) DICT     -- thread name; high cardinality bounded by app threadpool size
@@ -261,19 +282,19 @@ schema CallV2 {
 
 Each parquet file covers one (time bucket × retention class × pod-restart):
 
-- **Time bucket:** 5 minutes by default, aligned to wall clock (00:00, 00:05, …). Configurable.
-- **Retention class:** computed from `(duration_ms, error_flag)` at write time. Five classes by default — see §6.4.
+- **Time bucket:** 5 minutes by default, keyed by `floor(ts_ms)` of the call's start (00:00, 00:05, …), NOT by processing time. Configurable. A call that closes late lands in the bucket of its start; discovery uses range-overlap (`02-read-contract.md` §5.1), and the `maintain` job compacts the small late files.
+- **Retention class:** computed from `(duration_ms, error_flag)` at write time and stored in the SQLite index. Five classes by default — see §6.4.
 
-So for each pod-restart, at any given moment there are up to five open parquet writers (one per retention class) for the current time bucket. `duration_ms` remains a row-level column for query-time filtering.
+A seal pass materializes one bucket at a time, opening up to five retention-class writers for the duration of that pass and closing them when it ends. No parquet writers stay open between seals. Late arrivals re-seal the bucket into an additional `<seq>` file (§6.6). `duration_ms` remains a row-level column for query-time filtering.
 
 ### 5.5 Path
 
-Local pending:
+A seal pass writes to scratch, then the finished file moves to its sealed name:
 ```
-/data/pods/<namespace>/<service>/<podName>/<restartTime>/parquet-pending/<timeBucket>/<retentionClass>.parquet
+/data/pods/<namespace>/<service>/<podName>/<restartTime>/parquet-sealing/<timeBucket>/<retentionClass>-<seq>.parquet
 ```
 
-After flush, uploaded to S3 (Section 7).
+On a clean seal the file is uploaded to S3 (Section 7) and kept locally for `hot_retention` (§6.3). A seal that crashes leaves an unreadable scratch file (no parquet footer); recovery discards it and re-seals the bucket. `<seq>` distinguishes the original seal from later late-arrival patches (§6.6).
 
 ### 5.6 error_flag derivation
 
@@ -287,34 +308,36 @@ Until `isCallRed` flows through, the MVP derives `error_flag` from one signal on
 
 Practical consequence for the retention table (§6.4): until `isCallRed` is exposed, the `any_error` retention class effectively shares its content with `corrupted`. Both classes are kept as distinct buckets in the schema so that wiring `isCallRed` later does not require re-partitioning historical data.
 
-## 6. Flush semantics
+## 6. Seal semantics
 
-### 6.1 Triggers
+Parquet is produced by a seal pass, never on the write path (§4.3, §5.1). A seal loop watches the SQLite index and runs one pass per `(pod-restart, bucket)`.
 
-A pending parquet file is closed and uploaded when **any** of:
+### 6.1 Seal triggers
 
-1. Its time bucket has ended (current wall-clock time ≥ bucket end + `time_bucket_grace`). Default `time_bucket_grace = 30 s` to absorb late Call arrivals.
-2. Its file size exceeds `parquet_max_size` (default 64 MB). New writer for the same bucket is opened and continues with a sequence suffix.
-3. Memory pressure: the collector exceeds `mem_budget` and selects largest parquet writers to evict early.
+A bucket is sealed when **any** of:
 
-Trigger 3 is rare in practice — parquet writers buffer little (row groups are small).
+1. Its time bucket has ended and `time_bucket_grace` has elapsed (wall-clock ≥ bucket end + grace). Default `time_bucket_grace = 30 s`, enough to absorb late Call arrivals from the agent's flush window.
+2. A late Call re-marks an already-sealed bucket dirty (§6.6); the loop re-seals it into a patch file.
+3. Memory pressure: the collector seals the oldest dirty bucket early to drain its `chunk_index` and seal-pass buffers (§4.6).
+
+Within one pass, output larger than `parquet_max_size` (default 64 MB) is split into successive `<seq>` files. Concurrency across buckets is bounded by `PROFILER_SEAL_CONCURRENCY`.
 
 ### 6.2 Atomic upload
 
-Upload sequence:
+Upload sequence, per file a seal pass finishes:
 
-1. Close the parquet writer locally → file is fully on disk.
-2. PUT to S3 with `Content-MD5`.
-3. On 200 OK, decrement chunks-staging refcounts (§4.4) and record `(file_path, retention_class, time_bucket_end, uploaded_at)` in `metadata.sqlite`. **The local file is NOT deleted here** — it serves the hot tier until `hot_retention` past flush.
+1. Close the writer; move the scratch file from `parquet-sealing/` to its sealed name. The file now has a valid footer and is fully on disk.
+2. Record it in `metadata.sqlite` (`parquet_local`: path, retention_class, time_bucket_end, `time_min` / `time_max`, row_count, `uploaded_at NULL`) and advance the bucket's seal watermark.
+3. PUT to S3 with `Content-MD5`. On 200 OK, set `uploaded_at` and decrement segment refcounts (§4.4). **The local file is not deleted here** — it serves the hot tier for `hot_retention` past upload (§6.3).
 4. On any S3 error, retry with exponential backoff. The local file remains until upload succeeds.
 
-If the collector crashes between local close and S3 upload, on restart we re-read pending parquet files in `parquet-pending/` and re-attempt upload. Idempotent at the S3 layer because the object key is deterministic (Section 7) — re-uploading the same file produces the same object.
+If the collector crashes mid-seal, the scratch file has no footer: recovery discards it and re-seals the bucket. If it crashes after a clean seal but before upload, the sealed file is valid and is re-uploaded from `parquet_local`. Both are idempotent at the S3 layer because the object key is deterministic (Section 7).
 
 ### 6.3 Hot retention of local parquet
 
-After successful upload, local parquet files are retained for `PROFILER_HOT_RETENTION` (default `15m`) to back the collector's hot-read API (`02-read-contract.md` §4.2). A janitor goroutine deletes files where `now > uploaded_at + hot_retention` and removes the corresponding row from `metadata.sqlite`.
+After a successful upload, local parquet files are retained for `PROFILER_HOT_RETENTION` (default `15m`) to back the collector's hot-read API (`02-read-contract.md` §4.2). A janitor goroutine deletes files where `now > uploaded_at + hot_retention` and removes the corresponding `parquet_local` row.
 
-`hot_retention ≥ flush_interval + overlap_margin` must hold — otherwise queries are not guaranteed to see every Call from at least one tier during the overlap window.
+`hot_retention ≥ seal_interval + overlap_margin` must hold, or a query is not guaranteed to see every Call from at least one tier during the overlap window.
 
 ### 6.4 Retention class
 
@@ -330,7 +353,31 @@ Default mapping (configurable per-deployment):
 | `any_error` | `error_flag = true` (any duration) | 30 days |
 | `corrupted` | `callInfo.isCorrupted` (subclass of `any_error`, segregated for forensics) | 7 days |
 
-The classifier runs per Call record at write time and routes the row to one of up to 5 open parquet writers for the current time bucket. Maintenance reads `<retentionClass>` from the S3 object key (§7) — it does not open parquet files to apply TTL.
+The classifier runs per Call record at write time; `retention_class` is stored in the SQLite index, and the seal pass routes each row to the matching one of up to five retention-class writers for the bucket. Maintenance reads `<retentionClass>` from the S3 object key (§7); it does not open parquet files to apply TTL.
+
+`corrupted` and `any_error` are not mutually exclusive: a row may satisfy both. Route it to `corrupted` (the more specific bucket) and keep `error_flag = true`; each row still lands in exactly one storage bucket, so wiring `isCallRed` later (§5.6) does not re-partition history.
+
+### 6.5 The seal pass
+
+A seal pass for one `(pod-restart, bucket)`:
+
+1. Reads the bucket's calls from the SQLite index (rows with this `bucket`).
+2. Collects the segments those calls reference from the segment catalog and walks them **in segment order**. Each segment is decompressed exactly once; its chunks are routed into the per-call blob under assembly, following each call's chunk chain to the depth-0 exit (§4.3).
+3. Finalizes a blob when its last chunk is read: reads the call's remaining columns from `calls.wal` by offset, resolves the external value-stream references, and appends the row to the retention-class writer (§6.4). The per-call buffer is then freed.
+4. Closes the writers, uploads (§6.2), advances the seal watermark, and releases segment refcounts.
+
+Because the walk is segment-ordered rather than call-ordered, no segment is decompressed twice within a pass, however many or however long the calls that reference it. Peak buffer memory is the trace volume of calls still open across the segment cursor — dominated by long calls, capped by `PROFILER_MEM_BUDGET`, with overflow spilling to a temp file under `parquet-sealing/`.
+
+### 6.6 Late data and compaction
+
+A sealed bucket is immutable in S3 (§6.2), so late data never rewrites an existing file:
+
+1. A late Call — one whose `floor(ts_ms)` falls in an already-sealed bucket — appends to `calls.wal`, inserts its SQLite index row, and re-marks the bucket dirty.
+2. The seal loop re-seals the bucket, emitting a **patch file** with a fresh `<seq>` for the same `(bucket, retention_class, pod-restart)`. The watermark records which calls each seal covered, so a re-seal writes only the new rows.
+3. S3 now holds the original file plus its patches. Range-overlap discovery finds them all by their `time_min` / `time_max` (`02-read-contract.md` §5.1); PK-dedup makes concurrent visibility safe (`02-read-contract.md` §6).
+4. The `maintain` job compacts the patches of a bucket into fewer files S3-side, writing a new object and deleting the inputs. Compaction is safe against readers mid-LIST because every row keeps its PK and dedup collapses the overlap.
+
+Blob completeness for a late Call is bounded by segment survival (§4.6): the row is always sealed, but `trace_blob` is `NULL` with a `truncated_reason` once the source segments have been evicted.
 
 ## 7. S3 object layout
 
@@ -363,21 +410,29 @@ Why date in the path even though `ts_ms` is in the file: query needs to LIST eff
       dictionary.wal
       params.wal
       suspend.wal
-      chunks/
-        000.bin              # raw chunks staging, refcounted, deleted post-upload
-        001.bin
+      calls.wal              # full Call records as received; source for the seal pass and hot single-row fetches
+      trace/
+        000000.gz            # raw interleaved trace stream, gzip segments (hot store); one file per agent rolling_seq
+        000001.gz
         ...
-      parquet-pending/
+      sql/                   # external value stream (PARAM_BIG_DEDUP), one gzip segment per agent rolling_seq
+        000000.gz
+      xml/                   # external value stream (PARAM_BIG), one gzip segment per agent rolling_seq
+        000000.gz
+      parquet-sealing/       # scratch for the running seal pass; a crashed seal's files are discarded and re-sealed
         20260423T140000Z/
-          short_clean.parquet
-          normal_clean.parquet
-          long_clean.parquet
-          any_error.parquet
-          corrupted.parquet
+          short_clean-0.parquet
+          normal_clean-0.parquet
+          long_clean-0.parquet
+          any_error-0.parquet
+          corrupted-0.parquet
   upload-failed/             # parquet that S3 rejected and needs human attention
     ...
   collector.lock             # exclusive PV ownership (one collector replica)
-  metadata.sqlite            # staging-file refcounts, upload checkpoints, dictionary index
+  metadata.sqlite            # segment catalog, refcounts, seal watermarks, upload checkpoints, call-partition catalog
+  calls-20260423T140000Z.sqlite  # per-bucket call index (call_index table); ATTACHed for reads, dropped past hot_retention
+  calls-20260423T140500Z.sqlite
+  ...
 ```
 
 `collector.lock` is a flock'd file written at startup. Prevents two collector processes from sharing a PV — critical when `volumeClaimTemplates` is misconfigured.
@@ -388,12 +443,13 @@ Why date in the path even though `ts_ms` is in the file: query needs to LIST eff
 |---|---|---|
 | `PROFILER_DATA_DIR` | `/data` | Root of the local PV. |
 | `PROFILER_TIME_BUCKET` | `5m` | Parquet time bucket length. |
-| `PROFILER_TIME_BUCKET_GRACE` | `30s` | Wait after bucket end before flush. |
-| `PROFILER_PARQUET_MAX_SIZE` | `64MB` | Size trigger for early flush. |
-| `PROFILER_MEM_BUDGET` | `2GB` | Soft memory budget for in-flight buffers. |
-| `PROFILER_CHUNKS_STAGING_MAX_BYTES` | `10GB` | Total disk budget for raw chunks staging files (§4.6). |
-| `PROFILER_CHUNKS_STAGING_FILE_SIZE` | `256MB` | Rotate the current staging file when it exceeds this. |
-| `PROFILER_IDLE_ACCUMULATOR_TIMEOUT` | `10m` | Force-emit a per-thread accumulator when no chunk arrives for that thread within the window. |
+| `PROFILER_TIME_BUCKET_GRACE` | `30s` | Wait after bucket end before the seal pass runs (§6.1). |
+| `PROFILER_PARQUET_MAX_SIZE` | `64MB` | Size at which a seal pass splits its output into a new `<seq>` file. |
+| `PROFILER_SEAL_CONCURRENCY` | `4` | Maximum seal passes running in parallel (§6.1). |
+| `PROFILER_MEM_BUDGET` | `2GB` | Soft memory budget for `chunk_index` plus running seal-pass buffers (§4.6). |
+| `PROFILER_CHUNKS_STAGING_MAX_BYTES` | `10GB` | Total disk budget for trace segment files (§4.6). |
+| `PROFILER_SEGMENT_ROTATION_SIZE` | `4MB` | Segment size the collector requests from the agent via `requiredRotationSize` in the `INIT_STREAM_V2` response (§4.4). Segments stay 1:1 with agent files, so the collector does not split them. |
+| `PROFILER_IDLE_ACCUMULATOR_TIMEOUT` | `10m` | Release a thread's chunk index when no chunk arrives for that thread within the window; its unclosed call is not sealed (§4.6). |
 | `PROFILER_DICT_FSYNC_RECORDS` | `256` | Dictionary WAL fsync trigger by record count. |
 | `PROFILER_DICT_FSYNC_INTERVAL` | `100ms` | Dictionary WAL fsync trigger by time. |
 | `PROFILER_DURATION_THRESHOLDS` | `100ms,1s` | Boundaries for retention class derivation (§6.4). |
@@ -416,7 +472,7 @@ These are intentional gaps to be addressed by other documents:
 
 - Recovery sequence on startup (read WAL, re-attempt pending uploads, etc.) → `03-lifecycle.md`.
 - Read API for hot data → `02-read-contract.md`.
-- Heap/thread dump streams (`sql`, `xml`, dumps) → out of scope for now; remains served by `dumps-collector` until Stage C5.
+- Heap and thread dumps → out of scope; still served by `dumps-collector` until Stage C5. (The `sql` and `xml` value streams are *in* scope — a blob references them, so they are hot-store segments alongside `trace`; §4.4.)
 - Maintenance retention rules (per-bucket TTL, cleanup of S3) → covered briefly in main plan, detailed in maintenance design when Stage 2 begins.
 
 ## 11. Review checklist

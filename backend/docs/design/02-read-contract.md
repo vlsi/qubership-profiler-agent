@@ -2,6 +2,8 @@
 
 > Status: **draft**, awaiting review. Read API for both external clients (UI, automation, MCP) and internal query → collector fan-out. Fresh design — only the agent's TCP wire protocol (Section 1 of `01-write-contract.md`) is preserved; the legacy Java collector's external API is **not** a baseline.
 
+> **2026-07-01 alignment — now in the body.** The read path is aligned with the hot-store + seal-pass model (hot reads from segments + the SQLite index, range-overlap discovery, PK time hints, eventual consistency); it is folded into §2–§5 below. History: `stage0-progress.md` decisions log.
+
 ## 1. Scope
 
 Two API surfaces:
@@ -57,6 +59,8 @@ URL serialization (path segments are colon-separated, percent-encoded):
 
 JSON bodies use the nested-object form.
 
+A bare PK carries no time or retention class, so `/calls/{pk}/tree` and `/calls/{pk}/trace` cannot locate a cold file on their own. A client fetching a cold call passes the `ts_ms` and `retention_class` from the `/calls` response (or an opaque `call_ref` bundling them), so the file is found by range-overlap (§5.1) without a full scan.
+
 ### 2.3 GET /calls — filter and pagination
 
 Query parameters:
@@ -108,6 +112,31 @@ Response:
 
 `trace_blob_size = 0` when `truncated_reason != null` (blob was dropped under pressure; see §4.6 of `01-write-contract.md`).
 
+### 2.3.1 Cursor: ordering and stable pagination
+
+`/calls` paginates by keyset (seek), not by offset. The cursor encodes a position in a total order that every tier shares, so a call that migrates from the hot tier to the cold tier between two page fetches keeps its place.
+
+**Ordering.** Rows come back by `ts_ms` descending, then by PK ascending as the tiebreaker (`ts_ms` is not unique — many calls share a millisecond). The PK compares component by component in binary (byte-wise) collation. Both tiers must produce byte-identical order: the SQLite `ORDER BY` and the cold-tier k-way merge apply the same binary collation to the `pod_*` string components, not a locale-aware one, or the string parts diverge across tiers. Alternative sort orders (for example by `duration_ms`) are out of scope for the MVP; `/stats` covers ranked-by-duration views.
+
+**Why migration is not a special case.** `ts_ms` and the PK are immutable and identical in the SQLite call index and in the parquet row. Keyset pagination seeks with `WHERE (ts_ms, pk) < (cursor.ts_ms, cursor.pk)` against every source, so a migrated call is found by whichever tier now holds it, at the same position; the overlap window (§4.3) and PK dedup (§6) collapse the duplicate. Crossing the hot→cold boundary as pagination goes deeper is therefore transparent, and it rests on the zero-gap guarantee of §4.3: a flushed call is visible from at least one tier from the moment it leaves in-memory state.
+
+**Cursor contents.** The cursor is an opaque, URL-safe base64 token carrying:
+
+- a format version,
+- the frozen query — `from`, `to`, every filter, and the ordering,
+- the last-emitted position `(ts_ms, pk)`,
+- an issue timestamp, for the TTL below.
+
+The query is frozen at the first page so the window does not drift as wall-clock time and the hot window advance. On pages 2..N the client re-sends only the `cursor`; if it also re-sends filter parameters, they must match the frozen query or the request is rejected with `400`. Freezing `to` is what keeps the upper bound stable — otherwise each page re-evaluates `now` and the result set shifts under the reader.
+
+**Fan-out and merge.** One global position is enough; no per-source continuation state is kept. For each page `query` re-issues the full fan-out (every hot replica plus the cold LIST), each source seeks past the cursor position and returns up to `limit` rows, and `query` runs a k-way merge, dedups by PK, then truncates to `limit`. Dedup runs before the truncation and before `next_cursor` is computed, so an overlap-window duplicate neither consumes a page slot nor strands the cursor between its two copies. Deep pagination costs one fan-out per page and re-scans cold parquet (no secondary index, §5.4); a stateful scroll cursor is deferred until profiling shows this is too slow.
+
+**Consistency of a pagination session.** A page reflects a snapshot as of the position it reports, not a globally consistent snapshot of the whole window. Data written below an already-passed position — a late call that re-seals an older bucket into a patch file (`01-write-contract.md` §6.6) — is not surfaced in that pagination session. This is the eventual-consistency envelope of §4.3, made explicit for pagination: the profiler favours bounded, slightly stale results over holding a read snapshot open across many seconds.
+
+**Termination.** `next_cursor` is `null` only when the seek position passes `from` and the window is exhausted. A page may come back empty in the middle of the range — its rows aged out of the hot tier and were deleted from the cold tier by a retention-class TTL between fetches — while a non-null `next_cursor` still points further down; the client keeps paging. An empty page is not an end-of-stream signal on its own.
+
+**Cursor TTL.** A cursor is valid for `PROFILER_CURSOR_TTL` (default `15m`) from issue. An expired cursor is rejected with `400`, and the client restarts from page 1. The TTL bounds how far the frozen `to` can lag real time and covers a position that points into parquet already removed by a retention TTL. Signing the cursor (HMAC, to stop a client forging a position that forces an expensive scan) is deferred; internal validation of the frozen-query fingerprint is enough for the in-team MVP.
+
 ### 2.4 Trace blob — lazy endpoint
 
 `GET /api/v1/calls/{pk}/trace` returns the per-call blob as raw bytes.
@@ -127,6 +156,8 @@ Two consumption paths:
 
 - **`/calls/{pk}/tree` — canonical path** for UI, MCP, CLI. Server pre-aggregates the per-call blob into a tree, encodes as MessagePack with stable int-keyed maps and a version envelope. Self-contained (the response carries its own per-tree dictionary inline). Hand-written decoders in any language are ~50–80 LOC.
 - **`/calls/{pk}/trace` + `/pods/{pod-restart}/dictionary` — advanced path** for consumers that want the raw wire format (third-party tooling re-using our Go decoder, full-fidelity offline analysis). Smaller payload, but more client code to maintain.
+
+Big parameter values (`sql` / `xml`) are the one asymmetry between the two paths. The blob does not inline them — it holds `(rolling_seq, offset)` references into the value streams (§3, `01-write-contract.md` §4.4). `/tree` resolves each reference and inlines the value string in the returned tree, so its consumers need nothing else. The raw `/trace` blob keeps the references; the MVP does not expose the value streams over a separate endpoint, so an advanced consumer resolves big params only against a full dump. Add a `/calls/{pk}/values` endpoint if a raw-path consumer needs them.
 
 The decision in MVP: ship `/tree` as the canonical contract. `/trace` + `/dictionary` remain as the secondary, lower-traffic interface — useful, but not the default.
 
@@ -248,24 +279,25 @@ Base path: `/internal/v1`. Same JSON shapes as `/api/v1`. Aggregation is done in
 | GET | `/internal/v1/calls/{pk}/trace` | Blob from this replica. |
 | GET | `/internal/v1/health/hot-window` | `{ "hot_window_oldest_ms": ..., "hot_window_now_ms": ... }`. Reports the earliest `ts_ms` this replica still serves. Lets `query` compute the cold cutoff dynamically (§4.3). |
 
-Sources this replica reads from when serving `/internal/v1/calls`:
+Sources this replica reads from when serving `/internal/v1/*`:
 
-1. Open parquet writers (one per retention class for the current time bucket).
-2. Local parquet files in `parquet-pending/` (post-flush, pre-deletion; retained until `hot_retention` past flush — see §4.2).
-3. The SQLite metadata DB (`metadata.sqlite`) for indexing the above; not a data source itself.
+1. The SQLite call index — filter, sort, and paginate `/internal/v1/calls` over it; it holds one row per call (pointer + filter columns). It is partitioned by time bucket into `calls-<bucket>.sqlite` files (`01-write-contract.md` §8); the replica ATTACHes the partitions overlapping the query range.
+2. The gzip trace segments in `trace/*.gz` — `/internal/v1/calls/{pk}/trace` decompresses the segment(s) covering the call (located via the SQLite segment catalog) and slices the blob.
+3. The gzip value segments in `sql/*.gz` and `xml/*.gz` — the blob carries `(rolling_seq, offset)` references into them (`PARAM_BIG_DEDUP` → `sql`, `PARAM_BIG` → `xml`; `01-write-contract.md` §4.4). `/calls/{pk}/tree` resolves these references into the tree it returns; the raw `/calls/{pk}/trace` blob keeps them and an advanced consumer resolves them itself (§2.5).
+4. Recently sealed local parquet files (post-flush, pre-deletion; retained until `hot_retention` past flush — see §4.2), for calls already moved out of the hot index.
 
-The replica never reads from S3 to serve `/internal/v1/*`. S3 is `query`'s job via the cold path.
+Open parquet writers are NOT a query source — an unsealed parquet file has no footer and is not randomly readable. The replica never reads from S3 to serve `/internal/v1/*`. S3 is `query`'s job via the cold path.
 
 ## 4. Hot / cold model
 
 ### 4.1 Tiers
 
-- **Hot tier** = collector replicas. Each holds data for its assigned pod-restarts (sticky TCP) in: in-memory accumulators, open parquet writers, and already-flushed parquet files retained on the local PV for `hot_retention - flush_interval` past flush.
+- **Hot tier** = collector replicas. Each holds data for its assigned pod-restarts (sticky TCP) in: the SQLite call index and the `trace` / `sql` / `xml` segments (un-sealed calls), and already-sealed parquet files retained on the local PV for `hot_retention` past seal.
 - **Cold tier** = S3. Authoritative copy of everything flushed.
 
 ### 4.2 Hot retention on PV
 
-`PROFILER_HOT_RETENTION` (default `15m`) is how long each collector keeps flushed parquet files locally past their flush. Must satisfy `hot_retention ≥ flush_interval + overlap_margin`.
+`PROFILER_HOT_RETENTION` (default `15m`) is how long each collector keeps flushed parquet files locally past their flush. Must satisfy `hot_retention ≥ seal_interval + overlap_margin`.
 
 This is the standard pattern (Prometheus head block + WAL, VictoriaMetrics in-memory + on-disk, Loki ingester + object storage): the hot tier intentionally overlaps with cold for a grace window. Queries cover both tiers, dedup by PK, and obtain a consistent view with no "gap risk" between flush completion and cold visibility.
 
@@ -273,7 +305,7 @@ Local parquet lifecycle:
 
 1. Parquet writer closes a file when its time bucket ends (`01-write-contract.md` §6.1).
 2. File is uploaded to S3 (idempotent key, §7 of write contract).
-3. On `200 OK`, chunks staging refcounts are decremented (`01-write-contract.md` §6.2). **The local file is NOT deleted yet.**
+3. On `200 OK`, segment refcounts are decremented (`01-write-contract.md` §6.2). **The local file is NOT deleted yet.**
 4. A janitor goroutine on the replica deletes the local file when `now > flush_ts + hot_retention`.
 
 ### 4.3 Overlap and cutoff
@@ -285,9 +317,11 @@ Given a query for `[from, to]`:
 - **Overlap window** = `[now - hot_retention, now - hot_retention + overlap_margin]`.
 - After merge, dedup by PK (§6) collapses any overlap.
 
-`overlap_margin` defaults to one `flush_interval` (5 min). Tunable via `PROFILER_OVERLAP_MARGIN`.
+`overlap_margin` defaults to one `seal_interval` (5 min). Tunable via `PROFILER_OVERLAP_MARGIN`.
 
 Result: every flushed Call is visible from at least one tier from the moment it leaves in-memory state, and from BOTH tiers for `overlap_margin` after that. Zero-gap guarantee, bounded duplication cost.
+
+Result consistency is eventual within seconds: a just-arrived, not-yet-sealed call may be briefly invisible to `/calls` until its bucket seals. Stable cursor ordering across the hot→cold migration is specified in §2.3.1 — keyset pagination on the tier-independent `(ts_ms, pk)` order makes migration transparent, so a call keeps its page position wherever it lives. `partial` handling (§7.4) is unchanged.
 
 ## 5. S3 LIST-based discovery
 
@@ -304,7 +338,7 @@ For range `[t1, t2]`:
 1. For each retention class in the filter (default: all 5).
 2. Walk the hour list between `floor(t1, 1h)` and `ceil(t2, 1h)`.
 3. LIST each `<retentionClass>/<yyyy>/<mm>/<dd>/<hh>/` prefix in parallel.
-4. Filter filenames by `<timeBucketStart>` ∈ `[t1, t2]` (encoded in the filename — no footer read required).
+4. Select every file whose `[time_min, time_max]` **overlaps** `[t1, t2]`, not only files whose `<timeBucketStart>` falls inside it. A call bucketed by `floor(ts_ms)` and late arrivals mean a file's rows can start before its `timeBucketStart` prefix suggests; carry `time_min` / `time_max` in the object metadata (or the future catalog) so no footer read is required. Widen the hour walk in step 2 by the maximum expected call duration to catch long calls filed under an earlier bucket.
 
 ### 5.2 Parallelism
 
@@ -314,6 +348,10 @@ Up to `PROFILER_S3_LIST_CONCURRENCY` (default `16`) parallel LIST calls per quer
 
 Per Stage 0 decision (`stage0-progress.md`, 2026-04-23): start with LIST. Add an S3 manifest file only if LIST profiles slow at scale.
 
+### 5.4 Secondary index deferred
+
+No secondary index in the MVP. `method` substring, `params`, and `/stats` filters scan the candidate parquet column data over the requested range; a full scan is accepted. Add an index only if profiling shows it is needed.
+
 ## 6. Deduplication
 
 ### 6.1 PK as dedup key
@@ -322,7 +360,7 @@ PK (§2.2) is unique per Call across all time and all replicas.
 
 ### 6.2 When duplicates appear
 
-- **Overlap window (expected).** Same Call visible from both hot (collector local parquet) and cold (S3) during `hot_retention - flush_interval ≤ age < hot_retention`. This is the normal case.
+- **Overlap window (expected).** Same Call visible from both hot (collector local parquet) and cold (S3) during `hot_retention - seal_interval ≤ age < hot_retention`. This is the normal case.
 - **Replica transition (rare).** During scale-out or pod restart, sticky TCP may temporarily land an agent on two replicas in quick succession. Each writes its own copy of the affected Calls. Both copies have the same PK; dedup collapses to one.
 - **Upload retry.** The S3 PUT object key is deterministic (`01-write-contract.md` §7), so retries overwrite the same key — no S3-side duplicates.
 
@@ -388,6 +426,7 @@ Partial results (some sources failed but some succeeded) are NOT errors — `par
 | `PROFILER_OVERLAP_MARGIN` | `5m` | Hot/cold overlap window size (§4.3). |
 | `PROFILER_FANOUT_TIMEOUT` | `2s` | Per-replica hot read timeout (§7.2). |
 | `PROFILER_S3_LIST_CONCURRENCY` | `16` | Parallel S3 LIST cap (§5.2). |
+| `PROFILER_CURSOR_TTL` | `15m` | Validity of a `/calls` pagination cursor (§2.3.1). |
 | `PROFILER_EXTERNAL_API_PORT` | `8080` | Bind for `/api/v1/*`. |
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | — | Same as in `01-write-contract.md` §9. |
 
@@ -408,5 +447,6 @@ Partial results (some sources failed but some succeeded) are NOT errors — `par
 - [x] `cutoff=strict` escape hatch — dropped from MVP; can be added later if a concrete consumer appears.
 - [x] PK URL serialization with `:` separator — accepted; k8s pod/service names cannot contain `:`.
 - [x] Server-decoded `/tree` endpoint — included as canonical; MessagePack with int-keyed maps and a `v` version envelope (§2.5).
+- [x] Cursor / stable pagination (§2.3.1) — keyset on `(ts_ms DESC, pk ASC)`, frozen-query cursor, single global position, dedup-before-limit, TTL — accepted.
 - [x] Dictionary cold-path lifecycle — final snapshot uploaded to S3 on pod-restart close; see `01-write-contract.md` §3.6.
 - [x] Optional `/internal/v1/pods` targeting (§7.3) — implemented in collector in Stage 1b; left dormant in `query` until cluster size makes it worthwhile.

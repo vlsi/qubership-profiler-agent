@@ -29,11 +29,11 @@ flowchart LR
         Maintain["maintain mode<br/>(CronJob)"]
     end
 
-    PV[("RWO PV<br/>per collector replica<br/>WAL + chunks + pending parquet + SQLite")]
+    PV[("RWO PV<br/>per collector replica<br/>WAL + calls.wal + trace segments + sealed parquet + SQLite")]
     S3[("S3<br/>parquet (cold) + dictionary snapshots")]
 
     Agent -- "TCP, multiplexed streams<br/>(dictionary, calls, trace, params, ...)" --> Collect
-    Collect -- "WAL + chunks staging<br/>+ pending parquet" --> PV
+    Collect -- "WAL + trace segments<br/>+ sealed parquet" --> PV
     Collect -- "uploaded parquet<br/>+ closed-restart dictionary" --> S3
 
     Client["UI / MCP / CLI"] -- "/api/v1" --> Query
@@ -115,7 +115,7 @@ stateDiagram-v2
     INIT --> LOADING: process start
     LOADING --> RECOVERY: PV mounted, lock held, SQLite open
     LOADING --> FATAL: PV mount fails / lock contention
-    RECOVERY --> READY: WAL replayed, accumulators rebuilt, listeners bound
+    RECOVERY --> READY: WALs replayed, index rebuilt from segments, listeners bound
     RECOVERY --> FATAL: corrupt SQLite unrepairable
     READY --> DRAINING: SIGTERM
     DRAINING --> TERMINATING: drain grace elapsed (30s default)
@@ -138,47 +138,50 @@ sequenceDiagram
     autonumber
     participant Agent
     participant Collector
-    participant Chunks as PV chunks/<seq>.bin
-    participant Parquet as PV parquet-pending/<bucket>/<class>.parquet
+    participant Seg as PV trace/<seq>.gz
+    participant Wal as PV calls.wal
     participant SQLite as metadata.sqlite
+    participant Parquet as PV sealed parquet
     participant S3
 
     Note over Agent,Collector: TCP open + PROTOCOL_V2 handshake → restart_time_ms stamped
 
     Agent->>Collector: chunk N (header [threadId, startTime])
-    Collector->>Chunks: append chunk verbatim
-    Collector->>Collector: accumulator[threadId] += (file, off, len)
+    Collector->>Seg: append raw stream (one gzip member)
+    Collector->>SQLite: segment catalog += (segment, offset, len, threadId)
+    Collector->>Collector: chunk_index[threadId] += (segment, offset, len)
 
     Note over Agent: ... many chunks of many threads interleave ...
 
     Agent->>Collector: Call record (thread T, summary metrics, start-pointer)
-    Collector->>Chunks: read chunks listed in accumulator[T]
-    Collector->>Collector: memcpy → contiguous blob
-    Collector->>Parquet: append row (trace_blob = blob, retention_class derived)
-    Collector->>Collector: accumulator[T] = [last chunk carry-over]
+    Collector->>Wal: append full Call record
+    Collector->>SQLite: call index += (PK, filter cols, bucket, wal offset); mark bucket dirty
 
-    Note over Collector: ... time bucket ends (default 5 min + 30s grace) ...
-    Collector->>Parquet: close file
-    Collector->>S3: PUT parquet object
+    Note over Collector: ... bucket end + grace (5 min + 30s) → seal pass ...
+    Collector->>SQLite: select calls where bucket = B
+    Collector->>Seg: walk referenced segments in order (decompress each once)
+    Collector->>Wal: read remaining columns by offset
+    Collector->>Parquet: write rows (trace_blob assembled, routed by retention_class)
+    Collector->>S3: PUT parquet object(s)
     S3-->>Collector: 200 OK
-    Collector->>SQLite: parquet_local.uploaded_at = now()
-    Collector->>SQLite: staging_files.refcount -= 1 (per referenced chunk file)
+    Collector->>SQLite: uploaded_at = now(); advance seal watermark; segment refcount -= 1
 
     Note over Collector: ... hot_retention elapses (default 15 min past upload) ...
     Collector->>Parquet: delete local file
     Collector->>SQLite: remove parquet_local row
 
-    Note over Collector: ... when refcount == 0 on a staging file ...
-    Collector->>Chunks: delete chunks/<seq>.bin
-    Collector->>SQLite: remove staging_files row
+    Note over Collector: ... segment refcount == 0 ...
+    Collector->>Seg: unlink trace/<seq>.gz
+    Collector->>SQLite: remove segment row
 ```
 
 **Visible in this diagram:**
 
-- The collector never decodes individual events; only chunk headers (`01-write-contract.md` §4.2).
+- The write path parses only chunk headers; the seal pass walks events to the depth-0 exit to bound each blob (`01-write-contract.md` §4.3).
+- Parquet is materialized only at seal, one bucket at a time — never appended per Call (`01-write-contract.md` §6.5).
 - Local parquet outlives the S3 upload by `hot_retention`, then is deleted (`01-write-contract.md` §6.3; `02-read-contract.md` §4.2).
-- Chunks staging files outlive parquet upload until all sourced rows are committed to S3.
-- `metadata.sqlite` is the single source of truth for refcounts and upload checkpoints; everything on the PV is rebuildable from it (and vice versa).
+- A trace segment outlives a call until its bucket seals and uploads (refcount 0).
+- `metadata.sqlite` holds the call index, refcounts, seal watermarks, and upload checkpoints; everything on the PV is rebuildable from it and the WALs.
 
 ## 6. Hot/cold read flow
 
@@ -226,16 +229,17 @@ A Mermaid `gantt` doesn't render this well because the time scales span three or
 |---|---|---|---|
 | Agent TCP connection | network | TCP accept | TCP close (agent crash, collector crash, collector shutdown) |
 | Dictionary WAL | local PV | First dictionary chunk arrives | After S3 dictionary upload + 1 h grace |
-| Chunks staging file | local PV | First chunk of new staging segment | When `refcount = 0` (every parquet row sourced from it uploaded to S3) |
-| Open parquet writers | RAM | First Call record matches its `(timeBucket, retentionClass)` | Flush trigger (`01-write-contract.md` §6.1) |
-| Pending parquet (closed, not yet uploaded) | local PV | Parquet writer close | After S3 upload succeeds |
+| `calls.wal` | local PV | First Call record arrives | After every bucket it covers is sealed and uploaded |
+| Trace segment | local PV | First chunk of a new segment | When `refcount = 0` (every call sourced from it sealed and uploaded to S3) |
+| Parquet writers (per seal pass) | RAM | A seal pass starts for a bucket | When that seal pass ends (`01-write-contract.md` §6.5) |
+| Sealed parquet (not yet uploaded) | local PV | Seal pass finishes a file | After S3 upload succeeds |
 | Hot-retained parquet (uploaded, still local) | local PV | After S3 upload | `uploaded_at + PROFILER_HOT_RETENTION` (15 min default) |
 | Parquet in S3 | S3 | First S3 PUT success | Per retention class TTL (`01-write-contract.md` §6.4) |
 | Dictionary snapshot in S3 | S3 | TCP close finalization triggers upload | `PROFILER_RETENTION_DICTIONARY_TTL` (35 d default) |
 
 Three invariants the table encodes:
 
-- Chunks staging outlives Agent TCP connection — finalization (truncated-blob emission, parquet flush) needs the chunks data.
+- Trace segments outlive the Agent TCP connection — finalization (sealing the closed pod-restart's dirty buckets) needs the segment data.
 - Dictionary upload to S3 is gated on TCP close; only the finalized dictionary lands in S3. This is what keeps long-retention parquet decodable.
 - Dictionary TTL in S3 (35 d) exceeds the longest parquet retention class (30 d, `long_clean` / `any_error`) by a safety margin.
 
