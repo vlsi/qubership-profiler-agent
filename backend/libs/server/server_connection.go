@@ -41,6 +41,7 @@ type (
 )
 
 func (sc *ConnectionHandler) Handle() {
+	defer func() { _ = sc.Close() }()
 	log.Debug(sc.ctx, " Got connection from %v ", sc.conn.RemoteAddr())
 	sc.socketReader = io.PrepareTcpReader(sc)
 	sc.socketWriter = io.PrepareTcpWriter(sc)
@@ -48,7 +49,9 @@ func (sc *ConnectionHandler) Handle() {
 	for {
 		err := sc.HandleCommand(sc.ctx)
 		if err != nil {
-			log.Error(sc.ctx, err, "could not")
+			if err != errAgentClosed {
+				log.Error(sc.ctx, err, "connection handler stopped")
+			}
 			break
 		}
 	}
@@ -75,11 +78,13 @@ func (sc *ConnectionHandler) HandleCommand(ctx context.Context) (err error) {
 		err = sc.CommandReportResult(ctx)
 		break
 	case model.COMMAND_REQUEST_ACK_FLUSH:
-		break // do nothing
+		err = sc.CommandAckFlush(ctx)
+		break
 	case model.COMMAND_SKIP:
 		break // do nothing
 	case model.COMMAND_CLOSE:
 		log.Debug(ctx, " * command close [%v] ", op)
+		err = errAgentClosed
 		break
 	case model.COMMAND_GET_PROTOCOL_VERSION_V2:
 		err = sc.CommandGetProtocolVersion(ctx)
@@ -96,10 +101,11 @@ func (sc *ConnectionHandler) HandleCommand(ctx context.Context) (err error) {
 	default:
 		sc.socketReader.Done()
 		pos := sc.socketReader.Pos()
+		// Signal the agent to reconnect rather than letting it stall on a missing
+		// ack; the stream is unrecoverable once framing is lost (06 §2, §6).
+		_ = sc.writeAck(ctx, model.ACK_ERROR_MAGIC, true)
 		err = fmt.Errorf("unknown command %02X at pos: %d (%02X) ", op, pos, pos)
 		break
-		//return nil, errors.Errorf("invalid dump format, unknown command %02X at pos: %d (%02X) ", op, data.Pos(), data.Pos())
-		//data.Next()
 	}
 
 	if err != nil {
@@ -183,50 +189,49 @@ func (sc *ConnectionHandler) CommandInitStream(ctx context.Context) (err error) 
 		return
 	}
 
-	var handleId common.Uuid
-	var rotationPeriod uint64
-	var requiredRotationSize uint64
-	var rollingSequenceId int
+	// An unknown stream gets a null handle and a teardown; the agent reads the
+	// null UUID, throws, and reconnects (06 §4, §6).
+	if !model.IsKnownStream(streamType) {
+		_ = sc.socketWriter.WriteUuid(ctx, common.Uuid{})
+		_ = sc.socketWriter.Flush()
+		return fmt.Errorf("unknown stream %q from %v", streamType, sc.pod)
+	}
+
+	// The collector owns the handle and the rotation policy (06 §4). The handle
+	// must be non-nil and stable: the agent keys every RCV_DATA by it. The
+	// rolling sequence echoes the agent's request; a reset restarts from it.
+	handleId := common.RandomUuid()
+	rotationPeriod := sc.opts.RotationPeriod
+	requiredRotationSize := sc.opts.RequiredRotationSize
+	if requiredRotationSize == 0 {
+		requiredRotationSize = DefaultRequiredRotationSize
+	}
+	rollingSequenceId := requestedRollingSequenceId
+
 	if sc.listener != nil {
 		sc.listener.RegisterStream(ctx, sc.pod, handleId, streamType, resetRequired,
 			requestedRollingSequenceId, rollingSequenceId, rotationPeriod, requiredRotationSize)
-		log.Debug(sc.ctx, "INIT_STREAM_V2 for %v: req  => seqId=%v, reset? %v ",
-			streamType, requestedRollingSequenceId, resetRequired)
-		log.Debug(sc.ctx, "INIT_STREAM_V2 for %v: resp => handleId=%v, rotation (period: %v, size: %v), seqId=%v ",
-			streamType, handleId, rotationPeriod, requiredRotationSize, rollingSequenceId)
 	}
-
-	//// ack?
-	//err = sc.waitForAcks() // or send ?
-	//if err != nil {
-	//	return err
-	//}
+	log.Debug(sc.ctx, "INIT_STREAM_V2 for %v: req  => seqId=%v, reset? %v ",
+		streamType, requestedRollingSequenceId, resetRequired)
+	log.Debug(sc.ctx, "INIT_STREAM_V2 for %v: resp => handleId=%v, rotation (period: %v, size: %v), seqId=%v ",
+		streamType, handleId, rotationPeriod, requiredRotationSize, rollingSequenceId)
 
 	// resp
-	err = sc.socketWriter.WriteUuid(ctx, handleId)
-	if err != nil {
+	if err = sc.socketWriter.WriteUuid(ctx, handleId); err != nil {
 		return
 	}
-	err = sc.socketWriter.WriteFixedLong(ctx, rotationPeriod)
-	if err != nil {
+	if err = sc.socketWriter.WriteFixedLong(ctx, rotationPeriod); err != nil {
 		return
 	}
-	err = sc.socketWriter.WriteFixedLong(ctx, requiredRotationSize)
-	if err != nil {
+	if err = sc.socketWriter.WriteFixedLong(ctx, requiredRotationSize); err != nil {
 		return
 	}
-	err = sc.socketWriter.WriteFixedInt(ctx, rollingSequenceId)
-	if err != nil {
+	if err = sc.socketWriter.WriteFixedInt(ctx, rollingSequenceId); err != nil {
 		return
 	}
-
 	// flush
-	err = sc.socketWriter.Flush()
-	if err != nil {
-		return err
-	}
-
-	return
+	return sc.socketWriter.Flush()
 }
 
 func (sc *ConnectionHandler) CommandRcvData(ctx context.Context) (err error) {
@@ -241,20 +246,33 @@ func (sc *ConnectionHandler) CommandRcvData(ctx context.Context) (err error) {
 	if err != nil {
 		return
 	}
-	//// flush
-	//sc.pendingAcks += 2
-	//err = sc.socketWriter.WriteFixedByte(sc.ctx, byte(model.COMMAND_REQUEST_ACK_FLUSH))
-	//if err != nil {
-	//	return err
-	//}
-	//err = sc.socketWriter.Flush()
-	//sc.check(err)
 
 	if sc.listener != nil {
 		sc.dataBytes += uint64(sc.listener.AppendData(ctx, sc.pod, handleId, chunk))
-		//log.Trace(sc.ctx, "RCV_DATA for '%s' with %d bytes, [handle: %v] ", streamType, len(chunk), handleId)
 	}
-	return
+
+	// One ack byte per payload (06 §5). Written buffered; the agent's flush
+	// cycle sends REQUEST_ACK_FLUSH, which forces these out (see CommandAckFlush).
+	return sc.writeAck(ctx, model.ACK_OK, false)
+}
+
+// CommandAckFlush answers a REQUEST_ACK_FLUSH with one ack byte and forces a
+// flush, draining every buffered RCV_DATA ack in order (06 §5).
+func (sc *ConnectionHandler) CommandAckFlush(ctx context.Context) (err error) {
+	return sc.writeAck(ctx, model.ACK_OK, true)
+}
+
+// writeAck writes a single acknowledgement byte to the agent, optionally
+// flushing. value is either ACK_OK (the diagnostic-command count, always 0 in
+// the MVP) or ACK_ERROR_MAGIC to force a reconnect (06 §5, §6).
+func (sc *ConnectionHandler) writeAck(ctx context.Context, value byte, flush bool) error {
+	if err := sc.socketWriter.WriteFixedByte(ctx, value); err != nil {
+		return err
+	}
+	if flush {
+		return sc.socketWriter.Flush()
+	}
+	return nil
 }
 
 func (sc *ConnectionHandler) CommandRequestFlush(ctx context.Context) (err error) {
@@ -360,7 +378,9 @@ func (sc *ConnectionHandler) Close() (err error) {
 			log.Error(sc.ctx, err, "Error during closing the connection from %v ", sc.conn.RemoteAddr())
 		}
 	}
-	sc.cancel()
+	if sc.cancel != nil {
+		sc.cancel()
+	}
 	return err
 }
 

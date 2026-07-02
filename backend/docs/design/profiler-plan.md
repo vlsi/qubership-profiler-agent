@@ -87,8 +87,9 @@ If something cannot be closed in design — list it explicitly and schedule it a
 
 Goal: collector receives the stream from the agent, demultiplexes it, persists it via WAL + trace cache, writes parquet to local PV. Nothing about read, nothing about S3.
 
-### 1.1 Reused without changes
-- Agent protocol parser: `backend/libs/parser/parser.go` (Go). The `Listener` interface (`backend/libs/parser/listener.go`) already exposes the right surface (`RegisterPod`, `RegisterStream`, `AppendData`); it currently consumes from a file (TCP dump replay), but the same primitives work over a live TCP connection. We add the response path (the parser already accepts `wr io.Writer` for it) and wrap in a TCP server.
+### 1.1 Reused with adaptation
+- Agent protocol framing: the read/write field primitives (`backend/libs/io/`) and the demux `Listener` surface (`RegisterPod`, `RegisterStream`, `AppendData`) carry over. What does **not** carry over is `backend/libs/parser/parser.go`: it is an offline dump reader that reads the server's replies *out of the same input stream* as the requests (for example `svrProtocol` at `parser.go:126-130`, the `INIT_STREAM_V2` reply at `parser.go:178-198`). On a live socket the collector must *produce* those bytes, so the response state machine is new code, not a `wr io.Writer` add-on to the offline parser. The live server (`backend/libs/server/server_connection.go`) has been brought into conformance with the wire contract (handshake reply `PROTOCOL_VERSION_V2`, per-`RCV_DATA` ack byte, real `INIT_STREAM_V2` reply, unknown-stream teardown), guarded by an integration test — see `06-wire-protocol-server.md` §8–§9.
+- Server-side wire behaviour — command table, handshake reply, ack policy, error teardown — is specified in `06-wire-protocol-server.md`.
 - Parquet writer in `backend/libs/storage/parquet/`.
 - S3 abstraction in `backend/libs/s3/` (used in Stage 2).
 

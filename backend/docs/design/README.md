@@ -13,6 +13,7 @@ The rationale and the high-level roadmap live in [profiler-plan.md](./profiler-p
 | 03 | [lifecycle.md](./03-lifecycle.md) | Readiness probe, recovery sequence, flush triggers, shutdown |
 | 04 | [storage-layout.md](./04-storage-layout.md) | k8s manifests, StatefulSet + volumeClaimTemplates, Headless Service, Helm values, env vars |
 | 05 | [diagrams.md](./05-diagrams.md) | Mermaid diagrams: data flow, deployment, lifecycle state |
+| 06 | [wire-protocol-server.md](./06-wire-protocol-server.md) | Server side of the agent TCP protocol: command table, handshake reply (`PROTOCOL_VERSION_V2`), ack policy, `INIT_STREAM_V2` response, error/teardown |
 
 ## Decisions (summary)
 
