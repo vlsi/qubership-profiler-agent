@@ -334,3 +334,11 @@ Two protocol improvements would simplify the collector but are not required for 
 **Deferred within this decision:** alternative sort orders (e.g. by duration — `/stats` territory); a stateful scroll cursor (until deep-pagination profiling warrants it); HMAC-signing the cursor.
 
 **Consequence:** `02-read-contract.md` §2.3.1 (new), §4.3 (pointer updated), §9 (config row), §11 (checklist); this spike removed from "Open spikes carried into Stage 1".
+
+### 2026-07-02 — calls-stream time is a running delta, not an absolute offset
+
+**Finding:** A design re-review flagged that the calls stream encodes each record's start time as a zig-zag varint delta from the *previous* record, seeded by the file header, not as an absolute offset from that header. The agent writes the running delta and advances its timer per record (`Dumper.java:1062-1063`), resetting only on file rotation, which also writes a fresh 8-byte `base_ms` header (`Dumper.java:1394-1401`; `CompressedLocalAndRemoteOutputStream.java:156`). The reused Go decoder read each delta as an absolute offset (`base_ms + delta_i`) without accumulating (`backend/libs/parser/pipe/calls.go:52,146`; `streams/calls.go:100,158`). The two formulas coincide for the first record of a file, so short fixtures stayed green; every later record's `ts_ms` was wrong.
+
+**Why it matters:** `ts_ms` is the primary time axis. Bucketing (§5.4), retention (§6.4), the PK, and the read cursor all key off it, so a silent per-record drift corrupts all four.
+
+**Resolution:** `01-write-contract.md` §5.1 specifies the reconstruction (`ts_ms_i = ts_ms_{i-1} + delta_i`, reseeded at each file header) and §5.2 annotates the `ts_ms` column. Both Go decoders now accumulate the deltas (`backend/libs/parser/pipe/calls.go`, `backend/libs/parser/streams/calls.go`), preserving the raw `Call.Time` field so existing CSV fixtures stay valid. `TestCallsTimeAccumulation` in each package guards the reconstruction with a synthetic three-record stream (5 ms, then one and two minutes apart) from the versioned generator `backend/libs/tests/helpers/wire`; the pre-fix formula matches only the first record, so the test fails against it.

@@ -205,6 +205,15 @@ Noise is bounded by `LocalBuffer.SIZE` (4096 events ≈ tens of KB per side).
 
 The calls stream feeds two stages separated in time: the write path indexes each record as it arrives; the seal pass (§6.5) materializes the parquet rows once the bucket is complete.
 
+**Time reconstruction.** `ts_ms` is not a wire field. The calls stream encodes each record's start as a zig-zag varint delta from the *previous* record, so the decoder must accumulate. Each calls file opens with a 16-byte header: an 8-byte `[0xFFFEFDFC, version]` marker (`CompressedLocalAndRemoteOutputStream.rotate`) followed by `base_ms`, an absolute Unix-ms epoch written by `CallsCompressedLocalAndRemoteOutputStream.fileRotated` (`Dumper.java:1400`). Reconstruct within the file:
+
+```
+ts_ms[0] = base_ms + delta[0]
+ts_ms[i] = ts_ms[i-1] + delta[i]      (i >= 1)
+```
+
+The running total reseeds at every file boundary: a rotation writes a fresh header and resets the agent-side timer (`Dumper.java:1062-1063`, `1394-1401`). This axis carries the whole pipeline: the `bucket` below, retention (§6.4), the `ts_ms` PK component (§5.2), and the read cursor (`02-read-contract.md`) all key off it. A decoder that reads each delta as an offset from `base_ms` is correct only for the first record and corrupts every record after it. Both Go decoders (`backend/libs/parser/pipe/calls.go`, `backend/libs/parser/streams/calls.go`) accumulate the deltas; `TestCallsTimeAccumulation` in each package guards the reconstruction with a synthetic three-record stream from `backend/libs/tests/helpers/wire`.
+
 **Write path, per `Call` record:**
 
 1. Resolve dictionary words for `Method` and any tag IDs in `Params`; derive `retention_class` from `(duration_ms, error_flag)` (§6.4). Both go into the SQLite filter columns, so hot queries do not need the blob.
@@ -224,7 +233,7 @@ Starting from the existing `CallParquet` (`backend/libs/storage/parquet/calls.go
 ```
 schema CallV2 {
   -- identity
-  ts_ms             INT64                      -- call start, Unix ms UTC; primary time axis
+  ts_ms             INT64                      -- call start, Unix ms UTC; primary time axis. Reconstructed by accumulating per-record deltas from the file header (§5.1), not a raw wire value
   pod_id            BYTE_ARRAY (UTF8) DICT     -- "<ns>/<service>/<pod>"; dictionary-encoded for compact storage
   restart_time_ms   INT64                      -- pod-restart boundary; dedupe key component
   trace_file_index  INT32                      -- PK component; agent trace-stream file index at the start of the call's bytes
@@ -487,6 +496,7 @@ Before this document is merged and Stage 1 starts, please confirm or correct:
 - [x] Default retention class TTLs and duration thresholds (§6.4, §9) — defaults accepted.
 - [ ] S3 path structure (§7) — operational fit.
 - [x] Dictionary cold-path lifecycle — final snapshot uploaded to S3 on pod-restart close (§3.6); local WAL purged after upload + grace.
+- [x] Calls-stream `ts_ms` reconstruction — delta accumulation specified (§5.1, §5.2) and implemented in both Go decoders, guarded by `TestCallsTimeAccumulation`.
 - [ ] Configuration defaults (§9).
 
 Follow-ups out of scope for this contract:
