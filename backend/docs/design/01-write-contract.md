@@ -21,7 +21,7 @@ The agent opens a long-lived TCP connection to the collector and multiplexes sev
 
 Important consequence: **the collector does not assemble calls.** A `Call` record arrives only when the root call has closed on the agent side. The collector's job is to demultiplex streams, persist them, and emit a parquet row per `Call`.
 
-**Optional channel gzip.** `ProtocolConst.ZIPPING_ENABLED` (default `false`, `proto-definition/.../ProtocolConst.java:46`) gzips the whole multiplexed channel; when it is on, the collector must gunzip before it can demux `RCV_DATA`. The collector supports both modes.
+**Optional channel gzip.** `ProtocolConst.ZIPPING_ENABLED` (default `false`, `proto-definition/.../ProtocolConst.java:46`) gzips the whole multiplexed channel; when it is on, the collector must gunzip before it can demux `RCV_DATA`. The MVP targets the default (off); a gunzip wrapper around the socket is the only change if a deployment turns it on (`06-wire-protocol-server.md` §7).
 
 ### Verified against agent code
 
@@ -120,6 +120,10 @@ Parquet rows have a per-bucket retention of up to 30 days (`long_clean`, `any_er
 
 **Growth during live pod-restart:** the dictionary is append-only (§1 V3). If a collector crashes and recovers mid-flight, the WAL is replayed; the on-disk monotonic `version` counter is rebuilt from the highest entry's index. Clients revalidating an old ETag get the fresh snapshot.
 
+**Pod-restart manifest (S3).** Cold `/pods` (`02-read-contract.md` §2.7) lists the `(namespace, service, pod, restart_time)` tuples with data in a range, but a parquet key carries only `<podRestartHash>`, a one-way hash, so the readable identity cannot be recovered from a LIST. The collector closes the gap with a small manifest. For each UTC day a pod-restart seals a bucket into, it writes or refreshes `s3://<bucket>/pods/v1/<yyyy>/<mm>/<dd>/<podRestartHash>.json` = `{ namespace, service, pod, restart_time_ms, timer_start_ms, replica, time_min_ms, time_max_ms }`. Emission is idempotent per `(day, pod-restart)`: the first seal for the day writes it, later seals refresh `time_max_ms`. A pod-restart that spans several days gets one manifest per day it holds data in, so a range query finds it in the day prefixes it already walks (`02-read-contract.md` §5.1), with no widened walk. Live pod-restarts surface from the hot tier (`/internal/v1/pods`), so cold `/pods` over a range is `LIST(pods/v1/<days>)` unioned with the hot replicas. `PROFILER_RETENTION_DICTIONARY_TTL` (§9) covers its retention.
+
+**Suspend timeline (S3).** The `suspend` stream is a small, global, per-pod-restart series of stop-the-world pauses (GC / JIT), not a per-call signal, so it does not belong in the `CallV2` rows. It has two consumers at two grains. Per call, `suspend_ms` (§5.2) measures how much of a call's wall-clock time was a global pause; the seal pass derives it (§5.1), and it is the MVP-critical part that fills the column the UI shows. Per pod-restart, the raw pause timeline drives a "when did this pod stall" view; on pod-restart close the collector persists it next to the dictionary snapshot as `s3://<bucket>/suspend/v1/<yyyy>/<mm>/<dd>/<podRestartHash>.json` = `{ restart_time_ms, timer_start_ms, events: [ { start_ms, duration_ms }, ... ] }`. It is fetched by pod-restart, like the dictionary, so one object per pod-restart is enough. The stream is sparse and tiny; a deployment that does not need the pod-level view can drop this object and keep only the per-call scalar.
+
 ### 3.7 Reconnect continuity
 
 A dropped agent connection never heals in place: the agent tears its dumper down to `initialize()` (`lastWrittenDictionaryTag = 0`) and reconnects, re-sending the whole dictionary from index 0 with the reset flag set (`resetRequired = 1`). Each reconnect is a new TCP accept, so the collector stamps a fresh `restartTime` and treats it as a new, independent pod-restart. Because the agent re-sends the full dictionary, that pod-restart is self-contained — the replica that receives it is never dictionary-less, even when it differs from the one that held the previous connection, and replicas need not share dictionary state. The `resetRequired = 1` flag is what tells the collector the incoming dictionary starts from index 0. This is why the collector-stamped `restartTime` at TCP accept (§1 V4) is safe: reconnect does not need cross-connection continuity. Full code trace: `stage0-progress.md` decisions log (2026-07-01).
@@ -172,10 +176,12 @@ Indexing is order-independent: it keys off the Call pointer, not the arrival ord
 
 The hot store is the three offset-addressable bulk streams: `trace`, plus the external value streams `sql` and `xml` that a blob points into. All three are written the same way.
 
-- **One segment file per agent stream file.** The collector opens a segment on each `COMMAND_INIT_STREAM_V2` and names it by the stream's `rolling_seq` (`backend/libs/parser/parser.go`); the demultiplexed bytes for that handle are appended and gzip-compressed once, with no WAL double-write (the agent's `<seq>.gz` model, `CompressedLocalAndRemoteOutputStream.java:210-216`). Keeping segments 1:1 with the agent's files lets a Call pointer `(trace_file_index, buffer_offset)` and a trace tag's `(rolling_seq, offset)` resolve by opening `<stream>/<rolling_seq>.gz` and seeking — no offset-translation table. The collector governs segment size through `requiredRotationSize` in the `INIT_STREAM_V2` response; a smaller segment favours partial reads, a larger one favours compression.
+- **One segment file per agent stream file.** The collector opens a segment on each `COMMAND_INIT_STREAM_V2` and names it by the agent's reported stream-file index (see the segment-naming note below); the demultiplexed bytes for that handle are appended and gzip-compressed once, with no WAL double-write (the agent's `<seq>.gz` model, `CompressedLocalAndRemoteOutputStream.java:210-216`). Keeping segments 1:1 with the agent's files lets a Call pointer `(trace_file_index, buffer_offset)` and a trace tag's `(rolling_seq, offset)` resolve by opening `<stream>/<rolling_seq>.gz` and seeking — no offset-translation table. The collector governs segment size through `requiredRotationSize` in the `INIT_STREAM_V2` response; a smaller segment favours partial reads, a larger one favours compression.
 - **Addressing.** `trace` chunks are located by the Call pointer (§4.3); `sql` / `xml` values by the `(rolling_seq, offset)` that a `PARAM_BIG_DEDUP` / `PARAM_BIG` trace tag carries (`backend/libs/parser/pipe/traces.go`). The catalog stores each segment's `(stream, rolling_seq)` and decompressed length; `trace` segments also carry a chunk time range.
 - **Refcount and eviction.** Refcounted in SQLite (§8): a segment is deletable once every sealed row whose blob sources from it has been uploaded (refcount 0), or once it is evicted under the overload policy. Refcounts span buckets — one segment can carry chunks or values for several buckets' calls.
 - These segment files ARE the hot store: `/internal/v1/calls/{pk}/trace` reads them directly (`02-read-contract.md` §3).
+
+**Segment name = the agent's file index, not the echoed id.** The agent addresses its stream files as `serverRollingSequenceId + 1` — the `+ 1` marked "for compatibility" in `CompressedLocalAndRemoteOutputStream.java:171-179` — and writes that value into every Call's `trace_file_index` (`Dumper.java:921`). The collector MUST name each `<rolling_seq>.gz` segment by that same `serverRollingSequenceId + 1`, not by the id it echoed in the `INIT_STREAM_V2` reply (`06-wire-protocol-server.md` §4). Off by one shifts every `(trace_file_index, buffer_offset)` pointer to the neighbouring segment, a silent and total corruption of trace addressing. A synthetic test guards it: after two stream rotations, each Call's `trace_file_index` must resolve to the segment holding its root ENTER.
 
 ### 4.5 Reader semantics
 
@@ -224,7 +230,8 @@ The running total reseeds at every file boundary: a rotation writes a fresh head
 **Seal pass, per `(pod-restart, bucket)`** (§6.5):
 
 3. For each call in the bucket, assemble the blob by its pointer `(trace_file_index, buffer_offset, record_index)` (§4.3) during the segment-ordered walk.
-4. Write the row — filter columns from the SQLite index, the remaining columns from `calls.wal`, `trace_blob` from the assembly — to the retention-class writer for the bucket.
+4. Derive `suspend_ms` by intersecting the call's `[ts_ms, ts_ms + duration_ms]` with the pod-restart's stop-the-world pause intervals decoded from `suspend.wal` (§3.6): a linear scan over the bucket window.
+5. Write the row — filter columns from the SQLite index, the remaining columns from `calls.wal`, `trace_blob` from the assembly, `suspend_ms` from step 4 — to the retention-class writer for the bucket.
 
 A call whose dictionary entry is missing is sealed with `trace_blob` NULL and `truncated_reason = dict_miss`; a call whose source segments were evicted under the §4.6 budgets is sealed with `trace_blob` NULL and the matching reason. Counters are exposed as Prometheus metrics.
 
@@ -254,7 +261,6 @@ schema CallV2 {
   cpu_time_ms       INT64
   wait_time_ms      INT64
   memory_used       INT64
-  non_blocking_ms   INT64                      -- agent-specific
   queue_wait_ms     INT32
   suspend_ms        INT32                      -- GC/JIT pause time within this call
   child_calls       INT32                      -- count of child method invocations in the trace tree
@@ -277,6 +283,8 @@ schema CallV2 {
 }
 ```
 
+**Compression and row order.** Every file is ZSTD-compressed. This matters most for `trace_blob` and `params`: the blob is stored uncompressed after seal assembly (§6.5), so the parquet codec is what keeps the cluster's ~6 MB/s of raw trace from landing in S3 unshrunk for the whole TTL. Rows are written sorted by `(ts_ms DESC, pk ASC)`, the total order the read path paginates on (`02-read-contract.md` §2.3.1). Sorting inside the file gives each row group a tight `ts_ms` min/max for pruning and lets the cold-tier k-way merge treat the file as an already-sorted run, with no in-memory re-sort.
+
 ### 5.3 Differences from old `CallParquet`
 
 | Change | Reason |
@@ -288,6 +296,7 @@ schema CallV2 {
 | Renamed `Calls` → `child_calls` | "calls" is overloaded with "list of calls"; this is the per-tree counter. |
 | Removed `convertedtype=UINT_*` annotations | Parquet's UINT_64 is poorly supported in some readers. INT64 with documented "always non-negative" suffices. |
 | `TraceId string "seqId_bufOffset_recordIndex"` → three `INT32` columns (`trace_file_index`, `buffer_offset`, `record_index`) | Better column compression, cheaper integer comparison at dedup time, no string parsing on the read path. Decision recorded; no open question remains. |
+| Removed `non_blocking_ms` | No wire source: `writeCall` never emits it and the Go decoder has no field for it (`Dumper.java:1059-1108`, `backend/libs/parser/pipe/calls.go`). Re-adding a column later is additive. |
 
 ### 5.4 Sharding: time bucket × retention class
 
@@ -309,15 +318,17 @@ On a clean seal the file is uploaded to S3 (Section 7) and kept locally for `hot
 
 ### 5.6 error_flag derivation
 
-The natural source of an error indicator is the Java agent's `CallInfo.isCallRed` (set whenever `ExceptionLogger.callRed()` fires, typically from a caught exception — `boot/src/main/java/com/netcracker/profiler/agent/ExceptionLogger.java:29-35`; the field itself: `boot/.../CallInfo.java:33`). However, **`isCallRed` is not currently surfaced on the Go-side `Call` struct** (`backend/libs/protocol/data/calls.go` — no field for it). Exposing it requires either confirming the wire `Call` record already carries the boolean and adding it to the Go decoder, or — if the wire format does not include it — a small agent change. Both are tracked as out-of-scope follow-ups, not blockers for Stage 1.
+The agent marks a call as errored through `ExceptionLogger.callRed()` (typically from a caught exception, `boot/src/main/java/com/netcracker/profiler/agent/ExceptionLogger.java:29-35`), which records the indexed parameter `call.red` on the call. `call.red` is an indexed parameter in every targeted deployment (`installer/.../config/_config.xml`), so it is serialized into the Call record's params and the Go decoder already reads it into `Call.Params` (`backend/libs/parser/pipe/calls.go`). No agent change and no new struct field are needed.
 
-Until `isCallRed` flows through, the MVP derives `error_flag` from one signal only:
+At seal, the collector resolves the dictionary id of the literal `call.red` and sets:
 
-- `callInfo.isCorrupted` — the agent could not finish the call cleanly (already on the Go side via the regular Call decoding path).
+```
+error_flag := dictId("call.red") ∈ keys(Call.Params)
+```
 
-`callInfo.isPersist` is **not** an error flag — it is the persistence gate the agent uses to decide whether to emit a Call record at all (`Dumper.java:945-947`). It is therefore not folded into `error_flag`.
+`callInfo.isPersist` is not an error flag — it is the persistence gate the agent uses to decide whether to emit a Call record at all (`Dumper.java:945-947`), so it is not folded in.
 
-Practical consequence for the retention table (§6.4): until `isCallRed` is exposed, the `any_error` retention class effectively shares its content with `corrupted`. Both classes are kept as distinct buckets in the schema so that wiring `isCallRed` later does not require re-partitioning historical data.
+`callInfo.isCorrupted` is not available on the read path: a corrupted call never becomes a Call record (the same `Dumper.java:945-947` gate excludes it), so the collector never sees one. The `corrupted` retention class (§6.4) therefore stays reserved but empty in the MVP; keeping its key space reserved means that surfacing corruption later, if the agent ever emits it, would not re-partition history.
 
 ## 6. Seal semantics
 
@@ -362,11 +373,11 @@ Default mapping (configurable per-deployment):
 | `normal_clean` | `100 ≤ duration_ms < 1000` AND `!error_flag` | 7 days |
 | `long_clean` | `duration_ms ≥ 1000` AND `!error_flag` | 30 days |
 | `any_error` | `error_flag = true` (any duration) | 30 days |
-| `corrupted` | `callInfo.isCorrupted` (subclass of `any_error`, segregated for forensics) | 7 days |
+| `corrupted` | reserved; not populated in the MVP — the agent does not emit corrupted calls (§5.6) | 7 days |
 
 The classifier runs per Call record at write time; `retention_class` is stored in the SQLite index, and the seal pass routes each row to the matching one of up to five retention-class writers for the bucket. Maintenance reads `<retentionClass>` from the S3 object key (§7); it does not open parquet files to apply TTL.
 
-`corrupted` and `any_error` are not mutually exclusive: a row may satisfy both. Route it to `corrupted` (the more specific bucket) and keep `error_flag = true`; each row still lands in exactly one storage bucket, so wiring `isCallRed` later (§5.6) does not re-partition history.
+`any_error` is populated from `error_flag` (§5.6, the `call.red` param). `corrupted` stays a distinct but currently-empty bucket; keeping its key space reserved means emitting corrupted calls later would not re-partition history.
 
 ### 6.5 The seal pass
 
@@ -500,7 +511,7 @@ Before this document is merged and Stage 1 starts, please confirm or correct:
 - [x] `restartTime` source — collector-stamped on TCP accept (§3.4).
 - [x] Trace-bytes extraction strategy — per-call chunk-level reassembly (§4).
 - [x] `trace_id` column shape — three `INT32` columns (§5.2, §5.3).
-- [x] `error_flag` source — `isCorrupted` in MVP; `isCallRed` deferred as a follow-up (§5.6).
+- [x] `error_flag` source — the `call.red` indexed param resolved from `Call.Params` (§5.6); no agent change.
 - [x] Default retention class TTLs and duration thresholds (§6.4, §9) — defaults accepted.
 - [ ] S3 path structure (§7) — operational fit.
 - [x] Dictionary cold-path lifecycle — final snapshot uploaded to S3 on pod-restart close (§3.6); local WAL purged after upload + grace.
@@ -509,5 +520,4 @@ Before this document is merged and Stage 1 starts, please confirm or correct:
 
 Follow-ups out of scope for this contract:
 
-- Surface `CallInfo.isCallRed` on the Go-side `Call` struct (`backend/libs/protocol/data/calls.go`); confirm whether it is already on the wire or whether the Java agent needs a small change. Once exposed, `error_flag` derivation in §5.6 picks it up automatically.
 - Consolidate `backend/libs/parser/streams/` into `backend/libs/parser/pipe/` (decision 8 in `profiler-plan.md`).
