@@ -33,6 +33,12 @@ pending (see open issues).
   - [x] `libs/collector/hotstore` — sweep unlinks refcount-0 segments (file + catalog row) of closed, fully sealed pod-restarts (`03` §3.7 step 14)
   - [x] `libs/collector` — `S3ObjectStore` MinIO adapter (Content-MD5 on every PUT, 4xx → `PermanentUploadError`); upload loop opt-in via `UploadCheckInterval`, mirroring the seal loop
   - [x] Tests: `libs/tests/integration/upload_test.go` (fake object store: happy path, C1 crash window, restart recovery, 4xx quarantine, retry backoff), `upload_minio_test.go` (`integration` tag: real MinIO round-trip and live 4xx classification), `hotstore/upload_test.go` (double-release guard at the SQLite layer)
+- [x] **Cold read path `/api/v1/calls` + `/api/v1/pods`** (fourth slice; branch `feat/stage1-cold-read`)
+  - [x] `libs/query/model` — Call PK with byte-wise collation, the `(ts_ms DESC, pk ASC)` total order, the frozen `/calls` query, k-way merge with PK dedup before truncation (`02` §2.3.1, §6); multi-source by shape (`Tier` tiebreak, cold preferred) so the hot fan-out slice plugs in without reshaping
+  - [x] `libs/query/cold` — LIST discovery (`02` §5.1: hour walk per pruned class, `timeMin`/`timeMax` parsed from the key with no footer/HEAD, overlap select, listed-then-`404` → empty), class pruning (`02` §5.5, §2.3.2), projected parquet scan (the `trace_blob` column is never read on the list path), cold `/pods` from `pods/v1` manifests without opening parquet (`02` §2.7)
+  - [x] `libs/query` — `/api/v1/calls` + `/api/v1/pods` with RFC 7807 errors (`02` §8), opaque keyset cursor (frozen query + last position + TTL; `400` on expiry and on re-sent-filter mismatch, `02` §2.3.1), two-layer wide-query guard before any parquet open (span, then the LIST-derived estimate with `suggested_filters` / `estimated_*` / `by_class`; verdict rides in the cursor, `02` §2.3.2), `oklog/run` service; only the cold source is wired
+  - [x] `libs/query/s3store.go` — MinIO read adapter (prefix LIST, ranged `ReadAt`, `NoSuchKey` → `cold.ErrNotFound`)
+  - [x] Tests: unit (merge/collation, cursor TTL/version, guard layers, key parse + pruning) and synthetic integration `libs/tests/integration/coldread_test.go` — two pods over two UTC days sealed and uploaded by the slice-2/3 machinery, a late-arrival patch file, a planted duplicate-PK object, ordering/filters/pagination/guard/`/pods`/discovery acceptance, projection proven by read-offset recording with an unprojected positive control; `coldread_minio_test.go` (`integration` tag) round-trips against real MinIO
 - [ ] Hot-read API `/internal/v1/*` (`02-read-contract.md` §3)
 - [ ] Budgets and janitors: segment refcounts/eviction, idle accumulator timeout, memory budget (`01` §4.6)
 - [ ] Collector app wiring: `profiler-backend collect` subcommand, readiness states, Prometheus metrics (`03` §2)
@@ -191,6 +197,74 @@ refcounts, and a rejected file must keep its segments pinned until a human
 resolves it. Recovery leaves the row alone because the quarantined path
 exists on disk.
 
+### 2026-07-03 — the query service composes in libs/query; the binary is app wiring
+
+`02` §1 places the read API in a separate `query` service but the repo has no
+Go binary for it (`backend/apps/query` is the React UI). The service composes
+in `libs/query` — `Options`/`Service.Run` over `oklog/run`, mirroring
+`libs/collector` — and the executable (`profiler-backend query` or similar),
+env parsing (`PROFILER_*`, `02` §9), readiness, and metrics land with the
+same app-wiring task that owns the collector binary.
+
+### 2026-07-03 — cold /calls returns trace_blob_size = null (contract gap)
+
+**Question:** `02` §2.3 puts `trace_blob_size` in every `/calls` row, but the
+CallV2 schema (`01` §5.2) has no blob-size column, and the same contract
+forbids reading `trace_blob` on the list path (§2.3.2, §5.4 — the projection
+is also this slice's acceptance invariant). The cold tier cannot know the
+size without violating one of the two.
+
+**Choice:** the projection wins. The cold list path emits
+`trace_blob_size: null` ("unknown; fetch `/trace`"), and `0` for a truncated
+row as §2.3 pins. Blob presence stays derivable: `truncated_reason == null`
+implies the blob exists.
+
+**Reason:** reading the blob column to fill a cosmetic field would defeat the
+scan-cost model the guard is built on. Fixing it properly is an additive
+`trace_blob_size INT32` column in CallV2 — logged as an open issue; old files
+without the column would read as NULL, which degrades to today's behaviour.
+
+### 2026-07-03 — /pods response shape
+
+`02` §2.7 pins the tuple set but no JSON shape. Chosen:
+`{"pods": [{namespace, service, pod, restart_time_ms}], "partial": ...,
+"partial_reasons": [...]}` — member names follow the `pods/v1` manifest
+fields (`01` §3.6), the partial envelope matches `/calls` (§7.4). Sorted by
+`(namespace, service, pod, restart_time_ms)` for a stable order.
+
+### 2026-07-03 — column projection = dropping the reader's column buffer
+
+xitongsys/parquet-go cannot read a partial struct against a wider file
+schema (its footer rename aligns schema elements by index), so the cold scan
+opens the reader with the full CallV2 schema and deletes the `trace_blob`
+entry from `ColumnBuffers` before the first `Read`. Buffer creation only
+positions a reader at the chunk offset — data pages load lazily — so the
+column's chunks are never fetched; the unmarshaller leaves the field nil.
+The integration test pins this by recording read offsets: no read may start
+inside a `trace_blob` chunk, with an unprojected control read proving the
+assertion bites. Buffered transports read in ~4 KB granularity, so
+neighbouring-column reads may sweep across a small blob chunk — byte-range
+non-overlap would be a false invariant; read-start is the correct one.
+
+### 2026-07-03 — key timeMax widens to the end of its second at parse
+
+The `01` §7 key stamps are second-precision while `ts_ms` is milliseconds:
+both bounds truncate downward, so a file whose true `max(ts_ms)` has a
+sub-second tail would fail `timeMax >= from` against a `from` inside that
+second and discovery would drop rows the file does hold. `ParseKey` widens
+`timeMax` by 999 ms; the floor of `timeMin` already errs on the inclusive
+side. Implementation choice, not a contract change — the key format is
+untouched.
+
+### 2026-07-03 — duration_min_ms exempts the span guard at any positive value
+
+`02` §2.3.2 lists `duration_min_ms` as a narrowing filter without
+qualifying the value, so any positive value exempts a wide window from the
+span layer — even one below 100 ms, which prunes no class. The cost layer
+still gates such a query by its actual LIST estimate, so nothing pathological
+slips through; class pruning itself stays honest (`< 100 ms` keeps all five
+classes listed).
+
 ### 2026-07-03 — per-file upload order: PUT object, upsert manifest, then commit
 
 The pods-manifest PUT runs after the parquet PUT but before the `MarkUploaded`
@@ -247,4 +321,28 @@ pod-restart sealed into that day, so a later seal or a retry only widens
 - **Pre-existing test failures** in `libs/parser/...` (`TestIntegration`,
   `TestParsePodDump`, `streams` suites) come from binary fixtures that are
   deliberately not committed (`WORKFLOW.md` §6); they fail identically with
-  and without this slice. Worth a `t.Skip` when the fixture is absent.
+  and without this slice. Worth a `t.Skip` when the fixture is absent. The
+  same applies to `libs/generator` and `TestGenerator_GenerateCalls` in
+  `libs/tests/integration` (missing `ui5min.bin`).
+- **CallV2 needs a `trace_blob_size` column.** The cold list path emits
+  `trace_blob_size: null` because the schema carries no size and the
+  projection forbids reading the blob (see the 2026-07-03 decision). Adding
+  the column at seal is additive; do it before Stage 5 wires the UI if the
+  calls table wants to show blob sizes.
+- **Cold scan reads each candidate file whole, sequentially.** `ScanFile`
+  materializes every projected row of a file before filtering, files scan one
+  after another, and each page re-reads every file (`02` §2.3.1 accepts the
+  re-scan). Row-group `ts_ms` pruning from the sorted layout (`01` §5.2),
+  parallel per-file scans, and streaming reads are deferred until profiling
+  shows the need. parquet-go also allocates each column's buffered transport
+  at chunk size — including `trace_blob`'s before the projection drops it —
+  so a huge blob chunk costs a transient allocation even unread.
+- **504 mapping is a heuristic.** With only the cold source wired, `/calls`
+  and `/pods` return `504` when every LIST prefix failed (`02` §8 says "all
+  replicas AND S3 LIST"). The hot fan-out slice owns the real all-sources
+  rule; partial LIST failures already surface as `partial_reasons`.
+- **parquet-go swallows column read errors.** `reader.Read` discards
+  `ReadRows` errors (`table, _ :=`), so a corrupted column yields zero values
+  silently instead of failing the scan. Affects any tier reading parquet;
+  worth a wrapper check (row count vs values) if silent data loss ever
+  matters more than availability.
