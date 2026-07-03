@@ -39,7 +39,13 @@ pending (see open issues).
   - [x] `libs/query` — `/api/v1/calls` + `/api/v1/pods` with RFC 7807 errors (`02` §8), opaque keyset cursor (frozen query + last position + TTL; `400` on expiry and on re-sent-filter mismatch, `02` §2.3.1), two-layer wide-query guard before any parquet open (span, then the LIST-derived estimate with `suggested_filters` / `estimated_*` / `by_class`; verdict rides in the cursor, `02` §2.3.2), `oklog/run` service; only the cold source is wired
   - [x] `libs/query/s3store.go` — MinIO read adapter (prefix LIST, ranged `ReadAt`, `NoSuchKey` → `cold.ErrNotFound`)
   - [x] Tests: unit (merge/collation, cursor TTL/version, guard layers, key parse + pruning) and synthetic integration `libs/tests/integration/coldread_test.go` — two pods over two UTC days sealed and uploaded by the slice-2/3 machinery, a late-arrival patch file, a planted duplicate-PK object, ordering/filters/pagination/guard/`/pods`/discovery acceptance, projection proven by read-offset recording with an unprojected positive control; `coldread_minio_test.go` (`integration` tag) round-trips against real MinIO
-- [ ] Hot-read API `/internal/v1/*` (`02-read-contract.md` §3)
+- [x] **Hot-read API `/internal/v1/*` + query fan-out** (fifth slice; branch `feat/stage1-hot-fanout`)
+  - [x] `libs/collector/hotread` — `/internal/v1/calls` (same params as `/api/v1/calls` plus the `after_ts_ms`/`after_pk` keyset) from the SQLite call index in the tier-shared `(ts_ms DESC, pk ASC)` order; `/calls/{pk}`; `/calls/{pk}/trace` assembled by the seal machinery (`consumeChunk` + blob framing, `01` §4.3/§4.5) with the §2.4 caching headers; `/pods` with per-pod-restart data bounds; `/pods/{pod-restart}/dictionary` (§2.6 snapshot + ETag/304); `/health/hot-window`
+  - [x] `libs/collector/hotstore` — read-side store surface (`hotquery.go`): window/point index reads, per-pod-restart bounds, `HotWindowOldestMs`, `AssembleTraceBlob` (shared with seal), `DictionaryWords` (shared with the S3 snapshot)
+  - [x] `libs/query/hot` — replica discovery (`Discovery` seam + DNS over `COLLECTOR_HEADLESS_SVC`, re-resolved per request, `02` §7.1) and the per-replica HTTP client with `PROFILER_FANOUT_TIMEOUT`
+  - [x] `libs/query` — full fan-out per page (`02` §2.3.1): parallel hot-window probes → dynamic cold cutoff `min(to, max(oldest) + PROFILER_OVERLAP_MARGIN)` (§4.3, degraded hot state falls back to the full cold window), per-replica `/internal/v1/calls` runs + the cutoff-clamped cold scan into `model.MergeRuns` with cold-preferred PK dedup (§6.3), `/pods` union on the §2.7 entry shape (`time_min_ms`/`time_max_ms`, bounds widened across tiers), 504 only when every attempted source failed (§8)
+  - [x] `libs/query/model` — shared wire shapes (`CallJSON`, `PodEntry`, PK path codec, `ParseCallsQuery`/`Values`) so the external API, the internal API, and the fan-out client cannot drift
+  - [x] Tests: `hotread` unit suite pins the pod_restart-string vs PK collation trap (a pod name that prefixes another, numeric restart ordering), keyset seek, filters, hot-window, dictionary revalidation; `query` unit test pins the cutoff rule; synthetic integration `libs/tests/integration/fanout_test.go` — a real collector with un-sealed hot data plus a scaled-down pod's S3-only data: merge across the cutoff without gap or duplicate, cold-preferred `error_flag` on an overlap row, LIST-skip for a hot-only window vs both tiers for a week, §2.7 union bounds, internal trace byte-equal to the sealed `trace_blob`, and stable pagination across a simulated hot→cold migration (§2.3.1)
 - [ ] Budgets and janitors: segment refcounts/eviction, idle accumulator timeout, memory budget (`01` §4.6)
 - [ ] Collector app wiring: `profiler-backend collect` subcommand, readiness states, Prometheus metrics (`03` §2)
 
@@ -274,6 +280,78 @@ durable "manifest dirty" flag is needed. Manifest bounds cover every file the
 pod-restart sealed into that day, so a later seal or a retry only widens
 `time_max_ms`, matching the §3.6 upsert semantics.
 
+### 2026-07-03 — internal keyset rides as explicit after_ts_ms/after_pk params
+
+**Question:** `02` §3 says `/internal/v1/calls` takes "same params as
+`/api/v1/calls`", whose table includes `cursor`. Should the collector accept
+the opaque external cursor?
+
+**Choice:** the internal endpoint takes the §2.3 filter params verbatim plus
+an explicit position pair `after_ts_ms` / `after_pk` (the §2.2 colon
+serialization); the opaque cursor stays a query-service artifact.
+
+**Reason:** §2.3.1 requires of a source only that it "seeks past the cursor
+position" — the position is the whole seek state. The external token also
+carries the frozen query and the TTL, which are the query service's
+pagination-session concerns; decoding it on the collector would couple every
+replica to the token format and its rotation. Both sides of the internal API
+are ours, so this is an implementation choice, not a contract change.
+
+### 2026-07-03 — /pods rows carry time_min_ms/time_max_ms (supersedes the shape entry above)
+
+The earlier "/pods response shape" entry chose 4-member rows; the hot fan-out
+slice restores the full `02` §2.7 entry — `{namespace, service, pod,
+restart_time_ms, time_min_ms, time_max_ms}` — because the union across tiers
+is specified on exactly that shape. Cold bounds come from the pods/v1
+manifests, hot bounds from the call index (both unclamped by the query
+window); a pod-restart present in several sources merges into one entry with
+widened bounds. The envelope (`partial` / `partial_reasons`) is unchanged.
+
+### 2026-07-03 — hot /calls ordering is computed in Go, not by SQLite ORDER BY
+
+The call partitions key rows by the scalar `pod_restart` string
+(`ns/svc/pod/restartMs`), and its byte order diverges from the §2.3.1
+component-wise PK collation in two ways: a pod name that prefixes another
+compares through the `/` separator (`'/'` > `'-'` and `'.'`, so `a/...` sorts
+AFTER `a-b/...` while the PK puts `a` first), and `restart_time_ms` as text
+puts `1000` before `999`. `ORDER BY pod_restart` would therefore break the
+byte-for-byte cross-tier order the merge and dedup rest on. The hot API
+fetches each overlapping partition's window rows and sorts with the shared
+`model` comparator; partitions are disjoint ts ranges, so their runs
+concatenate newest-first and the walk stops at `limit`. A unit test pins both
+divergence cases.
+
+### 2026-07-03 — dynamic cutoff: max over healthy replicas, full window on any degradation
+
+`02` §4.3 gives the static rule `now - hot_retention + overlap_margin`; the
+dynamic form implemented is `coldTo = min(to, max over replicas of
+hot_window_oldest_ms + PROFILER_OVERLAP_MARGIN)`. The max (the YOUNGEST hot
+window) is what zero-gap needs: data below that replica's window start exists
+only in cold. Any degraded hot state — no discovery configured, resolution
+failure, zero replicas, or one failed health probe — widens cold to the full
+query window, so the guarantee never depends on an unreachable replica; the
+cost is a wider LIST exactly when the hot tier is already in trouble. An
+empty replica reports `oldest = now`, which keeps cold covering everything.
+
+### 2026-07-03 — hot /internal/v1/calls serves from the SQLite index alone
+
+`02` §3 lists recently sealed local parquet as a fourth hot source, for calls
+"already moved out of the hot index". Nothing moves out yet — call partitions
+are never dropped (the hot-retention janitor is a later task) — so the index
+covers every call the replica holds and reading local parquet would only
+produce duplicates for the dedup to collapse. The parquet source must land
+together with the janitor that starts dropping partitions; recorded as an
+open issue so the two cannot ship apart.
+
+### 2026-07-03 — 504 means every attempted source failed
+
+With two tiers wired, the §8 rule is implemented as: count each hot replica
+(health probe or calls fetch) and the cold LIST as attempted sources; return
+504 only when at least one source was attempted, none succeeded, and at least
+one failed. A tier legitimately skipped — cold under the cutoff, a replica
+whose hot window misses the range — counts as neither, so a hot-only query
+with a dead S3 still answers from the replicas, and vice versa.
+
 ## Open issues
 
 - **`stage1-plan.md` does not exist yet.** This slice was specified directly
@@ -337,10 +415,25 @@ pod-restart sealed into that day, so a later seal or a retry only widens
   shows the need. parquet-go also allocates each column's buffered transport
   at chunk size — including `trace_blob`'s before the projection drops it —
   so a huge blob chunk costs a transient allocation even unread.
-- **504 mapping is a heuristic.** With only the cold source wired, `/calls`
-  and `/pods` return `504` when every LIST prefix failed (`02` §8 says "all
-  replicas AND S3 LIST"). The hot fan-out slice owns the real all-sources
-  rule; partial LIST failures already surface as `partial_reasons`.
+- **Hot `/internal/v1/calls` does not read sealed local parquet** (`02` §3
+  source 4). Safe today because call partitions are never dropped, so the
+  index covers everything; the parquet source MUST land in the same task as
+  the hot-retention janitor that starts dropping partitions, or aged calls
+  become invisible to the hot tier before their S3 copy is preferred anyway.
+- **Hot /calls materializes each overlapping partition's window rows** before
+  sorting in Go (no SQL-level keyset; see the collation decision). Bounded by
+  a partition's ~5 minutes of calls per page, but worth a pushed-down seek
+  (component PK columns in the partition schema) if profiling shows it.
+- **Replica "more rows" is inferred from a full page.** The internal API
+  returns no continuation flag; the fan-out treats `len(rows) == limit` as
+  "may have more", which can cost one extra empty page with a non-null
+  cursor — explicitly allowed by §2.3.1's termination rule.
+- **`/internal/v1/calls/{pk}` probes every partition.** A bare PK carries no
+  time hint (`02` §2.2 suggests a `call_ref`); with few partitions per
+  replica the point SELECTs are cheap, revisit when the janitor lands.
+- **Fan-out health probes run on every page.** Two HTTP round-trips per
+  replica per page (hot-window + calls); a short-TTL cache of the hot-window
+  report is the obvious lever if page latency ever matters.
 - **parquet-go swallows column read errors.** `reader.Read` discards
   `ReadRows` errors (`table, _ :=`), so a corrupted column yields zero values
   silently instead of failing the scan. Affects any tier reading parquet;

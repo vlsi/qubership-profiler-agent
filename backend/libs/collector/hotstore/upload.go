@@ -323,17 +323,7 @@ func (u *Uploader) uploadPodSnapshots(ctx context.Context, pr *PodRestart, stats
 	dayPath := utcDayPath(key.RestartTimeMs)
 	hash := PodRestartHash(key)
 
-	dict := pr.Dictionary()
-	maxId := -1
-	for id := range dict {
-		if id > maxId {
-			maxId = id
-		}
-	}
-	words := make([]string, maxId+1)
-	for id, word := range dict {
-		words[id] = word
-	}
+	words := pr.DictionaryWords()
 	dictBody, err := json.Marshal(dictionarySnapshot{Version: len(words), Methods: words, Params: words})
 	if err != nil {
 		return errors.Wrap(err, "encode dictionary snapshot")

@@ -647,6 +647,8 @@ type podsBody struct {
 		Service       string `json:"service"`
 		Pod           string `json:"pod"`
 		RestartTimeMs int64  `json:"restart_time_ms"`
+		TimeMinMs     int64  `json:"time_min_ms"`
+		TimeMaxMs     int64  `json:"time_max_ms"`
 	} `json:"pods"`
 	Partial bool `json:"partial"`
 }
