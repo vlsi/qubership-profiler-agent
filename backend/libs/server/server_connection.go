@@ -17,6 +17,9 @@ type (
 	ConnectedPod struct {
 		Uuid                        common.Uuid
 		Namespace, Service, PodName string
+		// RestartTimeMs is the pod-restart boundary, stamped by the collector at
+		// TCP accept; the agent does not transmit it (01-write-contract.md §1 V4).
+		RestartTimeMs int64
 	}
 
 	// ConnectionHandler acts as server and receives data from the profiler agent
@@ -25,7 +28,8 @@ type (
 		cancel context.CancelFunc
 		opts   ConnectionOpts
 
-		conn net.Conn
+		conn       net.Conn
+		acceptedAt time.Time
 
 		socketReader *io.TcpReader
 		socketWriter *io.TcpWriter
@@ -41,7 +45,15 @@ type (
 )
 
 func (sc *ConnectionHandler) Handle() {
-	defer func() { _ = sc.Close() }()
+	defer func() {
+		_ = sc.Close()
+		// The TCP connection IS the pod-restart: once it drops, the agent
+		// reconnects as a fresh pod-restart (01-write-contract.md §3.7), so the
+		// listener finalizes this one's state.
+		if sc.listener != nil && sc.pod != nil {
+			sc.listener.PodDisconnected(sc.ctx, sc.pod)
+		}
+	}()
 	log.Debug(sc.ctx, " Got connection from %v ", sc.conn.RemoteAddr())
 	sc.socketReader = io.PrepareTcpReader(sc)
 	sc.socketWriter = io.PrepareTcpWriter(sc)
@@ -108,9 +120,9 @@ func (sc *ConnectionHandler) HandleCommand(ctx context.Context) (err error) {
 		break
 	}
 
-	if err != nil {
+	if err != nil && err != errAgentClosed {
 		pos := sc.socketReader.Pos()
-		log.Error(ctx, err, " invalid format, error around pos: %d (%02X) ", op, pos, pos)
+		log.Error(ctx, err, " command %02X failed around pos: %d (%02X) ", op, pos, pos)
 	}
 	return err
 }
@@ -162,8 +174,14 @@ func (sc *ConnectionHandler) CommandGetProtocolVersion(ctx context.Context) (err
 		return
 	}
 
-	sc.pod = &ConnectedPod{Uuid: common.RandomUuid(), Namespace: namespace, Service: service, PodName: podName}
-	sc.listener.RegisterPod(sc.pod)
+	sc.pod = &ConnectedPod{Uuid: common.RandomUuid(), Namespace: namespace, Service: service, PodName: podName,
+		RestartTimeMs: sc.acceptedAt.UnixMilli()}
+	if err = sc.listener.RegisterPod(sc.pod); err != nil {
+		// No ack protocol exists at handshake time; closing the socket makes
+		// the agent reconnect (06 §6).
+		sc.pod = nil
+		return errors.Wrap(err, "register pod")
+	}
 	log.Debug(ctx, "Received GET_PROTOCOL_VERSION_V2 [cli:%v / svr:%v] for %v/%v [%v] ",
 		clProtocol, ProtocolVersion, namespace, service, podName)
 
@@ -209,8 +227,14 @@ func (sc *ConnectionHandler) CommandInitStream(ctx context.Context) (err error) 
 	rollingSequenceId := requestedRollingSequenceId
 
 	if sc.listener != nil {
-		sc.listener.RegisterStream(ctx, sc.pod, handleId, streamType, resetRequired,
-			requestedRollingSequenceId, rollingSequenceId, rotationPeriod, requiredRotationSize)
+		if err = sc.listener.RegisterStream(ctx, sc.pod, handleId, streamType, resetRequired,
+			requestedRollingSequenceId, rollingSequenceId, rotationPeriod, requiredRotationSize); err != nil {
+			// A failing INIT_STREAM_V2 handler answers like an unknown stream:
+			// null handle, then teardown (06 §6).
+			_ = sc.socketWriter.WriteUuid(ctx, common.Uuid{})
+			_ = sc.socketWriter.Flush()
+			return errors.Wrapf(err, "register stream %q", streamType)
+		}
 	}
 	log.Debug(sc.ctx, "INIT_STREAM_V2 for %v: req  => seqId=%v, reset? %v ",
 		streamType, requestedRollingSequenceId, resetRequired)
@@ -248,7 +272,14 @@ func (sc *ConnectionHandler) CommandRcvData(ctx context.Context) (err error) {
 	}
 
 	if sc.listener != nil {
-		sc.dataBytes += uint64(sc.listener.AppendData(ctx, sc.pod, handleId, chunk))
+		n, err := sc.listener.AppendData(ctx, sc.pod, handleId, chunk)
+		sc.dataBytes += uint64(n)
+		if err != nil {
+			// A failing RCV_DATA handler signals ACK_ERROR_MAGIC before the
+			// teardown so the agent reconnects rather than stalling (06 §6).
+			_ = sc.writeAck(ctx, model.ACK_ERROR_MAGIC, true)
+			return errors.Wrap(err, "append data")
+		}
 	}
 
 	// One ack byte per payload (06 §5). Written buffered; the agent's flush
