@@ -137,6 +137,29 @@ The query is frozen at the first page so the window does not drift as wall-clock
 
 **Cursor TTL.** A cursor is valid for `PROFILER_CURSOR_TTL` (default `15m`) from issue. An expired cursor is rejected with `400`, and the client restarts from page 1. The TTL bounds how far the frozen `to` can lag real time and covers a position that points into parquet already removed by a retention TTL. Signing the cursor (HMAC, to stop a client forging a position that forces an expensive scan) is deferred; internal validation of the frozen-query fingerprint is enough for the in-team MVP.
 
+### 2.3.2 Wide-query guard
+
+A `/calls` query over a wide window with no file-pruning filter is the one shape that cannot meet the read SLO. Sorted `ts_ms DESC`, its first page fills from the densest recent buckets — a 200-pod cluster lists ~3,000 objects per hour-class (§5.5), most of them `short_clean` — and paging deeper only widens the scan. For `short_clean` the query is also mostly empty: that class has a 1-day TTL (`01-write-contract.md` §6.4), so a week-wide short-call scan reads at most the last day and returns nothing earlier.
+
+`query` rejects such a query with `400` at validation rather than narrowing it silently. The result set then always matches what was asked, and the caller — not the server — chooses which axis to narrow on. The guard has two layers, both evaluated before any parquet file is opened.
+
+**Narrowing filters.** A filter exempts a query from the guard only if it prunes the *set of files discovered*, not the rows read within them:
+
+- `pod` — resolves to a pod-restart's file set;
+- `retention_class` — selects a key prefix (§5.1);
+- `duration_min_ms` — prunes to the classes that can hold a call that long: `≥ 1000` lists only `long_clean` plus the error classes, which carry calls of any duration (`01-write-contract.md` §6.4);
+- `error_only` — prunes to `any_error` and `corrupted`.
+
+`method` and `params` do **not** exempt: they filter rows inside already-listed files (§5.4), so they cut the result, not the scan.
+
+**Layer 1 — span.** If `to - from > PROFILER_WIDE_RANGE_LIMIT` (default `6h`) and none of the narrowing filters above is present, reject with `400`. This layer needs no I/O, so it stops the pathological wide-open query before the discovery LIST that layer 2 depends on — a multi-day range is itself thousands of serial LIST round-trips (§5.5).
+
+**Layer 2 — estimated scan.** For a query that clears layer 1, the discovery LIST (§5.1) already returns, per candidate object, its size and — from the key — its `retention_class`. Summing these gives `(file_count, total_bytes)` for the whole scan with no extra request and no file opened. If `file_count > PROFILER_MAX_SCAN_FILES` or `total_bytes > PROFILER_MAX_SCAN_BYTES`, reject with `400` before reading. The two limits map to the two cost axes of §5.5: object count bounds LIST and GET round-trips, byte total bounds decode-and-scan volume. Both are needed — many tiny files pass a byte limit but not a file limit, and a few large files the reverse.
+
+The rejection body (§8) carries the estimate and a per-class byte breakdown, so the caller sees which axis dominates — usually `short_clean` — and which filter would cut it.
+
+**Evaluated once.** The guard runs on the first page only, against the frozen query (§2.3.1), and its verdict rides in the cursor. Pages 2..N are not re-checked, so deep pagination does not re-pay the estimate.
+
 ### 2.4 Trace blob — lazy endpoint
 
 `GET /api/v1/calls/{pk}/trace` returns the per-call blob as raw bytes.
@@ -330,7 +353,7 @@ Result consistency is eventual within seconds: a just-arrived, not-yet-sealed ca
 Path layout (`01-write-contract.md` §7):
 
 ```
-s3://<bucket>/parquet/v1/<retentionClass>/<yyyy>/<mm>/<dd>/<hh>/<replica>-<podRestartHash>-<timeBucketStart>-<seq>.parquet
+s3://<bucket>/parquet/v1/<retentionClass>/<yyyy>/<mm>/<dd>/<hh>/<replica>-<podRestartHash>-<timeBucketStart>-<timeMin>-<timeMax>-<seq>.parquet
 ```
 
 For range `[t1, t2]`:
@@ -338,7 +361,13 @@ For range `[t1, t2]`:
 1. For each retention class in the filter (default: all 5).
 2. Walk the hour list between `floor(t1, 1h)` and `ceil(t2, 1h)`.
 3. LIST each `<retentionClass>/<yyyy>/<mm>/<dd>/<hh>/` prefix in parallel.
-4. Select every file whose `[time_min, time_max]` **overlaps** `[t1, t2]`, not only files whose `<timeBucketStart>` falls inside it. A call bucketed by `floor(ts_ms)` and late arrivals mean a file's rows can start before its `timeBucketStart` prefix suggests; carry `time_min` / `time_max` in the object metadata (or the future catalog) so no footer read is required. Widen the hour walk in step 2 by the maximum expected call duration to catch long calls filed under an earlier bucket.
+4. Parse `<timeMin>` and `<timeMax>` from each object key (`01-write-contract.md` §7) and keep every file whose `[timeMin, timeMax]` overlaps `[t1, t2)` (`timeMin < t2` and `timeMax ≥ t1`). Both bounds ride in the key, and `ListObjectsV2` returns the key with every listed object, so overlap is decided straight from the LIST: no parquet footer read and no per-object HEAD (`ListObjectsV2` returns only the key, size, and ETag, not user metadata). The seal pass writes each file's true `min(ts_ms)` / `max(ts_ms)` into these fields (`01-write-contract.md` §6.2), so the set of opened files is exact at file granularity. A `ts_ms ∈ [t1, t2)` filter still runs when a file is read: a sparse file can span the window without holding a row inside it.
+
+The same LIST result powers the wide-query guard (§2.3.2): each entry's size and its key-encoded `retention_class` sum to `(file_count, total_bytes)` per class before any file is opened, which is the estimate the guard's cost layer gates on.
+
+Late arrivals need no special handling. A late call re-seals into a patch file under the same `<timeBucketStart>` but with its own `<timeMin>` / `<timeMax>` over the late rows (`01-write-contract.md` §6.6), so the overlap test finds it like any other file. A long-running call is filed by its start, so its `ts_ms` — and the hour prefix that holds it — always fall inside the walk of steps 2–3; there is no earlier bucket to widen for.
+
+Discovery tolerates compaction. A `maintain` compaction (`01-write-contract.md` §6.6) may delete a listed object between the LIST and the read; discovery treats a `404` on a listed key as an empty result, not an error. The write-side delete-grace (`01-write-contract.md` §6.6) keeps the pre-compaction inputs readable long enough that a query which listed them still reads them, so this backstop only fires for a read that outlives the grace.
 
 ### 5.2 Parallelism
 
@@ -351,6 +380,29 @@ Per Stage 0 decision (`stage0-progress.md`, 2026-04-23): start with LIST. Add an
 ### 5.4 Secondary index deferred
 
 No secondary index in the MVP. `method` substring, `params`, and `/stats` filters scan the candidate parquet column data over the requested range; a full scan is accepted. Add an index only if profiling shows it is needed.
+
+### 5.5 LIST scaling
+
+Discovery has two independent cost axes. The date hierarchy (steps 2–3) bounds how many objects a LIST *enumerates*; the `<timeMin>` / `<timeMax>` overlap test (step 4) bounds how many of those a query *opens*. Folders govern the first, the key range the second. The wide-query guard (§2.3.2) gates on the same two axes: `PROFILER_MAX_SCAN_FILES` bounds enumeration, `PROFILER_MAX_SCAN_BYTES` the opened volume.
+
+**Objects under one hour prefix**, for one retention class:
+
+```
+objects(1 hour, 1 class) ≈ (60 / bucket_minutes) × active_pod_restarts × (1 + patches_per_bucket)
+```
+
+With the 5-minute default that is `12 × P × f`: `P` is the pod-restarts that wrote in the hour (≈ the running pod count plus restart churn), and `f ≈ 1.3` covers late-data patch files (`01-write-contract.md` §6.6) and size-split `<seq>` files (`01-write-contract.md` §6.1). A 200-pod cluster lists ~3,000 objects per hour-class; a 2,000-pod cluster ~30,000.
+
+**The hour, not the year.** `ListObjectsV2` on a prefix costs `O(keys under the prefix)`, not `O(bucket size)`. A "last hour" query lists one `<yyyy>/<mm>/<dd>/<hh>/` prefix per class; other days sit under other prefixes and never enter the scan.
+
+**Pagination is sequential within a prefix.** A prefix returns at most 1,000 keys per page, and each page needs the prior page's continuation token, so a 30,000-object prefix is 30 round-trips in series. `query` parallelizes across prefixes (§5.2), never within one — a fat hour prefix serializes, and that, not the object count itself, is the latency metric to watch.
+
+The pod-restart factor `P` is cut at its source by cross-pod-restart compaction, part of the `maintain` job (`01-write-contract.md` §6.6): merging the small per-`(bucket, retention_class)` files across pod-restarts shrinks the object count itself, not just the LIST latency.
+
+Two further levers, applied only when LIST profiling shows a real bottleneck (do not pre-optimize the key):
+
+1. **Finer path granularity** — add a 5-minute segment (`.../<hh>/<HHMM>/`). A "last hour" query then lists 12 shallow prefixes in parallel instead of one deep one, cutting the serial page count without changing the object count.
+2. **Manifest** — replace the per-hour LIST with a single `GET` of a manifest object that lists the hour's files (§5.3). The endgame for very large clusters: thousands of enumerated keys become one read.
 
 ## 6. Deduplication
 
@@ -396,6 +448,8 @@ If at least one replica or S3 LIST fails:
 
 A profiler is most useful when at least partial data is shown — failing the whole query because one replica is slow defeats the purpose.
 
+**Scan budget (deferred, Stage 2).** Layer 2 of the wide-query guard (§2.3.2) estimates scan cost before reading, but the estimate is by file size: it overshoots a projection-only read and cannot see a pathological row distribution. A per-request scan budget backstops it — if execution reads past a hard byte or deadline cap, `query` stops and returns what it has with `partial: true` and `partial_reasons: [budget_exceeded]`, a `200` rather than a `400`, matching the preference for bounded partial data over failure (§2.3.1). Deferred to Stage 2; the `budget_exceeded` reason is reserved now so the `partial_reasons` vocabulary stays stable.
+
 ## 8. Error responses
 
 RFC 7807 Problem Details for actual errors (parameter validation, internal, downstream failures that produce zero data).
@@ -403,11 +457,21 @@ RFC 7807 Problem Details for actual errors (parameter validation, internal, down
 | HTTP | Condition |
 |---|---|
 | 400 | Query parameter validation failed. |
+| 400 | Wide query over `PROFILER_WIDE_RANGE_LIMIT` with no narrowing filter (§2.3.2, span layer). |
+| 400 | Estimated scan over `PROFILER_MAX_SCAN_FILES` or `PROFILER_MAX_SCAN_BYTES` (§2.3.2, cost layer). |
 | 404 | PK not found, or `trace_blob = NULL` (blob endpoint). |
 | 503 | `query` itself is not Ready (e.g., DNS discovery uninitialized). |
 | 504 | All replicas AND S3 LIST timed out — no data available at all. |
 
 Partial results (some sources failed but some succeeded) are NOT errors — `partial: true` in the body. See §7.4.
+
+The two wide-query rejections (§2.3.2) extend the Problem Details body so a client can render a guided prompt instead of a bare error:
+
+- `suggested_filters` — the narrowing filters that would admit the query (`pod`, `retention_class`, `duration_min_ms`, `error_only`);
+- `estimated_files` / `estimated_bytes` — the scan the query would have cost (cost layer only);
+- `by_class` — `estimated_bytes` split by `retention_class`, so the UI can point at the dominant class.
+
+The span-layer rejection omits the estimate members — it fires before the LIST. Stage 5 UI renders these as a "narrow your query" affordance (`profiler-plan.md`).
 
 ## 9. Configuration
 
@@ -427,6 +491,9 @@ Partial results (some sources failed but some succeeded) are NOT errors — `par
 | `PROFILER_FANOUT_TIMEOUT` | `2s` | Per-replica hot read timeout (§7.2). |
 | `PROFILER_S3_LIST_CONCURRENCY` | `16` | Parallel S3 LIST cap (§5.2). |
 | `PROFILER_CURSOR_TTL` | `15m` | Validity of a `/calls` pagination cursor (§2.3.1). |
+| `PROFILER_WIDE_RANGE_LIMIT` | `6h` | Span above which `/calls` requires a narrowing filter (§2.3.2). |
+| `PROFILER_MAX_SCAN_FILES` | `10000` | Candidate-object ceiling for a `/calls` scan; over it, `400` (§2.3.2). |
+| `PROFILER_MAX_SCAN_BYTES` | `2GB` | Estimated-scan-byte ceiling for a `/calls` scan; over it, `400` (§2.3.2). |
 | `PROFILER_EXTERNAL_API_PORT` | `8080` | Bind for `/api/v1/*`. |
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | — | Same as in `01-write-contract.md` §9. |
 
@@ -450,3 +517,4 @@ Partial results (some sources failed but some succeeded) are NOT errors — `par
 - [x] Cursor / stable pagination (§2.3.1) — keyset on `(ts_ms DESC, pk ASC)`, frozen-query cursor, single global position, dedup-before-limit, TTL — accepted.
 - [x] Dictionary cold-path lifecycle — final snapshot uploaded to S3 on pod-restart close; see `01-write-contract.md` §3.6.
 - [x] Optional `/internal/v1/pods` targeting (§7.3) — implemented in collector in Stage 1b; left dormant in `query` until cluster size makes it worthwhile.
+- [x] Wide-query guard (§2.3.2) — fail-closed `400`, two layers (span + post-LIST estimate); narrowing filters `{pod, retention_class, duration_min_ms, error_only}`; scan-budget backstop and stats manifest deferred — accepted.

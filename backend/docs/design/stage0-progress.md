@@ -47,6 +47,14 @@ Stage 0 is the contract-and-diagrams phase. No service code is written until the
   - [x] Per-call write-side lifecycle (sequence)
   - [x] Hot/cold read flow (sequence)
   - [x] Artifact lifetime table (initially a Mermaid `gantt`, replaced with a table because mixed time scales rendered poorly)
+- [x] **06 — Wire protocol, server side** (`06-wire-protocol-server.md`)
+  - [x] Command table: what the collector reads and writes back per command, with flush timing
+  - [x] Handshake reply fixed at `PROTOCOL_VERSION_V2` (never `V3`, which switches the agent to the `posDictionary` stream the collector cannot demux)
+  - [x] Ack policy: one byte per `RCV_DATA` / `REQUEST_ACK_FLUSH`, value `0` in MVP; no diagnostic-command dispatch
+  - [x] `INIT_STREAM_V2` response fields (non-nil stable handle, `requiredRotationSize` as the segment-size lever)
+  - [x] Error / teardown: `ACK_ERROR_MAGIC` and null-UUID + close
+  - [x] `libs/server` skeleton divergences cataloged as Stage 1.1 fix-ups
+  - [x] Synthetic test spec extending `libs/tests/integration/`
 
 ## Other Stage 0 artifacts
 
@@ -243,6 +251,8 @@ Append-only log of decisions taken during Stage 0. Each entry has a date, the qu
 
 **Consequence:** Stage 1 work plan does not include the `agent/` subtree.
 
+**Scope note (2026-07-02):** "no protocol change" means the agent→collector direction. The collector still has a strict server-side obligation on the reply direction — most importantly it must answer the handshake with `PROTOCOL_VERSION_V2`, not `V3`, or the agent switches its dictionary to the `posDictionary` wire format the collector cannot demux. That obligation was previously unstated; it is now the server-side wire contract `06-wire-protocol-server.md` (see the 2026-07-02 log entry).
+
 ### 2026-07-01 — code re-review corrections (batch)
 
 A re-review against the agent code and the existing Go parser surfaced several errors in the Stage 0 contracts. Each contract carries a dated amendment block at its top; the decisions are logged here.
@@ -342,3 +352,64 @@ Two protocol improvements would simplify the collector but are not required for 
 **Why it matters:** `ts_ms` is the primary time axis. Bucketing (§5.4), retention (§6.4), the PK, and the read cursor all key off it, so a silent per-record drift corrupts all four.
 
 **Resolution:** `01-write-contract.md` §5.1 specifies the reconstruction (`ts_ms_i = ts_ms_{i-1} + delta_i`, reseeded at each file header) and §5.2 annotates the `ts_ms` column. Both Go decoders now accumulate the deltas (`backend/libs/parser/pipe/calls.go`, `backend/libs/parser/streams/calls.go`), preserving the raw `Call.Time` field so existing CSV fixtures stay valid. `TestCallsTimeAccumulation` in each package guards the reconstruction with a synthetic three-record stream (5 ms, then one and two minutes apart) from the versioned generator `backend/libs/tests/helpers/wire`; the pre-fix formula matches only the first record, so the test fails against it.
+
+### 2026-07-02 — server-side wire protocol specified (new contract 06)
+
+**Finding:** A design re-review flagged that the contracts specified only what the agent *sends* (`01-write-contract.md` §1), leaving the collector's *reply* direction unspecified — yet the agent is strict about the replies. Three gaps, each verified against the agent code and the existing Go server:
+
+- **Handshake reply.** The agent sends `PROTOCOL_VERSION_V3` and accepts `V2` or `V3` back (`DefaultCollectorClient.java:134-142`). Replying `V3` switches the agent to the `posDictionary` stream (`Dumper.java:350-354`), which the Go stream set and parser do not know (`backend/libs/protocol/streams.go`). The reply must be `V2`. The existing skeleton replies `10` (`libs/server/common.go:9`), which a real agent rejects outright — the Go emulator masks this by not checking the reply (`libs/emulator/connection.go:100-103`).
+- **Ack policy.** The agent expects one ack byte per `RCV_DATA` (`pendingAcks`, `DefaultCollectorClient.java:326-352`); the byte is a diagnostic-command count (`0` in the MVP), and `ACK_ERROR_MAGIC` = `-1` forces a reconnect. The skeleton's `RCV_DATA` never writes the byte (`libs/server/server_connection.go:244-251`), so a real agent's 5 s flush would stall on the 30 s ack timeout and reconnect.
+- **`INIT_STREAM_V2` reply.** Four fields (handle, `rotationPeriod`, `requiredRotationSize`, `serverRollingSeq`); the skeleton returns all zeros (`libs/server/server_connection.go:186-218`), and `01` mentioned only `requiredRotationSize`.
+
+**Resolution:** New contract `06-wire-protocol-server.md` — full command table, the `PROTOCOL_VERSION_V2` invariant, ack policy, `INIT_STREAM_V2` reply semantics, unknown-stream / unknown-command teardown (`ACK_ERROR_MAGIC`), and a catalog of the `libs/server` skeleton's divergences as Stage 1.1 fix-ups. `01-write-contract.md` §1 now points to it; `profiler-plan.md` §1.1 reworded from "reused without changes" to "reused with adaptation" (the offline `parser.go` reads server replies from its input and cannot serve the live reply path unchanged). Guarded by a synthetic test extending `libs/tests/integration/`: drive the emulator (or the real `Dumper`) through handshake → `INIT_STREAM_V2` → many `RCV_DATA` → `REQUEST_ACK_FLUSH` and assert the version is `V2`, every ack drains without `ACK_ERROR_MAGIC` or timeout, and the dictionary arrives on the `dictionary` stream.
+
+**Implementation (2026-07-02):** the five `libs/server` divergences were fixed ahead of the general Stage 1 gate, at the developer's request, because they are self-contained and each is a concrete bug: named version/ack constants in `libs/protocol/versions.go` and an `IsKnownStream` validator in `streams.go`; `ProtocolVersion = PROTOCOL_VERSION_V2` and rotation defaults in `libs/server/common.go`; per-`RCV_DATA` ack, `REQUEST_ACK_FLUSH` reply, non-nil handle plus real rotation fields, unknown-stream null-UUID teardown, `ACK_ERROR_MAGIC` on unknown command, and connection close on handler exit in `server_connection.go`. The emulator gained `ServerVersion()` and `Flush()`; `emulator_test.go` asserts the `V2` reply, an ack cycle that drains without reconnect, and unknown-stream refusal. `06-wire-protocol-server.md` §8–§9 rewritten from "fix-ups" to the conformance record. This is code ahead of the Stage 0 merge gate — a deliberate exception, not the general rule.
+
+### 2026-07-02 — trace-blob epoch: framing fix, not a data-loss blocker
+
+**Finding:** A design re-review rated the trace `timerStartTime` epoch a cold-read blocker — a blob with no persisted epoch was said to be undecodable, with cross-chunk call times unrecoverable. The claim does not hold. The canonical `/tree` reader reconstructs each event as `eventRealTime = timerStartTime + Σ(event deltas)` (`TracePodReader.java:152-179`) and advances the tree by differences of that value, so the epoch is a constant offset that cancels in every duration and relative offset. Each logical chunk re-seeds its deltas from zero (`prevMillis = 0`, `Dumper.java:875`), so a call spanning several chunks needs no inter-chunk continuity: both ends anchor to the shared epoch and their difference drops it. Absolute wall-clock timestamps are the only quantity that needs the epoch, and they are recoverable regardless — every chunk header carries an absolute `startTime` (`Dumper.java:882`), and the agent also writes an explicit `PARAM_COMMON_STARTED` tag per persisted call (`Dumper.java:957`). The proposed test (compare `enterMsRel` / `durationMs`) passes for any epoch, so it does not exercise the claimed defect.
+
+**Kernel of truth:** the existing trace readers unconditionally read a leading 8-byte epoch (`TracePodReader.java:105`, `streams/traces.go:44`), but the blob (§4.5) starts with a chunk header. Feeding a headerless blob to an unmodified reader desyncs. That is a framing gap, not data loss.
+
+**Resolution:** `01-write-contract.md` §4.2 reworded (the epoch is a constant offset, recoverable from chunk headers, not a decodability gate); §4.5 pins the blob framing (the seal pass prepends the 8-byte `timerStartTime`, so the readers run unmodified and absolute times decode exactly); §4.3 captures the epoch once at stream start and holds it per pod-restart (re-read from the first segment on recovery); §6.5 step 3 prepends it during assembly. No parquet column and no dictionary-snapshot field added — the epoch rides in the blob. B2 retired as a blocker; kept as the framing note above.
+
+### 2026-07-02 — S3 discovery keys on the bucket start, not object metadata
+
+**Finding:** A design re-review flagged that `02-read-contract.md` §5.1 selected cold-tier files by an `[time_min, time_max]` overlap carried "in the object metadata (or the future catalog)" and widened the hour walk by the maximum call duration. `ListObjectsV2` returns only the key, size, and ETag, not user metadata, so that model needs a per-object HEAD or a footer read on every listed file. It also contradicts the write contract: a bucket is keyed by `floor(ts_ms)` of the call's *start* (`01-write-contract.md` §5.4) and `/calls` filters on that same `ts_ms` (§2.3), so every row of a file lies in `[timeBucketStart, timeBucketStart + PROFILER_TIME_BUCKET)`. The file's span follows from the `<timeBucketStart>` already in the object key, and a late call re-seals under that same key (§6.6), so the "widen by max call duration" step guards a case that cannot arise: a call is filed by its start, never its end.
+
+**Resolution:** `02-read-contract.md` §5.1 step 4 now selects candidate files from `<timeBucketStart>` in the object key (`timeBucketStart < t2`, low side bounded by the hour walk) and applies a row-level `ts_ms ∈ [t1, t2)` filter as the exact bound. No footer read, no per-object HEAD, and the "widen the hour walk by the maximum call duration" instruction is gone. `01-write-contract.md` §6.6 point 3 is reworded — patches share the one `<timeBucketStart>` and are found by that key, not by `time_min` / `time_max` — and §5.4 points discovery at the bucket key. The local `time_min` / `time_max` columns in `metadata.sqlite` (§6.2, `03-lifecycle.md`) stay; they serve compaction, not discovery. Stage 2 synthetic test: seed three buckets plus a late-arrival patch file, then assert the query plan lists exactly the overlapping bucket keys and returns the late row.
+
+### 2026-07-02 — S3 key carries per-file time_min/time_max; LIST scaling documented
+
+**Refines the entry above.** Keying discovery on `<timeBucketStart>` alone is correct but coarse: it opens every bucket the hour walk enumerates, wasting up to one hour of five-minute files at the low edge of a range. A design discussion resolved three follow-ups.
+
+**time_min/time_max in the key (adopted).** The M4 objection was specific to *user metadata* — `ListObjectsV2` does not return it, so an overlap test on it needs a per-object HEAD. The object *key* rides in every LIST result, so it does not. The seal pass already computes each file's `time_min` / `time_max` for `metadata.sqlite` (`01-write-contract.md` §6.2), so `01-write-contract.md` §7 now bakes them into the key after `<timeBucketStart>`, and `02-read-contract.md` §5.1 step 4 tests `[timeMin, timeMax]` overlap straight from the LIST: exact at file granularity, no footer read, no HEAD. `<timeBucketStart>` stays for bucket identity (patch grouping, chronological sort). The key stays deterministic — the late-data watermark (`01-write-contract.md` §6.6) fixes each `<seq>`'s row set, so a re-seal regenerates the same range. This is not a reversal of M4: the range now travels in the key, not in metadata a LIST cannot read.
+
+**PROFILER_TIME_BUCKET in query config (rejected).** The width-aware low-edge prune would couple `query` to the collector's write-side bucket width and silently drop data if that width ever changed. The key range supersedes it; dropped.
+
+**LIST scaling (documented).** New `02-read-contract.md` §5.5 records the two cost axes (folder breadth vs open count), the `12 × P × f` per-hour-class object estimate, the sequential-pagination-within-a-prefix latency metric, and the deferred levers in cost order: a 5-minute path segment, cross-pod-restart compaction, then the manifest (`02-read-contract.md` §5.3). None is built now; each is triggered by LIST profiling, not pre-optimized.
+
+**Stage 2 synthetic test (updated):** seed three buckets plus a late-arrival patch file whose rows fall near a bucket edge, then assert discovery opens exactly the files whose `[timeMin, timeMax]` overlaps the query and returns the late row, while skipping an in-range bucket whose rows sit outside the query window.
+
+### 2026-07-03 — cross-pod-restart compaction; compaction reader-safety needs a delete-grace, not just ordering
+
+**Cross-pod-restart compaction (adopted).** `maintain` compacted only a `(bucket, retention_class, pod-restart)`'s patches, cutting the patch factor `f` but not the pod-restart factor `P` (`02-read-contract.md` §5.5). `01-write-contract.md` §6.6 point 4 now also merges the small per-pod-restart files of one `(bucket, retention_class)` into a single object once they accumulate. Rows keep their per-row PK (`pod_*`, `restart_time_ms`), so a mixed-pod-restart file needs no read-path coordination — dedup, dictionary resolution, and PK lookup key off the row, not the file. Both forms stay within one `retention_class` so the per-class TTL still applies by key. §7 generalizes the two leading key fields: a compacted object uses producer `maintain` and a hash of its inputs in place of `<replica>-<podRestartHash>`. `02-read-contract.md` §5.5 moves this lever from "deferred" to "already in §6.6".
+
+**Compaction reader-safety: the two-line fix was insufficient.** The flagged fix was "write the compacted object before deleting inputs" plus "discovery treats a listed-then-`404` object as empty". That pair guarantees safety (no crash, no wrong row) but not completeness: a query whose LIST saw the inputs before the compacted object was written, and reads them after they are deleted, gets `404` on every input and never had the compacted object in its candidate set — it silently drops those rows. Write-then-delete ordering alone does not close this. **Resolution:** compaction delays the input delete by `PROFILER_COMPACTION_DELETE_GRACE` (default `5m`, `01-write-contract.md` §9), longer than one discovery-plus-read round (each page re-LISTs, `02-read-contract.md` §2.3.1). A query that listed the inputs reads them well within the grace; a query that lists after the compacted object exists sees it by S3 read-after-write consistency; within the grace both are visible and PK-dedup collapses the overlap. The `404`-as-empty rule stays as a backstop for a read that outlives the grace. Updated: `01-write-contract.md` §6.6, §7, §9; `02-read-contract.md` §5.1, §5.5. Stage 2 test to add: run discovery concurrently with a compaction of the queried bucket and assert no row is dropped across the write→grace→delete transition.
+
+### 2026-07-03 — wide-query guard on the cold read path
+
+**Question:** How does `/calls` stop a wide-window query with no file-pruning filter from blowing the read SLO — reject it, or silently narrow it?
+
+**Choice:** Reject at validation with `400` (fail-closed, frame A), never narrow silently. Two layers, both before any parquet file is opened:
+
+- **Span.** `to - from > PROFILER_WIDE_RANGE_LIMIT` (default `6h`) with no narrowing filter → `400`. No I/O; stops the pathological query before the multi-day LIST.
+- **Estimated scan.** The discovery LIST already returns each object's size and key-encoded `retention_class`, so `query` sums `(file_count, total_bytes)` per class for free and rejects over `PROFILER_MAX_SCAN_FILES` / `PROFILER_MAX_SCAN_BYTES`. The two limits map to the two cost axes of `02-read-contract.md` §5.5.
+
+Narrowing filters that exempt a query: `pod`, `retention_class`, `duration_min_ms`, `error_only` — each prunes the discovered file set. `method` / `params` do not: they filter rows inside listed files, not the scan.
+
+**Reason:** A silent narrow changes the result set under the reader — `short_clean` (the biggest class, 1-day TTL) would drop out unannounced, hiding exactly the fast calls a "what ran" query wants. Fail-closed keeps the contract honest and lets the caller pick the axis; the `400` body carries `suggested_filters` and a per-class byte breakdown so Stage 5 UI renders a guided prompt, not a bare error. The estimate is free because discovery already lists sizes — no manifest or extra index for the first cut.
+
+**Deferred:** a fail-soft per-request scan budget (`partial: true` + `partial_reasons: [budget_exceeded]`, a `200`) as a Stage 2 backstop for what the file-size estimate overshoots or misses; the stats manifest that would make the estimate precise (row counts, per-column sizes) and replace the LIST, already tracked under `02-read-contract.md` §5.3; a `confirm_wide` / async override, added only when a concrete consumer needs the expensive scan (same posture as the retired `cutoff=strict`).
+
+**Consequence:** `02-read-contract.md` §2.3.2 (new), §5.1, §5.5, §7.4, §8, §9, §11; `deferred.md` (backstop and override entries).

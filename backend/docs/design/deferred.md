@@ -19,3 +19,19 @@ Design-level ideas that surfaced during Stage 0 (contracts) but are intentionall
 **Why deferred.** MVP picks MessagePack + int-keyed maps (single in-team API surface). Multiple encodings carry a multiplicative testing burden, and the int-keyed map shape already maps 1:1 to protobuf field tags — a future migration is mechanical.
 
 **Trigger to revisit.** External / third-party integration that requires a formal `.proto` schema (e.g. partner SDK distribution), or operational need to debug wire format via curl in production.
+
+## Wide-query fail-soft scan budget
+
+**What.** A per-request cap on bytes scanned or wall-clock spent inside `/calls` execution. On breach, `query` stops and returns the rows gathered so far with `partial: true` and `partial_reasons: [budget_exceeded]` — a `200`, not the `400` of the wide-query guard (`02-read-contract.md` §2.3.2). Backstops the guard's pre-flight estimate, which is by file size and so overshoots a projection-only read and cannot see a pathological row distribution.
+
+**Why deferred.** The two-layer guard (§2.3.2) already rejects the queries that threaten the SLO before they run. The backstop only catches the residue the size estimate misjudges, which needs profiling at scale to size. The `budget_exceeded` reason is reserved in the contract now so the `partial_reasons` vocabulary stays stable.
+
+**Trigger to revisit.** Query profiling at target scale shows accepted queries whose actual scan overruns the estimate, or a projection-heavy workload where file-size estimates are systematically too conservative.
+
+## `confirm_wide` / async wide-query override
+
+**What.** An explicit escape hatch — a `confirm_wide=true` parameter, or an async job that returns a handle to poll — that runs a query the wide-query guard (`02-read-contract.md` §2.3.2) would reject, for a caller that deliberately wants the expensive scan.
+
+**Why deferred.** No MVP consumer needs a full-cluster wide scan; interactive UI and automation both narrow by pod, class, or duration. Adding a mode switch speculatively repeats the `cutoff=strict` mistake, retired for the same reason.
+
+**Trigger to revisit.** A concrete consumer — a batch export, a cluster-wide audit — that must scan wide and can tolerate seconds-to-minutes latency.

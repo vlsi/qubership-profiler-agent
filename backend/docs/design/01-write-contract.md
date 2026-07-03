@@ -8,7 +8,7 @@ This document defines what the new Go collector writes to local PV and to S3, an
 
 ## 1. Background: what the agent actually sends
 
-The agent opens a long-lived TCP connection to the collector and multiplexes seven named streams over it (`backend/libs/protocol/streams.go`). Each stream is a sequence of binary chunks delivered via `COMMAND_RCV_DATA` (`backend/libs/parser/parser.go`).
+The agent opens a long-lived TCP connection to the collector and multiplexes seven named streams over it (`backend/libs/protocol/streams.go`). Each stream is a sequence of binary chunks delivered via `COMMAND_RCV_DATA` (`backend/libs/parser/parser.go`). This section covers what the agent **sends**; what the collector **reads from each command and writes back** (handshake reply, ack policy, `INIT_STREAM_V2` response, error teardown) is the server-side wire contract in `06-wire-protocol-server.md`.
 
 | Stream | Contents | Cardinality |
 |---|---|---|
@@ -137,7 +137,7 @@ The collector extracts each root call's bytes into a contiguous per-call blob an
 Do not conflate three different "chunk" notions:
 
 - **`COMMAND_RCV_DATA` payload** — up to `DATA_BUFFER_SIZE` = 1 KB of one stream's bytes (`proto-definition/.../ProtocolConst.java:4`; the agent chops at `DefaultCollectorClient.java:314`). The collector concatenates these per stream before anything else.
-- **Logical trace chunk** — `[threadId:long, startTime:long]` (16 bytes) + events + `EVENT_FINISH_RECORD`, `LocalBuffer`-sized (≈ tens of KB, `LocalBuffer.SIZE = 4096` events). One chunk's body belongs to one thread, and one chunk spans many `RCV_DATA` payloads. The trace stream also opens with a one-time `timerStartTime` (8 bytes) before the first chunk; event times are deltas off it (`libs/parser/pipe/traces.go:39,65`), so a blob is decodable only together with that epoch.
+- **Logical trace chunk** — `[threadId:long, startTime:long]` (16 bytes) + events + `EVENT_FINISH_RECORD`, `LocalBuffer`-sized (≈ tens of KB, `LocalBuffer.SIZE = 4096` events). One chunk's body belongs to one thread, and one chunk spans many `RCV_DATA` payloads. The trace stream also opens with a one-time `timerStartTime` (8 bytes) before the first chunk. Event times reconstruct as `timerStartTime + Σ(event deltas)` (`TracePodReader.java:152-179`), so the epoch is only a constant offset on absolute timestamps. It cancels in every time difference: call durations and the relative call tree decode without it. Only absolute wall-clock timestamps need the epoch, and each chunk header's `startTime` is itself an absolute anchor (`Dumper.java:882`), so it is recoverable even when lost. The per-call blob carries it as a prefix (§4.5), so the trace readers decode absolute times exactly and run unmodified.
 - **Go `Chunk` type** — a rolling-stream handle in the existing parser, unrelated to either of the above.
 
 Within one logical chunk, multiple short root calls of a thread may open and close (§4.5).
@@ -150,7 +150,7 @@ Per-thread state held in RAM (mirrored in the SQLite segment catalog for recover
 
 - `chunk_index[threadId]` — ordered list of `(segment_file, offset, length)` for that thread's logical chunks still within the hot window.
 
-On the demultiplexed trace stream, as bytes arrive:
+On the demultiplexed trace stream, the collector first reads the one-time 8-byte `timerStartTime` (§4.2) and holds it per pod-restart for blob framing (§4.5); on recovery it re-reads the value from the first trace segment. Then, as bytes arrive:
 
 1. Append the raw stream to the current gzip segment file on the PV (§4.4); track the running logical offset.
 2. Parse forward: read the 16-byte chunk header, then events, to `EVENT_FINISH_RECORD` — this delimits the chunk. Record `(segment_file, offset, length, threadId)` in `chunk_index[threadId]` and in the SQLite segment catalog.
@@ -179,12 +179,14 @@ The hot store is the three offset-addressable bulk streams: `trace`, plus the ex
 
 ### 4.5 Reader semantics
 
-The per-call blob is a self-contained chunk stream (concatenation of full chunks); all chunks have the SAME `threadId` in their headers. The reader walks events to build the call tree:
+The per-call blob is a self-contained chunk stream: the 8-byte `timerStartTime` epoch (§4.2), then a concatenation of full chunks that all carry the SAME `threadId` in their headers. The reader walks events to build the call tree:
 
 - **Tail noise:** the first chunk may begin with events of the PREVIOUS root call of this thread, ending at its depth-0 EXIT. The reader skips events until it reaches the depth-0 ENTER matching the row's `record_index`.
 - **Head noise:** the last chunk may end with the start of the NEXT root call of this thread, beginning after the depth-0 EXIT of the call we want. The reader stops at depth-0 EXIT.
 
 Noise is bounded by `LocalBuffer.SIZE` (4096 events ≈ tens of KB per side).
+
+**Framing and the epoch.** The blob opens with the 8-byte `timerStartTime`, mirroring the raw trace stream (§4.2), so the trace readers (`TracePodReader.java:105`, `streams/traces.go:44`) consume it unmodified. The seal pass prepends it during assembly (§6.5). The epoch shifts only absolute timestamps; call durations and the relative tree are independent of it (§4.2), and each chunk header's `startTime` anchors absolute time on its own. A blob whose prefix is lost therefore still decodes to a correct tree, with absolute times recoverable from the headers.
 
 ### 4.6 Recovery and budget
 
@@ -291,7 +293,7 @@ schema CallV2 {
 
 Each parquet file covers one (time bucket × retention class × pod-restart):
 
-- **Time bucket:** 5 minutes by default, keyed by `floor(ts_ms)` of the call's start (00:00, 00:05, …), NOT by processing time. Configurable. A call that closes late lands in the bucket of its start; discovery uses range-overlap (`02-read-contract.md` §5.1), and the `maintain` job compacts the small late files.
+- **Time bucket:** 5 minutes by default, keyed by `floor(ts_ms)` of the call's start (00:00, 00:05, …), NOT by processing time. Configurable. A call that closes late lands in the bucket of its start; discovery finds it by range overlap on the file's `time_min` / `time_max` (`02-read-contract.md` §5.1), and the `maintain` job compacts the small late files.
 - **Retention class:** computed from `(duration_ms, error_flag)` at write time and stored in the SQLite index. Five classes by default — see §6.4.
 
 A seal pass materializes one bucket at a time, opening up to five retention-class writers for the duration of that pass and closing them when it ends. No parquet writers stay open between seals. Late arrivals re-seal the bucket into an additional `<seq>` file (§6.6). `duration_ms` remains a row-level column for query-time filtering.
@@ -372,7 +374,7 @@ A seal pass for one `(pod-restart, bucket)`:
 
 1. Reads the bucket's calls from the SQLite index (rows with this `bucket`).
 2. Collects the segments those calls reference from the segment catalog and walks them **in segment order**. Each segment is decompressed exactly once; its chunks are routed into the per-call blob under assembly, following each call's chunk chain to the depth-0 exit (§4.3).
-3. Finalizes a blob when its last chunk is read: reads the call's remaining columns from `calls.wal` by offset, resolves the external value-stream references, and appends the row to the retention-class writer (§6.4). The per-call buffer is then freed.
+3. Finalizes a blob when its last chunk is read: prefixes it with the pod-restart's 8-byte `timerStartTime` (§4.5), reads the call's remaining columns from `calls.wal` by offset, resolves the external value-stream references, and appends the row to the retention-class writer (§6.4). The per-call buffer is then freed.
 4. Closes the writers, uploads (§6.2), advances the seal watermark, and releases segment refcounts.
 
 Because the walk is segment-ordered rather than call-ordered, no segment is decompressed twice within a pass, however many or however long the calls that reference it. Peak buffer memory is the trace volume of calls still open across the segment cursor — dominated by long calls, capped by `PROFILER_MEM_BUDGET`, with overflow spilling to a temp file under `parquet-sealing/`.
@@ -383,8 +385,12 @@ A sealed bucket is immutable in S3 (§6.2), so late data never rewrites an exist
 
 1. A late Call — one whose `floor(ts_ms)` falls in an already-sealed bucket — appends to `calls.wal`, inserts its SQLite index row, and re-marks the bucket dirty.
 2. The seal loop re-seals the bucket, emitting a **patch file** with a fresh `<seq>` for the same `(bucket, retention_class, pod-restart)`. The watermark records which calls each seal covered, so a re-seal writes only the new rows.
-3. S3 now holds the original file plus its patches. Range-overlap discovery finds them all by their `time_min` / `time_max` (`02-read-contract.md` §5.1); PK-dedup makes concurrent visibility safe (`02-read-contract.md` §6).
-4. The `maintain` job compacts the patches of a bucket into fewer files S3-side, writing a new object and deleting the inputs. Compaction is safe against readers mid-LIST because every row keeps its PK and dedup collapses the overlap.
+3. S3 now holds the original file plus its patches. They share one `<timeBucketStart>`, but each carries its own `<timeMin>` / `<timeMax>` over the rows it holds, so range-overlap discovery finds them all (`02-read-contract.md` §5.1); PK-dedup makes concurrent visibility safe (`02-read-contract.md` §6).
+4. The `maintain` job compacts a bucket S3-side, in two forms:
+   - **Patch compaction** merges a `(bucket, retention_class, pod-restart)`'s original file and its patches into fewer objects, cutting the per-bucket file count (the `f` factor in `02-read-contract.md` §5.5).
+   - **Cross-pod-restart compaction** merges the small per-pod-restart files of one `(bucket, retention_class)` into a single object once they accumulate, regardless of pod-restart. Each row keeps its own PK (`pod_*`, `restart_time_ms`), so a mixed-pod-restart file needs no read-path coordination: dedup, dictionary resolution (`02-read-contract.md` §2.6), and PK lookup all key off the row, not the file. This is the only lever that cuts the pod-restart factor `P` in the object count (`02-read-contract.md` §5.5). Both forms stay within one `retention_class`, so the per-class TTL (§6.4) still applies by object key.
+
+   **Reader safety without a lock.** Compaction writes the compacted object first, then deletes the inputs, and delays that delete by `PROFILER_COMPACTION_DELETE_GRACE` (default `5m`, §9). The grace, not the write-then-delete order alone, is what guarantees completeness: a query whose LIST saw the inputs before the compacted object existed still finds those inputs in S3 when it reads them, because one discovery-plus-read round — each page re-LISTs (`02-read-contract.md` §2.3.1) — is far shorter than the grace. A query that lists after the compacted object exists sees it by S3 read-after-write consistency. Within the grace both copies are visible and PK-dedup collapses the overlap. As a backstop for a read that still outlives the grace, discovery treats a `404` on a listed object as empty, not an error (`02-read-contract.md` §5.1).
 
 Blob completeness for a late Call is bounded by segment survival (§4.6): the row is always sealed, but `trace_blob` is `NULL` with a `truncated_reason` once the source segments have been evicted.
 
@@ -392,20 +398,21 @@ Blob completeness for a late Call is bounded by segment survival (§4.6): the ro
 
 Path pattern:
 ```
-s3://<bucket>/parquet/v1/<retentionClass>/<yyyy>/<mm>/<dd>/<hh>/<replica>-<podRestartHash>-<timeBucketStart>-<seq>.parquet
+s3://<bucket>/parquet/v1/<retentionClass>/<yyyy>/<mm>/<dd>/<hh>/<replica>-<podRestartHash>-<timeBucketStart>-<timeMin>-<timeMax>-<seq>.parquet
 ```
 
 - `v1` — schema version. Bump on incompatible changes.
 - `<retentionClass>` — one of `short_clean` / `normal_clean` / `long_clean` / `any_error` / `corrupted`. Maintenance applies per-class TTL by listing this segment (§6.4). Filenames sort chronologically within a class.
 - Date hierarchy `<yyyy>/<mm>/<dd>/<hh>` — primary access pattern is "give me parquet for time range [t1, t2]"; this hierarchy makes that a small LIST.
-- `<replica>` — the StatefulSet ordinal (`collector-0`, `collector-1`, …). Ensures distinct replicas don't collide on object keys.
-- `<podRestartHash>` — short hash of `(namespace, service, podName, restartTime)`. Distinguishes pod-restarts.
-- `<timeBucketStart>` — the bucket's start as `yyyymmddTHHMMSSZ`.
+- `<replica>` — the producer. For a write-path seal it is the StatefulSet ordinal (`collector-0`, `collector-1`, …), so distinct replicas don't collide on object keys; a `maintain` compaction (§6.6) uses the reserved token `maintain`.
+- `<podRestartHash>` — short hash of `(namespace, service, podName, restartTime)`, identifying the pod-restart that produced the file. A cross-pod-restart compaction (§6.6) covers several pod-restarts, so it substitutes a short hash of its inputs; the per-row `pod_*` / `restart_time_ms` columns stay the authoritative pod-restart identity either way.
+- `<timeBucketStart>` — the bucket's start as `yyyymmddTHHMMSSZ`. Fixes the file's bucket identity: the patch files (§6.6) and size-split `<seq>` files of one bucket share it, and it keeps the key chronologically sortable within a class.
+- `<timeMin>` / `<timeMax>` — the file's actual `min(ts_ms)` / `max(ts_ms)`, as `yyyymmddTHHMMSSZ`. The seal pass computes both for `metadata.sqlite` (§6.2), so carrying them in the key is free and lets range discovery test overlap straight from the `ListObjectsV2` result, with no footer read and no per-object HEAD (`02-read-contract.md` §5.1). Both lie inside `[timeBucketStart, timeBucketStart + PROFILER_TIME_BUCKET)`. The key stays deterministic: the late-data watermark (§6.6) fixes each `<seq>`'s row set, so a re-seal regenerates the same `<timeMin>` / `<timeMax>`.
 - `<seq>` — sequence number when one bucket spawned multiple files via size trigger.
 
 Example:
 ```
-s3://profiler-data/parquet/v1/normal_clean/2026/04/23/14/collector-2-a7f3-20260423T140000Z-0.parquet
+s3://profiler-data/parquet/v1/normal_clean/2026/04/23/14/collector-2-a7f3-20260423T140000Z-20260423T140003Z-20260423T140457Z-0.parquet
 ```
 
 Why date in the path even though `ts_ms` is in the file: query needs to LIST efficiently. Filtering by reading every parquet file's footer to check time range is too expensive at scale.
@@ -469,6 +476,7 @@ Why date in the path even though `ts_ms` is in the file: query needs to LIST eff
 | `PROFILER_RETENTION_CORRUPTED_TTL` | `7d` | TTL for `corrupted` class. |
 | `PROFILER_RETENTION_DICTIONARY_TTL` | `35d` | TTL for S3 dictionary snapshots (§3.6). Must exceed the longest parquet retention class. |
 | `PROFILER_HOT_RETENTION` | `15m` | Local parquet retention past flush (§6.3 and `02-read-contract.md` §4.2). |
+| `PROFILER_COMPACTION_DELETE_GRACE` | `5m` | Delay before a `maintain` compaction deletes its input objects, after the compacted object is written (§6.6). Must exceed one discovery-plus-read round so a concurrent query never loses rows mid-compaction. |
 | `S3_ENDPOINT` | — | MinIO/S3 endpoint URL. |
 | `S3_BUCKET` | — | Target bucket. |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | — | Credentials. |
