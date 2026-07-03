@@ -103,7 +103,7 @@ Parquet rows have a per-bucket retention of up to 30 days (`long_clean`, `any_er
 **On pod-restart close** (TCP connection terminates AND all in-flight Calls flush), the collector:
 
 1. Reads the local WAL and builds the final dictionary snapshot in memory.
-2. Serializes it as a single JSON object: `{ version, methods: [...], params: [...] }`.
+2. Serializes it as a single JSON object: `{ version, methods: [...], params: [...] }`. **TODO (dictionary shape):** methods and params share one wire id space, so both arrays carry the full word list and a reader is correct against either; a future revision should collapse them to a single `words` array indexed by id (see `02-read-contract.md` §2.6, decision logged in `stage1-progress.md`).
 3. Uploads it to S3 with a deterministic key:
 
    ```

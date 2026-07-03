@@ -280,6 +280,8 @@ Response:
 
 - `methods[i]` and `params[i]` resolve `method_id = i` and `param_id = i` references inside the blob.
 - `version` is a monotonic counter, incremented each time the dictionary grows during a live pod-restart. ETag is `(pod-restart, version)`.
+
+> **TODO (dictionary shape):** this endpoint models `methods` and `params` as two independent id spaces (`method_id = i` into `methods`, `param_id = i` into `params`), but the agent wire uses a single shared id space. The collector currently writes the full word list into both arrays, so a reader resolves correctly against either (`01-write-contract.md` §3.6). A future revision should collapse this to one `words` array indexed by id, with `method_id` / `param_id` indexing it. Tracked in `stage1-progress.md`.
 - For a **live** pod-restart (TCP connection still open), the dictionary may grow. `query` forwards the request to the collector replica hosting that pod-restart (via internal endpoint, §3) where it lives on local PV + RAM. Clients revalidate with `If-None-Match`; on a no-change response 304 is returned. On growth, a new full snapshot is returned (small enough that delta encoding is not worth the complexity).
 - For a **closed** pod-restart (TCP connection terminated, `restart_time_ms` in the past), `query` reads a final snapshot from S3 (`s3://<bucket>/dictionaries/v1/...`, see `01-write-contract.md` §3.6). Response includes `Cache-Control: public, max-age=31536000, immutable`.
 
