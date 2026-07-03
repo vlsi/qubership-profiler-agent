@@ -18,7 +18,14 @@ pending (see open issues).
   - [x] `libs/collector` — `oklog/run` service composing the store and the TCP listener (dumps-collector pattern)
   - [x] `libs/server` — `RestartTimeMs` stamped at TCP accept (`01` §1 V4); `PodDisconnected` callback; listener errors propagate to `ACK_ERROR_MAGIC` / null-UUID teardown (`06` §6); `Stop()` waits for connection teardown
   - [x] Synthetic integration test `libs/tests/integration/hotstore_test.go`: segment naming + pointer resolution (M7), `ts_ms` accumulation across buckets (B1), chunk index / catalog / WALs, recovery from PV alone after wiping every SQLite file
-- [ ] Seal pass → parquet (`01` §5–§6)
+- [x] **Seal pass → parquet** (second slice; branch `feat/stage1-seal-pass`)
+  - [x] `libs/collector/hotstore` — `Store.Seal(key, bucket)`: segment-ordered walk (`01` §6.5, each segment decompressed once), per-call blob assembly to the depth-0 exit with spill to `parquet-sealing/`, `suspend_ms` from `suspend.wal` intersection (`01` §5.1 step 4)
+  - [x] `libs/collector/hotstore` — `error_flag` / `retention_class` re-derived at seal from `calls.wal` raw param ids against the full dictionary (`01` §5.6); the provisional index value is never trusted
+  - [x] `libs/storage/parquet` — `CallV2` schema (`01` §5.2): ZSTD, rows sorted `(ts_ms DESC, pk ASC)`, one file per retention class, `trace_blob` NULL + `truncated_reason` on `dict_miss` / `disk_budget` / `idle_timeout`
+  - [x] `libs/collector/hotstore` — sealed name = S3 key with `timeMin`/`timeMax` (`01` §7); `parquet_local` rows with `uploaded_at NULL`; segment refcounts pinned via the new `parquet_segments` table
+  - [x] `libs/collector/hotstore` — minimal seal trigger: `SealDue` / `RunSealLoop` (bucket end + grace, late-data patch files with the next `<seq>`); wired into `libs/collector` behind `SealCheckInterval > 0`
+  - [x] Recovery additions (`03` §3.6): discard `parquet-sealing/` scratch, clear `parquet_local` rows whose file is missing and release their refcounts
+  - [x] Synthetic integration test `libs/tests/integration/seal_test.go`: production-like ordering (calls indexed before the dictionary decodes `call.red`), blob byte-equality + tree decode with §4.5 noise trimming, ZSTD + sort + naming, `suspend_ms`, eviction → `disk_budget`, refcounts, idempotent re-seal
 - [ ] S3 upload + dictionary/pods/suspend snapshots (`01` §3.6, §6.2)
 - [ ] Hot-read API `/internal/v1/*` (`02-read-contract.md` §3)
 - [ ] Budgets and janitors: segment refcounts/eviction, idle accumulator timeout, memory budget (`01` §4.6)
@@ -78,18 +85,77 @@ followed by the 4-byte CRC32; a zero-length record cannot occur as data, so
 replay distinguishes "cleanly closed", "crash without footer", and "torn tail"
 deterministically.
 
+### 2026-07-03 — error_flag race resolved at seal, not by sequencing the pipelines
+
+**Question:** the first-slice open issue — a Call indexed before its `call.red`
+dictionary word arrives stores `error_flag = false`. Re-resolve at seal, or
+sequence the dictionary and calls pipelines?
+
+**Choice:** re-resolve at seal. The pipelines stay independent; the index value
+stays provisional, per `01` §5.6.
+
+**Reason:** sequencing would couple two live decoders for a value only parquet
+needs to get right, and `01` §5.6 already names the seal authoritative. The
+seal-slice integration test pins the behaviour by indexing the errored call
+before the dictionary decodes a single word and asserting the parquet row still
+lands in `any_error`.
+
+### 2026-07-03 — sealed files live under `<dataDir>/<s3Key>`
+
+`01` §6.2 moves a sealed file "to its sealed name" and §6.3 keeps it locally
+for `hot_retention`, but the §8 PV layout does not name the location. The
+sealed local path is `<dataDir>/parquet/v1/<class>/<yyyy>/<mm>/<dd>/<hh>/<name>`
+— exactly the S3 object key of `01` §7 rooted at the data dir — and
+`parquet_local.s3_key` stores the key at seal time. The upload task PUTs the
+file at its recorded key verbatim, which keeps the seal pass the single source
+of truth for S3 placement. Implementation choice, not a contract change.
+
+### 2026-07-03 — seal watermark is the first uncovered calls.wal offset
+
+`03` §3.2 gives `seal_state` a `watermark` column without pinning its meaning.
+It stores `max(calls_wal_offset) + 1` over the rows a seal covered: offsets are
+per-pod-restart monotone, so `calls_wal_offset >= watermark` selects exactly
+the rows later seals owe, including a first-record offset of zero. The same
+comparison doubles as the late-data dirty check in `SealDue` — a late Call
+raises the partition's max offset past the watermark.
+
+### 2026-07-03 — refcount unit is un-uploaded sealed rows, tracked per file
+
+`03` §3.2 defines `segments.refcount` as "the un-uploaded sealed rows whose
+blobs source from the segment". The seal pass increments it by the per-segment
+row count of each sealed file and records that count in a new
+`parquet_segments (path, pod_restart, stream, rolling_seq, row_count)` table,
+so the upload task (and the missing-file reconciliation, which already uses
+it) can decrement exactly what the seal added without reopening the parquet.
+Truncated rows pin nothing — a NULL blob sources no segment. `sql`/`xml`
+segments join the refcount when a `PARAM_BIG` / `PARAM_BIG_DEDUP` tag appears
+within the call's span, per `03` §3.2.
+
+### 2026-07-03 — seal loop is opt-in until the collector app wiring
+
+`RunSealLoop` implements the `01` §6.1 bucket-end + grace trigger, but
+`collector.Service` starts it only when `SealCheckInterval > 0` and `Normalize`
+leaves the interval zero. Synthetic tests replay history (their buckets are
+due immediately), so an always-on loop would race every test's explicit
+`Seal` call. The `collect` subcommand wiring sets the interval in production.
+
 ## Open issues
 
 - **`stage1-plan.md` does not exist yet.** This slice was specified directly
   by the user; the remaining Stage 1 tasks (seal pass, S3, read API, budgets,
   app wiring) need a plan document with dependencies and acceptance criteria.
-- **`error_flag` can race the dictionary on ingest.** The dictionary and calls
-  streams decode on independent pipelines, so a Call indexed microseconds
-  after its `call.red` dictionary word arrives could read a not-yet-registered
-  id and store `error_flag = false`. The window exists only for the first
-  errored call of a pod-restart. The seal pass re-derives from `calls.wal`
-  params, so the parquet row can still be corrected there; decide in the seal
-  task whether to re-resolve at seal or to sequence the pipelines.
+- **Seal-pass gaps deferred to later tasks.** No `parquet_max_size` splitting
+  (one file per class per pass, `01` §6.1); no `PROFILER_SEAL_CONCURRENCY` and
+  no guard against two concurrent seals of one bucket (`SealDue` runs them
+  sequentially); blob spill is per-call (`SealSpillBytes`), whole-pass
+  `PROFILER_MEM_BUDGET` accounting belongs to the budgets task, and
+  `mem_pressure` is emitted only when a spill itself fails. The `sql`/`xml`
+  refcount path (big-param tags) has no test coverage yet.
+- **`parquet_local` is not rebuilt from footers.** Recovery clears rows whose
+  file is missing (`03` §3.6 step 10), but a wiped `metadata.sqlite` with
+  sealed files on disk leaves them orphaned — re-reading parquet footers
+  (`03` §3.2 step 4) is not implemented. Orphans re-seal from the WAL, so the
+  cost is duplicate rows collapsed by PK-dedup, plus leaked local files.
 - **`server.Service.Stop()` waits for live agent connections** and is bounded
   only by the socket read timeout (~40 s). The `03` §5.2 drain (send
   `COMMAND_CLOSE`, 5 s per-connection timeout) is not implemented yet; it

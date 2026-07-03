@@ -104,6 +104,9 @@ type (
 
 		mu   sync.Mutex
 		pods map[string]*PodRestart
+
+		sealMu       sync.Mutex
+		sealCounters SealCounters
 	}
 )
 
@@ -242,6 +245,12 @@ func (s *Store) Buckets() ([]int64, error) { return s.db.Buckets() }
 // Calls reads one bucket's call-index rows.
 func (s *Store) Calls(bucket int64) ([]CallIndexRow, error) { return s.db.Calls(bucket) }
 
+// LocalParquet lists a pod-restart's sealed parquet files still held locally;
+// UploadedAtMs stays nil until the Stage 1 S3 task lands.
+func (s *Store) LocalParquet(key PodRestartKey) ([]ParquetLocalFile, error) {
+	return s.db.LocalParquet(key.String())
+}
+
 // OpenSegment starts the hot-store segment for one agent stream file. seq is
 // the agent's file index (serverRollingSequenceId + 1); see SegmentFileName.
 func (pr *PodRestart) OpenSegment(stream string, seq int) (*Segment, error) {
@@ -374,6 +383,43 @@ func (pr *PodRestart) Dictionary() map[int]string {
 		out[k] = v
 	}
 	return out
+}
+
+// DictId resolves a word to its dictionary id, the reverse lookup §5.6 needs
+// for the call.red marker.
+func (pr *PodRestart) DictId(word string) (int, bool) {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	id, ok := pr.dictIds[word]
+	return id, ok
+}
+
+// chunkSnapshot copies the whole chunk index for a seal walk.
+func (pr *PodRestart) chunkSnapshot() map[uint64][]ChunkRef {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	out := make(map[uint64][]ChunkRef, len(pr.chunks))
+	for threadId, refs := range pr.chunks {
+		out[threadId] = append([]ChunkRef(nil), refs...)
+	}
+	return out
+}
+
+// FlushSegments pushes every open segment's gzip state to disk so a seal pass
+// on a live pod-restart reads all indexed chunks.
+func (pr *PodRestart) FlushSegments() error {
+	pr.mu.Lock()
+	segments := make([]*Segment, 0, len(pr.segments))
+	for seg := range pr.segments {
+		segments = append(segments, seg)
+	}
+	pr.mu.Unlock()
+	for _, seg := range segments {
+		if err := seg.w.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ChunkIndex returns a copy of chunk_index[threadId].

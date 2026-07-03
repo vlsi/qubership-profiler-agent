@@ -2,9 +2,9 @@
 // local PV: append-only WALs for dictionary/params/suspend and the raw Call
 // records, gzip segments for the offset-addressable bulk streams (trace, sql,
 // xml), and the SQLite metadata that indexes them. It implements the write-path
-// side of backend/docs/design/01-write-contract.md §3-§4 and the recovery
-// sequence of 03-lifecycle.md §3. Sealing, parquet, and S3 are out of scope
-// until the seal pass lands.
+// side of backend/docs/design/01-write-contract.md §3-§4, the recovery sequence
+// of 03-lifecycle.md §3, and the seal pass of 01 §5-§6 that materializes the
+// CallV2 parquet files locally. S3 upload and snapshots are the next slice.
 package hotstore
 
 import "time"
@@ -23,6 +23,20 @@ type Config struct {
 	// DurationThresholds split clean calls into retention classes
 	// (PROFILER_DURATION_THRESHOLDS, default 100ms,1s; see §6.4).
 	DurationThresholds [2]time.Duration
+	// TimeBucketGrace is the wait past a bucket's end before it seals
+	// (PROFILER_TIME_BUCKET_GRACE, default 30s; §6.1).
+	TimeBucketGrace time.Duration
+	// Replica names the producer in sealed-file names and S3 keys (§7,
+	// STATEFULSET_ORDINAL). The collector app wiring will derive it from
+	// HOSTNAME; the default keeps single-replica runs deterministic.
+	Replica string
+	// SealSpillBytes bounds one call's in-RAM blob during a seal pass; a
+	// larger blob overflows to a temp file under parquet-sealing/ (§6.5).
+	// Full-pass accounting arrives with PROFILER_MEM_BUDGET (budgets task).
+	SealSpillBytes int64
+	// SealCheckInterval paces the seal loop (§6.1). Zero disables the loop:
+	// the collector app wiring enables it; tests seal explicitly.
+	SealCheckInterval time.Duration
 }
 
 // Normalize fills unset fields with the contract defaults.
@@ -41,6 +55,15 @@ func (c Config) Normalize() Config {
 	}
 	if c.DurationThresholds[1] <= 0 {
 		c.DurationThresholds[1] = time.Second
+	}
+	if c.TimeBucketGrace <= 0 {
+		c.TimeBucketGrace = 30 * time.Second
+	}
+	if c.Replica == "" {
+		c.Replica = "collector-0"
+	}
+	if c.SealSpillBytes <= 0 {
+		c.SealSpillBytes = 16 << 20
 	}
 	return c
 }

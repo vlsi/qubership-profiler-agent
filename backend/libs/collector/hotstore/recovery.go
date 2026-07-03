@@ -42,6 +42,28 @@ func (s *Store) Recover(ctx context.Context) error {
 		s.pods[key.String()] = pr
 		s.mu.Unlock()
 	}
+	return s.reconcileParquetLocal(ctx)
+}
+
+// reconcileParquetLocal implements 03-lifecycle.md §3.6 step 10 (second half):
+// a parquet_local row whose file is missing on disk is cleared, releasing the
+// segment refs it pinned, so the bucket re-seals its rows. (Rebuilding
+// parquet_local from orphan files' footers — the §3.2 step-4 repair — is not
+// implemented yet; see the Stage 1 open issues.)
+func (s *Store) reconcileParquetLocal(ctx context.Context) error {
+	paths, err := s.db.ParquetLocalPaths()
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			continue
+		}
+		log.Warning(ctx, "sealed parquet %s is missing on disk; clearing its catalog row", path)
+		if err := s.db.DropParquetLocal(path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -114,6 +136,13 @@ func (s *Store) recoverPodRestart(ctx context.Context, key PodRestartKey) (*PodR
 	}
 	if err := s.db.ClosePodRestart(key, time.Now().UnixMilli()); err != nil {
 		return nil, err
+	}
+
+	// A seal pass in flight at crash time left footer-less scratch files (and
+	// blob spill files); discard them — the bucket re-seals from its watermark
+	// (03-lifecycle.md §3.6 step 10).
+	if err := os.RemoveAll(filepath.Join(pr.dir, "parquet-sealing")); err != nil {
+		return nil, errors.Wrap(err, "discard seal scratch")
 	}
 
 	if err := pr.replayDictionary(); err != nil {

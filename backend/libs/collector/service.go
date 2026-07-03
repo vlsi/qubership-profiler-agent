@@ -65,6 +65,15 @@ func (s *Service) Run(ctx context.Context) error {
 	}, func(error) {
 		s.tcp.Stop()
 	})
+	// The seal loop (01-write-contract.md §6.1) is opt-in until the collector
+	// app wiring sets the interval; tests drive Store.Seal directly.
+	if interval := s.store.Config().SealCheckInterval; interval > 0 {
+		gr.Add(func() error {
+			return s.store.RunSealLoop(ctx, interval)
+		}, func(error) {
+			cancel()
+		})
+	}
 	gr.Add(func() error {
 		<-ctx.Done()
 		return ctx.Err()

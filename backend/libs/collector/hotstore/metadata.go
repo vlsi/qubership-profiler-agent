@@ -12,9 +12,10 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// metadata.sqlite schema per 03-lifecycle.md §3.2. parquet_local and
-// seal_state are created for schema completeness but stay empty until the seal
-// pass lands (TODO seam: Stage 1 seal task).
+// metadata.sqlite schema per 03-lifecycle.md §3.2. parquet_segments maps each
+// sealed file to the segments its rows source from, so the S3 upload task can
+// decrement the refcounts the seal pass added (01-write-contract.md §6.2
+// step 3; TODO seam: Stage 1 S3 task).
 const metaSchema = `
 CREATE TABLE IF NOT EXISTS pod_restarts (
   pod_restart      TEXT PRIMARY KEY,
@@ -53,6 +54,14 @@ CREATE TABLE IF NOT EXISTS parquet_local (
   sealed_at       INTEGER NOT NULL,
   uploaded_at     INTEGER,
   s3_key          TEXT
+);
+CREATE TABLE IF NOT EXISTS parquet_segments (
+  path        TEXT NOT NULL,
+  pod_restart TEXT NOT NULL,
+  stream      TEXT NOT NULL,
+  rolling_seq INTEGER NOT NULL,
+  row_count   INTEGER NOT NULL,
+  PRIMARY KEY (path, pod_restart, stream, rolling_seq)
 );
 CREATE TABLE IF NOT EXISTS seal_state (
   pod_restart     TEXT NOT NULL,
@@ -131,7 +140,40 @@ type (
 		LogicalSize int64
 		TimeMinMs   *int64
 		TimeMaxMs   *int64
+		Refcount    int
 		Status      string
+	}
+
+	// parquetLocalRow mirrors one parquet_local row: a sealed file held
+	// locally, pending upload while uploaded_at is NULL (03-lifecycle.md §3.2).
+	parquetLocalRow struct {
+		Path           string
+		PodRestart     string
+		TimeBucketMs   int64
+		RetentionClass string
+		Seq            int
+		RowCount       int
+		TimeMinMs      int64
+		TimeMaxMs      int64
+		FileSize       int64
+		SealedAtMs     int64
+		S3Key          string
+	}
+
+	// ParquetLocalFile is the exported view of parquet_local for tests and the
+	// upload task.
+	ParquetLocalFile struct {
+		Path           string
+		PodRestart     string
+		TimeBucketMs   int64
+		RetentionClass string
+		Seq            int
+		RowCount       int
+		TimeMinMs      int64
+		TimeMaxMs      int64
+		FileSize       int64
+		UploadedAtMs   *int64
+		S3Key          string
 	}
 
 	// metaDb wraps metadata.sqlite plus the per-bucket partition handles.
@@ -237,8 +279,144 @@ func (m *metaDb) FinalizeSegment(podRestart, stream string, seq int, logicalSize
 
 func (m *metaDb) Segments(podRestart string) ([]SegmentRow, error) {
 	var rows []SegmentRow
-	err := m.meta.Raw(`SELECT pod_restart, stream, rolling_seq, path, logical_size, time_min_ms, time_max_ms, status
+	err := m.meta.Raw(`SELECT pod_restart, stream, rolling_seq, path, logical_size, time_min_ms, time_max_ms, refcount, status
 		FROM segments WHERE pod_restart = ? ORDER BY stream, rolling_seq`, podRestart).Scan(&rows).Error
+	return rows, err
+}
+
+// SealWatermark reports the first calls.wal offset the bucket's seals have not
+// covered yet (01-write-contract.md §6.6). Zero means nothing is sealed.
+func (m *metaDb) SealWatermark(podRestart string, bucket int64) (int64, error) {
+	var watermark int64
+	err := m.meta.Raw(`SELECT COALESCE(MAX(watermark), 0) FROM seal_state
+		WHERE pod_restart = ? AND bucket = ?`, podRestart, bucket).Scan(&watermark).Error
+	return watermark, err
+}
+
+// UpsertSealState advances one class's watermark after a seal (§6.2 step 2).
+func (m *metaDb) UpsertSealState(podRestart string, bucket int64, retentionClass string, watermark, sealedAtMs int64) error {
+	return m.meta.Exec(`INSERT INTO seal_state (pod_restart, bucket, retention_class, watermark, last_sealed_at, dirty)
+		VALUES (?, ?, ?, ?, ?, 0)
+		ON CONFLICT (pod_restart, bucket, retention_class)
+		DO UPDATE SET watermark = excluded.watermark, last_sealed_at = excluded.last_sealed_at, dirty = 0`,
+		podRestart, bucket, retentionClass, watermark, sealedAtMs).Error
+}
+
+// NextParquetSeq picks the <seq> of the next file for (bucket, class,
+// pod-restart): patch files and size splits continue the numbering (§6.6).
+func (m *metaDb) NextParquetSeq(podRestart string, timeBucketMs int64, retentionClass string) (int, error) {
+	var seq int
+	err := m.meta.Raw(`SELECT COALESCE(MAX(seq) + 1, 0) FROM parquet_local
+		WHERE pod_restart = ? AND time_bucket_ms = ? AND retention_class = ?`,
+		podRestart, timeBucketMs, retentionClass).Scan(&seq).Error
+	return seq, err
+}
+
+// RecordSealedFile registers one sealed parquet file and pins its source
+// segments: refcount += rows per segment, with the per-file mapping kept in
+// parquet_segments so the upload task can decrement the same amounts
+// (01-write-contract.md §6.2, 03-lifecycle.md §3.2).
+func (m *metaDb) RecordSealedFile(row parquetLocalRow, segRows map[segKey]int) error {
+	return m.meta.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`INSERT INTO parquet_local
+			(path, pod_restart, time_bucket_ms, retention_class, seq, row_count,
+			 time_min_ms, time_max_ms, file_size, sealed_at, uploaded_at, s3_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+			row.Path, row.PodRestart, row.TimeBucketMs, row.RetentionClass, row.Seq, row.RowCount,
+			row.TimeMinMs, row.TimeMaxMs, row.FileSize, row.SealedAtMs, row.S3Key).Error; err != nil {
+			return errors.Wrap(err, "record sealed parquet")
+		}
+		for sk, rows := range segRows {
+			if err := tx.Exec(`INSERT INTO parquet_segments (path, pod_restart, stream, rolling_seq, row_count)
+				VALUES (?, ?, ?, ?, ?)`,
+				row.Path, row.PodRestart, sk.stream, sk.seq, rows).Error; err != nil {
+				return errors.Wrap(err, "record sealed-file segment refs")
+			}
+			if err := tx.Exec(`UPDATE segments SET refcount = refcount + ?
+				WHERE pod_restart = ? AND stream = ? AND rolling_seq = ?`,
+				rows, row.PodRestart, sk.stream, sk.seq).Error; err != nil {
+				return errors.Wrap(err, "pin sealed-file segments")
+			}
+		}
+		return nil
+	})
+}
+
+// LocalParquet lists a pod-restart's sealed files still held locally.
+func (m *metaDb) LocalParquet(podRestart string) ([]ParquetLocalFile, error) {
+	var rows []ParquetLocalFile
+	err := m.meta.Raw(`SELECT path, pod_restart, time_bucket_ms, retention_class, seq, row_count,
+		time_min_ms, time_max_ms, file_size, uploaded_at AS uploaded_at_ms, s3_key
+		FROM parquet_local WHERE pod_restart = ? ORDER BY path`, podRestart).Scan(&rows).Error
+	return rows, err
+}
+
+// DropParquetLocal forgets a sealed file and releases the segment refs it
+// pinned; used when the file vanished before its upload (03-lifecycle.md §3.6).
+func (m *metaDb) DropParquetLocal(path string) error {
+	return m.meta.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`UPDATE segments SET refcount = refcount - (
+				SELECT ps.row_count FROM parquet_segments ps
+				WHERE ps.path = ? AND ps.pod_restart = segments.pod_restart
+				  AND ps.stream = segments.stream AND ps.rolling_seq = segments.rolling_seq)
+			WHERE EXISTS (
+				SELECT 1 FROM parquet_segments ps
+				WHERE ps.path = ? AND ps.pod_restart = segments.pod_restart
+				  AND ps.stream = segments.stream AND ps.rolling_seq = segments.rolling_seq)`,
+			path, path).Error; err != nil {
+			return errors.Wrap(err, "release sealed-file segments")
+		}
+		if err := tx.Exec(`DELETE FROM parquet_segments WHERE path = ?`, path).Error; err != nil {
+			return errors.Wrap(err, "drop sealed-file segment refs")
+		}
+		return errors.Wrap(tx.Exec(`DELETE FROM parquet_local WHERE path = ?`, path).Error,
+			"drop sealed parquet row")
+	})
+}
+
+// ParquetLocalPaths lists every sealed file the catalog believes exists.
+func (m *metaDb) ParquetLocalPaths() ([]string, error) {
+	var paths []string
+	err := m.meta.Raw(`SELECT path FROM parquet_local ORDER BY path`).Scan(&paths).Error
+	return paths, err
+}
+
+// MaxWalOffsets reports, per pod-restart, the highest calls.wal offset indexed
+// in the bucket's partition; the seal loop compares it with the watermark.
+func (m *metaDb) MaxWalOffsets(bucket int64) (map[string]int64, error) {
+	db, err := m.partition(bucket)
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		PodRestart string
+		MaxOffset  int64
+	}
+	if err := db.Raw(`SELECT pod_restart, MAX(calls_wal_offset) AS max_offset
+		FROM call_index GROUP BY pod_restart`).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		out[r.PodRestart] = r.MaxOffset
+	}
+	return out, nil
+}
+
+// CallsForSeal reads the bucket's unsealed rows of one pod-restart in the
+// §5.2 row order: (ts_ms DESC, pk ASC).
+func (m *metaDb) CallsForSeal(bucket int64, podRestart string, watermark int64) ([]CallIndexRow, error) {
+	db, err := m.partition(bucket)
+	if err != nil {
+		return nil, err
+	}
+	var rows []CallIndexRow
+	err = db.Raw(`SELECT pod_restart, trace_file_index, buffer_offset, record_index,
+		ts_ms, duration_ms, method_id, thread_name, retention_class, error_flag,
+		cpu_time_ms, wait_time_ms, memory_used, child_calls, params_json, calls_wal_offset
+		FROM call_index WHERE pod_restart = ? AND calls_wal_offset >= ?
+		ORDER BY ts_ms DESC, trace_file_index ASC, buffer_offset ASC, record_index ASC`,
+		podRestart, watermark).Scan(&rows).Error
 	return rows, err
 }
 
