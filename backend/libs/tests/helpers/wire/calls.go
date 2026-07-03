@@ -9,12 +9,28 @@ package wire
 import (
 	"bytes"
 	"encoding/binary"
+	"sort"
 )
 
 // callsHeaderMagic marks a versioned calls file. The agent writes
 // (magic<<32 | version) as the first fixed long
 // (CompressedLocalAndRemoteOutputStream.rotate).
 const callsHeaderMagic = 0xFFFEFDFC
+
+// CallRecord is one closed root call in a synthetic calls stream. Field order
+// and encoding follow the version-1 wire format the Go decoder reads
+// (backend/libs/parser/pipe/calls.go).
+type CallRecord struct {
+	DeltaMs        int64 // start time as a delta from the previous record (from base_ms for the first)
+	Method         int   // dictionary tag id of the root method
+	DurationMs     int
+	ChildCalls     int
+	ThreadName     string // registered in the per-file thread table on first use
+	TraceFileIndex int    // agent stream-file index at the start of the call's trace bytes
+	BufferOffset   int    // offset within TraceFileIndex where the call's first chunk begins
+	RecordIndex    int    // event index of the root ENTER within that chunk
+	Params         map[int][]string
+}
 
 // CallsStream encodes a version-1 calls stream with one record per entry in
 // deltasMs, all on a single thread ("main"). baseMs is the absolute Unix-ms
@@ -26,25 +42,64 @@ const callsHeaderMagic = 0xFFFEFDFC
 //
 // See backend/docs/design/01-write-contract.md §5.1.
 func CallsStream(baseMs int64, deltasMs []int64) []byte {
+	records := make([]CallRecord, len(deltasMs))
+	for i, delta := range deltasMs {
+		records[i] = CallRecord{
+			DeltaMs:    delta,
+			Method:     7,
+			DurationMs: 42,
+			ChildCalls: 1,
+			ThreadName: "main",
+		}
+	}
+	return CallsStreamRecords(baseMs, records)
+}
+
+// CallsStreamRecords encodes a version-1 calls stream from explicit records.
+// The thread-name table mirrors the agent's: a thread name is written inline on
+// first use and referenced by index afterwards, so records are NOT decodable in
+// isolation from the file.
+func CallsStreamRecords(baseMs int64, records []CallRecord) []byte {
 	buf := &bytes.Buffer{}
 	putFixedLong(buf, uint64(callsHeaderMagic)<<32|1) // format marker + version 1
 	putFixedLong(buf, uint64(baseMs))                 // base_ms
 
-	for i, delta := range deltasMs {
-		putZigZag(buf, delta) // start time: delta from the previous record
-		putVarInt(buf, 7)     // method (dictionary tag id)
-		putVarInt(buf, 42)    // duration
-		putVarInt(buf, 1)     // child calls
-		putVarInt(buf, 0)     // thread index 0
-		if i == 0 {
-			putVarString(buf, "main") // first use of a thread carries its name
+	threadIndex := map[string]int{}
+	for _, r := range records {
+		putZigZag(buf, r.DeltaMs) // start time: delta from the previous record
+		putVarInt(buf, uint64(r.Method))
+		putVarInt(buf, uint64(r.DurationMs))
+		putVarInt(buf, uint64(r.ChildCalls))
+		idx, known := threadIndex[r.ThreadName]
+		if !known {
+			idx = len(threadIndex)
+			threadIndex[r.ThreadName] = idx
+		}
+		putVarInt(buf, uint64(idx))
+		if !known {
+			putVarString(buf, r.ThreadName) // first use of a thread carries its name
 		}
 		putVarInt(buf, 0) // logs written
 		putVarInt(buf, 0) // logs generated - logs written
-		putVarInt(buf, 0) // trace file index
-		putVarInt(buf, 0) // buffer offset
-		putVarInt(buf, 0) // record index
-		putVarInt(buf, 0) // param count
+		putVarInt(buf, uint64(r.TraceFileIndex))
+		putVarInt(buf, uint64(r.BufferOffset))
+		putVarInt(buf, uint64(r.RecordIndex))
+		putVarInt(buf, uint64(len(r.Params)))
+		paramIds := make([]int, 0, len(r.Params))
+		for id := range r.Params {
+			paramIds = append(paramIds, id)
+		}
+		sort.Ints(paramIds) // deterministic bytes for a versioned generator
+		for _, id := range paramIds {
+			values := r.Params[id]
+			putVarInt(buf, uint64(id))
+			putVarInt(buf, uint64(len(values)))
+			// The decoder fills the result slice from the highest index down,
+			// so multi-value params are written in reverse.
+			for i := len(values) - 1; i >= 0; i-- {
+				putVarString(buf, values[i])
+			}
+		}
 	}
 	return buf.Bytes()
 }
@@ -52,6 +107,12 @@ func CallsStream(baseMs int64, deltasMs []int64) []byte {
 func putFixedLong(buf *bytes.Buffer, v uint64) {
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], v)
+	buf.Write(b[:])
+}
+
+func putFixedInt(buf *bytes.Buffer, v uint32) {
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], v)
 	buf.Write(b[:])
 }
 
