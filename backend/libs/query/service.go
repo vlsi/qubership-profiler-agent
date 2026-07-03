@@ -27,12 +27,15 @@ type (
 		HotDiscovery hot.Discovery
 	}
 
-	// Service is the running query API: stateless, no PV (02 §1).
+	// Service is the running query API: stateless, no PV (02 §1). The
+	// dictionary cache is a revalidation shortcut, not state — losing it only
+	// costs refetches.
 	Service struct {
 		cfg       Config
 		cold      *cold.Source
 		hot       *hot.Client
 		discovery hot.Discovery
+		dicts     *dictCache
 		echo      *echo.Echo
 	}
 )
@@ -41,8 +44,9 @@ type (
 func New(opts Options) *Service {
 	cfg := opts.Config.Normalize()
 	s := &Service{
-		cfg:  cfg,
-		cold: &cold.Source{Store: opts.ColdStore, ListConcurrency: cfg.ListConcurrency},
+		cfg:   cfg,
+		cold:  &cold.Source{Store: opts.ColdStore, ListConcurrency: cfg.ListConcurrency},
+		dicts: newDictCache(),
 	}
 	s.discovery = opts.HotDiscovery
 	if s.discovery == nil && cfg.CollectorService != "" {

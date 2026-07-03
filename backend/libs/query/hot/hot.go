@@ -56,6 +56,22 @@ type (
 	podsBody struct {
 		Pods []model.PodEntry `json:"pods"`
 	}
+
+	dictionaryBody struct {
+		Version int      `json:"version"`
+		Methods []string `json:"methods"`
+	}
+
+	valuesBody struct {
+		Values map[string]string `json:"values"`
+	}
+
+	// Dictionary is one replica's §2.6 snapshot plus the ETag the caller's
+	// per-pod-restart cache revalidates with (If-None-Match → 304).
+	Dictionary struct {
+		Words []string
+		ETag  string
+	}
 )
 
 // Replicas resolves one base URL per Ready collector pod, in a stable order.
@@ -117,6 +133,84 @@ func (c *Client) Pods(ctx context.Context, baseURL string, fromMs, toMs int64) (
 		return nil, err
 	}
 	return body.Pods, nil
+}
+
+// Trace fetches one call's raw blob from a replica. found is false on 404 —
+// the §2.4 "absent" state, which for a fan-out probe just means the next
+// source is asked.
+func (c *Client) Trace(ctx context.Context, baseURL string, pk model.PK) (blob []byte, found bool, err error) {
+	u := baseURL + "/internal/v1/calls/" + url.PathEscape(pk.PathString()) + "/trace"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, false, errors.Wrap(err, "build replica request")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, false, fmt.Errorf("GET %s: %s: %s", u, resp.Status, snippet)
+	}
+	blob, err = io.ReadAll(resp.Body)
+	return blob, err == nil, errors.Wrapf(err, "read %s", u)
+}
+
+// FetchDictionary fetches one live pod-restart's dictionary from the replica
+// hosting it (02 §2.6, §3), revalidating a cached copy when etag is
+// non-empty. notModified reports a 304; found is false when the replica does
+// not host the pod-restart.
+func (c *Client) FetchDictionary(ctx context.Context, baseURL string, tuple model.PodTuple, etag string) (dict Dictionary, notModified, found bool, err error) {
+	u := baseURL + "/internal/v1/pods/" + url.PathEscape(podRestartPath(tuple)) + "/dictionary"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return dict, false, false, errors.Wrap(err, "build replica request")
+	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return dict, false, false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusNotModified:
+		return dict, true, true, nil
+	case http.StatusNotFound:
+		return dict, false, false, nil
+	case http.StatusOK:
+		var body dictionaryBody
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return dict, false, false, errors.Wrapf(err, "decode %s", u)
+		}
+		return Dictionary{Words: body.Methods, ETag: resp.Header.Get("ETag")}, false, true, nil
+	default:
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return dict, false, false, fmt.Errorf("GET %s: %s: %s", u, resp.Status, snippet)
+	}
+}
+
+// Values fetches big-parameter values from the replica's sql / xml value
+// segments in one batch (01 §4.4). Unresolvable references are absent from
+// the result, matching the endpoint's degrade-not-fail semantics.
+func (c *Client) Values(ctx context.Context, baseURL string, tuple model.PodTuple, refs []string) (map[string]string, error) {
+	v := url.Values{"ref": refs}
+	u := baseURL + "/internal/v1/pods/" + url.PathEscape(podRestartPath(tuple)) + "/values?" + v.Encode()
+	var body valuesBody
+	if err := c.getJSON(ctx, u, &body); err != nil {
+		return nil, err
+	}
+	return body.Values, nil
+}
+
+// podRestartPath renders the §2.6 path segment <ns>:<svc>:<pod>:<restartMs>.
+func podRestartPath(t model.PodTuple) string {
+	return t.Namespace + ":" + t.Service + ":" + t.Pod + ":" + strconv.FormatInt(t.RestartTimeMs, 10)
 }
 
 func (c *Client) getJSON(ctx context.Context, url string, into any) error {

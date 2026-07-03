@@ -8,6 +8,7 @@ import (
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/query/model"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 // problem is an RFC 7807 body (02 §8) with the §2.3.2 guard extensions.
@@ -42,6 +43,10 @@ type podsResponse struct {
 func (s *Service) routes(e *echo.Echo) {
 	e.GET("/api/v1/calls", s.handleCalls)
 	e.GET("/api/v1/pods", s.handlePods)
+	e.GET("/api/v1/calls/:pk/trace", s.handleCallTrace)
+	// gzip is per-route: /tree wants it (02 §2.5.5), while /trace serves raw
+	// bytes with Range support, which the middleware would break.
+	e.GET("/api/v1/calls/:pk/tree", s.handleCallTree, middleware.Gzip())
 }
 
 func sendProblem(c echo.Context, p problem) error {

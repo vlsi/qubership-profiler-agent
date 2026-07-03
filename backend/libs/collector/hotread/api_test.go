@@ -12,6 +12,7 @@ import (
 	"github.com/Netcracker/qubership-profiler-backend/libs/collector/hotread"
 	"github.com/Netcracker/qubership-profiler-backend/libs/collector/hotstore"
 	"github.com/Netcracker/qubership-profiler-backend/libs/protocol/data"
+	"github.com/Netcracker/qubership-profiler-backend/libs/tests/helpers/wire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -284,4 +285,47 @@ func TestInternalDictionary(t *testing.T) {
 	require.NoError(t, err)
 	_ = respMissing.Body.Close()
 	assert.Equal(t, http.StatusNotFound, respMissing.StatusCode)
+}
+
+// TestInternalValues drives the big-parameter values endpoint the query
+// service's hot /tree path batches its references through (01 §4.4).
+func TestInternalValues(t *testing.T) {
+	store := openTestStore(t)
+	pr := addPod(t, store, "pod-1", 7)
+	sqlData, sqlOffs := wire.ValueStream([]string{"SELECT 1", "SELECT 2"})
+	seg, err := pr.OpenSegment(hotstore.StreamSql, 1)
+	require.NoError(t, err)
+	_, err = seg.Write(sqlData)
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(hotread.New(store).Handler())
+	t.Cleanup(srv.Close)
+	base := srv.URL + fmt.Sprintf("/internal/v1/pods/%s:%s:pod-1:7/values", testNs, testSvc)
+
+	var body struct {
+		Values map[string]string `json:"values"`
+	}
+	params := url.Values{"ref": {
+		fmt.Sprintf("sql:1:%d", sqlOffs[1]),
+		"sql:9:0", // a segment this replica never had: absent, not an error
+	}}
+	resp, err := http.Get(base + "?" + params.Encode())
+	require.NoError(t, err)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "body: %s", raw)
+	require.NoError(t, json.Unmarshal(raw, &body))
+	assert.Equal(t, map[string]string{fmt.Sprintf("sql:1:%d", sqlOffs[1]): "SELECT 2"}, body.Values)
+
+	for path, want := range map[string]int{
+		base:                    http.StatusBadRequest, // no refs
+		base + "?ref=trace:1:0": http.StatusBadRequest, // not a value stream
+		srv.URL + fmt.Sprintf("/internal/v1/pods/%s:%s:pod-x:7/values?ref=sql:1:0", testNs, testSvc): http.StatusNotFound,
+	} {
+		resp, err := http.Get(path)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, want, resp.StatusCode, path)
+	}
 }

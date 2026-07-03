@@ -46,6 +46,14 @@ pending (see open issues).
   - [x] `libs/query` — full fan-out per page (`02` §2.3.1): parallel hot-window probes → dynamic cold cutoff `min(to, max(oldest) + PROFILER_OVERLAP_MARGIN)` (§4.3, degraded hot state falls back to the full cold window), per-replica `/internal/v1/calls` runs + the cutoff-clamped cold scan into `model.MergeRuns` with cold-preferred PK dedup (§6.3), `/pods` union on the §2.7 entry shape (`time_min_ms`/`time_max_ms`, bounds widened across tiers), 504 only when every attempted source failed (§8)
   - [x] `libs/query/model` — shared wire shapes (`CallJSON`, `PodEntry`, PK path codec, `ParseCallsQuery`/`Values`) so the external API, the internal API, and the fan-out client cannot drift
   - [x] Tests: `hotread` unit suite pins the pod_restart-string vs PK collation trap (a pod name that prefixes another, numeric restart ordering), keyset seek, filters, hot-window, dictionary revalidation; `query` unit test pins the cutoff rule; synthetic integration `libs/tests/integration/fanout_test.go` — a real collector with un-sealed hot data plus a scaled-down pod's S3-only data: merge across the cutoff without gap or duplicate, cold-preferred `error_flag` on an overlap row, LIST-skip for a hot-only window vs both tiers for a week, §2.7 union bounds, internal trace byte-equal to the sealed `trace_blob`, and stable pagination across a simulated hot→cold migration (§2.3.1)
+- [x] **External `/api/v1/calls/{pk}/tree` + `/trace`** (sixth slice, MVP closer; branch `feat/stage1-tree-api`)
+  - [x] `libs/calltree` — shared tree builder (§4.5 reader semantics: tail/head noise by `record_index`, event time = `timerStartTime` + per-chunk delta sum, depth-0 exit) and the hand-written MessagePack codec of `02` §2.5.1-§2.5.4 (int-keyed maps, `v` envelope, reference decoder that skips unknown keys); both tiers render through it
+  - [x] `libs/collector/hotstore` — big-param resolution at seal: `consumeChunk` keeps each call's `(stream, seq, offset)` references, `resolveBigValues` reads every referenced `sql`/`xml` segment once per pass, and the row lands with the new additive `big_params_json` column (`01` §4.4, §5.2); `trace_blob` stays byte-identical. `BigValues`/`ParseValueRef` expose the same reader to the internal API
+  - [x] `libs/collector/hotread` — `GET /internal/v1/pods/{pod-restart}/values?ref=<stream>:<seq>:<offset>` (batched; unresolvable refs absent, `02` §3)
+  - [x] `libs/query/cold` — `FetchCall` point read (blob + `big_params_json`; candidates pre-filtered by the key's pod-restart hash), `Dictionary` from the `dictionaries/v1/<day of restart_time_ms>/<hash>.json` snapshot, list projection now drops both blob-sized columns
+  - [x] `libs/query` — `GET /api/v1/calls/{pk}/trace` (§2.4: octet-stream, PK ETag, immutable, Range via `ServeContent`) and `GET /api/v1/calls/{pk}/tree` (§2.5: msgpack, per-tree dictionary, per-route gzip, `Accept-Version`); tiered point lookup (replicas first, then cold within the `?ts_ms=`/`?retention_class=` hint window, `02` §2.2), per-pod-restart dictionary caches (hot: ETag revalidation; cold: immutable), §8 verdict (504 only when every attempted source failed)
+  - [x] `libs/query/model` — `PodRestartHash` + `DictionarySnapshotKey` shared by the seal/upload writers and the cold reader (day pinned cross-midnight by a unit test)
+  - [x] Tests: `calltree` unit suite (nesting/times, delta continuation, noise trimming, multi-chunk, params, dict miss, msgpack roundtrip + unknown-key skip), `hotstore` value-reader suite, `hotread` values endpoint, synthetic integration `libs/tests/integration/tree_test.go` — hot and cold `/tree` (names, rel-times, durations, inlined sql/xml values, explicit `unresolved` marker, self-contained minimal dictionary, `v` envelope, gzip, `Accept-Version`), cold dictionary from the restart-day snapshot, `/trace` byte-equal on both tiers + Range, guided 404 without `ts_ms`
 - [ ] Budgets and janitors: segment refcounts/eviction, idle accumulator timeout, memory budget (`01` §4.6)
 - [ ] Collector app wiring: `profiler-backend collect` subcommand, readiness states, Prometheus metrics (`03` §2)
 
@@ -343,6 +351,84 @@ produce duplicates for the dedup to collapse. The parquet source must land
 together with the janitor that starts dropping partitions; recorded as an
 open issue so the two cannot ship apart.
 
+### 2026-07-03 — big params resolve at seal into big_params_json; the blob keeps its references
+
+**Question:** the blob's `PARAM_BIG` / `PARAM_BIG_DEDUP` tags reference the
+`sql` / `xml` value segments, which live only on the PV and are deleted after
+upload — so a cold `/tree` cannot resolve them. Resolve at seal and inline,
+upload the value streams to S3, or mark them unresolved on cold?
+
+**Choice:** resolve at seal. The pass already parses every blob event for the
+refcounts, so it also keeps each call's `(stream, seq, offset)` references,
+reads every referenced segment once, and writes the values into a new
+`big_params_json` column (`{"<stream>:<seq>:<offset>": value}`) next to the
+blob. The blob itself is untouched — `/trace` stays byte-identical across
+tiers and the raw-path contract ("the blob keeps the references") holds.
+
+**Reason:** uploading the value streams would add a second S3 object family
+with its own retention and offsets addressing for data that only `/tree`
+needs, and "unresolved on cold" would make the canonical endpoint lossy
+exactly where it matters (SQL texts). Inlining costs one JSON column that
+ZSTD compresses next to the blob it accompanies, and the list projection
+drops it the same way it drops `trace_blob`. A reference that still fails to
+resolve (segment evicted before the seal, file sealed before this column)
+renders with an explicit `unresolved` marker carrying the reference text
+(`02` §2.5.3 field 2) — degraded like a truncated blob, never silent.
+
+### 2026-07-03 — CallV2 columns are NOT freely additive with the current parquet reader
+
+Adding `big_params_json` surfaced a library constraint: xitongsys/parquet-go's
+`RenameSchema` writes the struct schema over `Footer.Schema` by index, so
+reading a file written WITHOUT a column through a struct WITH it panics —
+"additive" holds on the write side only. No production files exist yet
+(Stage 1 is pre-release), so the column lands without a migration; but any
+post-release CallV2 change needs a footer-sniffing versioned reader (pick the
+struct by the footer's element count) or a reader-library change. This also
+qualifies the earlier `trace_blob_size` entry, which called such a column
+"additive; old files would read as NULL" — with today's reader they would not
+read at all.
+
+### 2026-07-03 — point endpoints locate cold calls by explicit ts_ms/retention_class hints
+
+`02` §2.2 says the client "passes the ts_ms and retention_class from the
+/calls response"; implemented as plain query parameters of those names on
+`/calls/{pk}/trace` and `/calls/{pk}/tree`. The hot replicas are probed
+first (no S3 round-trip for live calls); the cold lookup discovers
+`[ts_ms, ts_ms+1)` and pre-filters candidates by the key's pod-restart hash,
+reading only the matching pod-restart's files. A PK that misses the hot tier
+with no `ts_ms` answers a guided `404` naming the hint — never an unbounded
+scan. The contract now pins the parameter names (§2.2).
+
+### 2026-07-03 — unknown Accept-Version is refused, not answered with v1
+
+`02` §2.5.4 defines the header's meaning only once a v2 exists. Until then
+the server emits v1 for an absent header or `Accept-Version: 1`, and answers
+`400` for anything else: silently serving v1 bytes to a client that asked for
+a version this server has never heard of would defer the failure to the
+client's decoder, where it is harder to diagnose.
+
+### 2026-07-03 — hot /tree fetches big values over a new internal values endpoint
+
+The tree renders in `query` for both tiers (one `libs/calltree`
+implementation, one gzip/versioning surface), but hot big-param values live
+only in the replica's `sql`/`xml` segments. Added
+`GET /internal/v1/pods/{pod-restart}/values?ref=...` (batched, one
+round-trip per tree; unresolvable refs absent from the reply). Both sides of
+the internal API are ours — an implementation choice like the slice-5 keyset
+params, now recorded in `02` §3. The external API still never exposes the
+value streams (`02` §2.5).
+
+### 2026-07-03 — a missing dictionary renders placeholders, not a failed tree
+
+A cold pod-restart whose dictionary snapshot is absent (crashed before the
+close upload, or TTL-expired) and a hot replica whose dictionary fetch fails
+against an empty cache both render the tree with the "#<id>" placeholders the
+list path already uses — the structure and timings are still worth serving.
+The hot dictionary cache revalidates by ETag per pod-restart and falls back
+to its cached copy on a fetch error (the dictionary is append-only, so a
+stale copy only turns the newest ids into placeholders); cold snapshots are
+immutable and cache forever (capacity-bounded).
+
 ### 2026-07-03 — 504 means every attempted source failed
 
 With two tiers wired, the §8 rule is implemented as: count each hot replica
@@ -405,8 +491,10 @@ with a dead S3 still answers from the replicas, and vice versa.
 - **CallV2 needs a `trace_blob_size` column.** The cold list path emits
   `trace_blob_size: null` because the schema carries no size and the
   projection forbids reading the blob (see the 2026-07-03 decision). Adding
-  the column at seal is additive; do it before Stage 5 wires the UI if the
-  calls table wants to show blob sizes.
+  the column at seal is additive on the write side only — see the
+  "NOT freely additive" decision: shipping it after release requires the
+  footer-sniffing versioned reader first. Do both before Stage 5 wires the
+  UI if the calls table wants to show blob sizes.
 - **Cold scan reads each candidate file whole, sequentially.** `ScanFile`
   materializes every projected row of a file before filtering, files scan one
   after another, and each page re-reads every file (`02` §2.3.1 accepts the
@@ -439,3 +527,22 @@ with a dead S3 still answers from the replicas, and vice versa.
   silently instead of failing the scan. Affects any tier reading parquet;
   worth a wrapper check (row count vs values) if silent data loss ever
   matters more than availability.
+- **`/api/v1/calls/{pk}` and `/api/v1/pods/{pod-restart}/dictionary` are not
+  implemented.** Both sit in the `02` §2.1 endpoint table; the slice-6 scope
+  covered only `/trace` and `/tree` (which needs no external dictionary — the
+  per-tree dictionary is inline). The single-row fetch composes from the
+  existing `FindCall`/`FetchCall` seams; the external dictionary endpoint
+  composes from the same sources the tree path already resolves.
+- **Cold point fetch reads each candidate file whole,** including every
+  row's `trace_blob`/`big_params_json`, to find one PK. Bounded by the one
+  pod-restart's files of one 5-minute bucket (hash pre-filter), but a
+  row-group `ts_ms`/PK prune is the lever if point-fetch latency ever shows
+  up; same deferral as the list-path scan above.
+- **Point-fetch hot probing is sequential** (replica by replica, first 200
+  wins) and the fan-out's `/pods` targeting (`02` §7.3) is still dormant, so
+  a large replica set pays worst-case one timeout per dead replica before
+  falling cold. Parallel probes or targeting fix it when replica counts grow.
+- **Dictionary caches evict arbitrarily** (map iteration) at a fixed 512
+  entries per tier and the hot cache holds no negative entries; fine for the
+  MVP's pod counts, revisit with real cardinality data alongside the fan-out
+  health-probe cache noted above.
