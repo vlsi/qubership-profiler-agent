@@ -56,8 +56,8 @@ func (pi PodInfoGen) transformMethod(c data.Call) string {
 	return pi.Dictionary.Get(c.Method)
 }
 
-func (pi PodInfoGen) transformParams(c data.Call) parquet.Parameters {
-	params := make(parquet.Parameters)
+func (pi PodInfoGen) transformParams(c data.Call) parquet.LegacyParameters {
+	params := make(parquet.LegacyParameters)
 	for k, v := range c.Params {
 		key := pi.Dictionary.Get(k)
 		params.AddVal(key, v...)
