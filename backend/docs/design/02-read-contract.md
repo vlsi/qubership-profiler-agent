@@ -110,7 +110,7 @@ Response:
 }
 ```
 
-`trace_blob_size = 0` when `truncated_reason != null` (blob was dropped under pressure; see §4.6 of `01-write-contract.md`).
+`trace_blob_size` reports the blob's byte length, and is `0` when `truncated_reason != null` (the blob was dropped under pressure; see §4.6 of `01-write-contract.md`). On the cold list path the exact length is not available — `CallV2` (`01-write-contract.md` §5.2) carries no size column and the list projection does not read the blob — so the field is `null` there, and blob presence is `truncated_reason == null`; a client that needs the exact size fetches the blob via `/tree` or `/trace`. Adding an additive `trace_blob_size INT32` column to `CallV2` is the option if the list must carry the exact size (tracked in `stage1-progress.md`).
 
 ### 2.3.1 Cursor: ordering and stable pagination
 
@@ -287,7 +287,7 @@ Response:
 
 ### 2.7 Pods and stats
 
-`GET /api/v1/pods?from=...&to=...` returns the set of `(namespace, service, pod, restart_time)` tuples that have any Call rows in the time range. The set is the union of two sources: live pod-restarts from the hot tier (`/internal/v1/pods` on each replica, §3) and closed pod-restarts from the cold pod manifests. Cold discovery LISTs `pods/v1/<yyyy>/<mm>/<dd>/` for each day the range spans and reads each small JSON manifest (`01-write-contract.md` §3.6); it does not open parquet files. The `<podRestartHash>` in a parquet key is a one-way hash, so the manifest is the only cold source of the readable identity tuple.
+`GET /api/v1/pods?from=...&to=...` returns the set of `(namespace, service, pod, restart_time)` tuples that have any Call rows in the time range. The set is the union of two sources: live pod-restarts from the hot tier (`/internal/v1/pods` on each replica, §3) and closed pod-restarts from the cold pod manifests. Cold discovery LISTs `pods/v1/<yyyy>/<mm>/<dd>/` for each day the range spans and reads each small JSON manifest (`01-write-contract.md` §3.6); it does not open parquet files. The `<podRestartHash>` in a parquet key is a one-way hash, so the manifest is the only cold source of the readable identity tuple. The response is an array of `{ namespace, service, pod, restart_time_ms, time_min_ms, time_max_ms }`; the hot and cold sources union on this shape without reshaping.
 
 `GET /api/v1/stats` is a sketch — full schema deferred to Stage 4. Initial shape: `top_methods_by_duration`, latency percentiles per `(method, retention_class)`, counts per `(retention_class, hour_bucket)`. Implemented over the same hot/cold model as `/calls`.
 
