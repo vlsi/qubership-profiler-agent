@@ -26,7 +26,13 @@ pending (see open issues).
   - [x] `libs/collector/hotstore` — minimal seal trigger: `SealDue` / `RunSealLoop` (bucket end + grace, late-data patch files with the next `<seq>`); wired into `libs/collector` behind `SealCheckInterval > 0`
   - [x] Recovery additions (`03` §3.6): discard `parquet-sealing/` scratch, clear `parquet_local` rows whose file is missing and release their refcounts
   - [x] Synthetic integration test `libs/tests/integration/seal_test.go`: production-like ordering (calls indexed before the dictionary decodes `call.red`), blob byte-equality + tree decode with §4.5 noise trimming, ZSTD + sort + naming, `suspend_ms`, eviction → `disk_budget`, refcounts, idempotent re-seal
-- [ ] S3 upload + dictionary/pods/suspend snapshots (`01` §3.6, §6.2)
+- [x] **S3 upload + snapshots** (third slice; branch `feat/stage1-s3-upload`)
+  - [x] `libs/collector/hotstore` — `Uploader.Pass`: PUT every pending `parquet_local` file at its seal-recorded `s3_key`, then commit `uploaded_at` and the segment refcount release in ONE SQLite transaction (`01` §6.2 step 3; the C1 guard deletes the file's `parquet_segments` rows in the same transaction, so a repeat releases nothing)
+  - [x] `libs/collector/hotstore` — snapshots of closed pod-restarts gated by `dict_uploaded_at`: dictionary + suspend timeline, plus a pods manifest per UTC day the pod-restart sealed into (`01` §3.6, `03` §3.9)
+  - [x] `libs/collector/hotstore` — error handling: retryable failures back off exponentially in-pass and stay pending across passes; a 4xx moves the file to `upload-failed/` with its refcounts kept (`01` §8, new `parquet_local.upload_failed_at` column)
+  - [x] `libs/collector/hotstore` — sweep unlinks refcount-0 segments (file + catalog row) of closed, fully sealed pod-restarts (`03` §3.7 step 14)
+  - [x] `libs/collector` — `S3ObjectStore` MinIO adapter (Content-MD5 on every PUT, 4xx → `PermanentUploadError`); upload loop opt-in via `UploadCheckInterval`, mirroring the seal loop
+  - [x] Tests: `libs/tests/integration/upload_test.go` (fake object store: happy path, C1 crash window, restart recovery, 4xx quarantine, retry backoff), `upload_minio_test.go` (`integration` tag: real MinIO round-trip and live 4xx classification), `hotstore/upload_test.go` (double-release guard at the SQLite layer)
 - [ ] Hot-read API `/internal/v1/*` (`02-read-contract.md` §3)
 - [ ] Budgets and janitors: segment refcounts/eviction, idle accumulator timeout, memory budget (`01` §4.6)
 - [ ] Collector app wiring: `profiler-backend collect` subcommand, readiness states, Prometheus metrics (`03` §2)
@@ -139,6 +145,61 @@ leaves the interval zero. Synthetic tests replay history (their buckets are
 due immediately), so an always-on loop would race every test's explicit
 `Seal` call. The `collect` subcommand wiring sets the interval in production.
 
+### 2026-07-03 — dictionary snapshot carries the full word list in both arrays
+
+**Question:** `02` §2.6 gives the snapshot shape `{version, methods: [...],
+params: [...]}` with `methods[i]` and `params[i]` resolving `method_id = i`
+and `param_id = i` independently, but the wire dictionary is one id space: a
+trace ENTER's method id and a tag's param id index the same word list.
+
+**Choice:** both arrays carry the full dictionary; `version` is the word
+count.
+
+**Reason:** readers stay correct under either reading of the contract, and
+splitting would need a method/param classification the write path does not
+have. The duplication costs one extra copy of a small JSON object. The
+contract may want a single `words` array instead; revisit when the read slice
+consumes the snapshot.
+
+### 2026-07-03 — snapshot keys derive their day from restart_time_ms
+
+`01` §3.6 pins `dictionaries/v1/<yyyy>/<mm>/<dd>/<hash>.json` (and the same
+hierarchy for `suspend/v1`) without naming the day. The close day is not
+crash-stable — recovery re-closes open pod-restarts at recovery time, so a
+crash across midnight would change the key and break the idempotent re-PUT of
+§6.6. The UTC day of `restart_time_ms` is stable and derivable by any reader
+that already holds the pod-restart tuple. The §3.6 TTL margin (35 d against
+the 30 d longest class) absorbs pod-restarts spanning up to five days.
+
+### 2026-07-03 — segment deletion needs closed + fully sealed, not bare refcount 0
+
+`01` §4.4 calls a refcount-0 segment deletable, but refcounts are pinned only
+at seal: a segment of a live (or not-yet-sealed) pod-restart sits at zero
+while future seals still owe rows from it, and deleting it would lose their
+blobs. The sweep therefore unlinks a refcount-0 segment only when its
+pod-restart is closed and no bucket holds indexed calls past the seal
+watermark — the `03` §3.7 step 14 "no remaining un-sealed call" condition.
+Forced over-budget eviction of segments with live references stays with the
+budgets task (`01` §4.6).
+
+### 2026-07-03 — quarantined files keep their parquet_local row
+
+`01` §8 names `upload-failed/` but not the metadata side. The row follows the
+file — `path` is updated and the new `upload_failed_at` column takes it out
+of the upload queue — rather than being deleted: `DropParquetLocal` releases
+refcounts, and a rejected file must keep its segments pinned until a human
+resolves it. Recovery leaves the row alone because the quarantined path
+exists on disk.
+
+### 2026-07-03 — per-file upload order: PUT object, upsert manifest, then commit
+
+The pods-manifest PUT runs after the parquet PUT but before the `MarkUploaded`
+commit. Any failure or crash before the commit leaves `uploaded_at` NULL, so
+the next pass re-runs both PUTs — idempotent by deterministic key — and no
+durable "manifest dirty" flag is needed. Manifest bounds cover every file the
+pod-restart sealed into that day, so a later seal or a retry only widens
+`time_max_ms`, matching the §3.6 upsert semantics.
+
 ## Open issues
 
 - **`stage1-plan.md` does not exist yet.** This slice was specified directly
@@ -156,6 +217,20 @@ due immediately), so an always-on loop would race every test's explicit
   sealed files on disk leaves them orphaned — re-reading parquet footers
   (`03` §3.2 step 4) is not implemented. Orphans re-seal from the WAL, so the
   cost is duplicate rows collapsed by PK-dedup, plus leaked local files.
+- **Snapshot and manifest PUTs have no quarantine.** A permanent 4xx on a
+  dictionary, suspend, or pods-manifest object logs and retries on every
+  pass; only parquet files move to `upload-failed/`. Harmless while the
+  bucket policy matches the parquet PUTs, noisy if it ever diverges.
+- **WAL purge after upload is not implemented.** `01` §3.6 step 4 and `03`
+  §3.9 step 18 delete a closed pod-restart's WALs once its dictionary and
+  parquet are uploaded and the hold-back grace has elapsed; closed
+  pod-restarts currently keep their WALs on the PV.
+- **No hot-retention janitor yet.** Uploaded parquet stays on the PV past
+  `PROFILER_HOT_RETENTION` (`01` §6.3) and call partitions are never dropped;
+  both belong to the budgets/janitors task.
+- **Upload backoff state is per-pass.** Attempts restart on every pass, with
+  no jitter and no per-file cross-pass schedule. `UploadStats` is the seam
+  for the Prometheus counters that land with the app wiring task.
 - **`server.Service.Stop()` waits for live agent connections** and is bounded
   only by the socket read timeout (~40 s). The `03` §5.2 drain (send
   `COMMAND_CLOSE`, 5 s per-connection timeout) is not implemented yet; it
