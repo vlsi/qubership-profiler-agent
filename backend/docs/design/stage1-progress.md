@@ -59,8 +59,14 @@ pending (see open issues).
   - [x] `libs/collector/hotstore` — seal writer on `GenericWriter`: ZSTD kept, row order kept, `profiler.schema_version = 2` stamped into the footer metadata, page bounds skipped for the blob-sized columns
   - [x] `libs/query/cold` — reader on `GenericReader` with native name-based projection (the `ColumnBuffers` deletion hack is gone), read errors checked and wrapped, the `source.ParquetFile` adapter replaced by the object's own `ReadAt` + `Size`
   - [x] Integration tests ported; the coldread read-offset assertion (no read starts inside a `trace_blob` chunk, with the unprojected positive control) survives against the new reader; new `schemaevolution_test.go` pins narrow-file → current-struct null-fill on both cold read paths
+- [x] **App wiring + dev stack + end-to-end smoke** (seventh slice, Stage 1 closer; branch `feat/stage1-app-wiring`)
+  - [x] `apps/profiler-backend` — the single Go binary of `04` §2 with `collect` and `query` subcommands (cobra + `oklog/run`, the dumps-collector pattern); env parsing per `01` §9 / `02` §9 / `03` §10 in `pkg/envconfig`, covering only the knobs the composed services honour (`2GB`-style sizes and the duration-threshold pair get decoders)
+  - [x] `collect` — the internal port binds at process start behind a `pkg/health` gate serving `/internal/v1/health/{ready,live}` (`03` §2/§4: LOADING/RECOVERY answer 503, the hotread handler mounts at READY); recovery completes before the agent TCP listener starts; the seal and upload loops default ON (15 s / 30 s); SIGTERM flips DRAINING and holds the drain grace, a second signal skips it
+  - [x] `query` — S3 access verified at boot (`03` §7.1, FATAL on failure), replica discovery from `COLLECTOR_HEADLESS_SVC`, the same gate on `/api/v1/health/*`, 15 s in-flight bound at shutdown (§7.3)
+  - [x] `backend/docker-compose.yaml` (`04` §11.1) — MinIO (healthcheck) + collector + query from one image (`apps/profiler-backend/Dockerfile`: distroless static, `/data` owned by 65532 so the named volume inherits it); the services create the bucket themselves (idempotent `MakeBucket`)
+  - [x] Smoke `libs/tests/smoke` (build tag `smoke`; `make smoke`): a `libs/emulator` agent sends dictionary + trace + calls + suspend over real TCP; the hot phase asserts `/api/v1/calls` and `/tree` answer while `parquet/v1/` is still empty in MinIO; the cold phase ages a bucket two hours back, waits for the parquet and dictionary-snapshot objects, runs `docker compose stop collector`, and asserts the wide range and `/tree?ts_ms&retention_class` answer from S3 alone; a final phase restarts the collector and re-reads the hot rows through recovery
 - [ ] Budgets and janitors: segment refcounts/eviction, idle accumulator timeout, memory budget (`01` §4.6)
-- [ ] Collector app wiring: `profiler-backend collect` subcommand, readiness states, Prometheus metrics (`03` §2)
+- [ ] Prometheus metrics (`03` §2; `01` §5.1 expects dropped/truncated-call counters — `UploadStats` and the ingest decode-error paths are the seams)
 
 ## Decisions log
 
@@ -500,6 +506,49 @@ Consequences:
   `go mod tidy` then dropped `xitongsys/parquet-go` and
   `xitongsys/parquet-go-source`.
 
+### 2026-07-04 — the Go binary lives at apps/profiler-backend; collect and query are subcommands
+
+`04` §2 pins one image / one binary with per-workload subcommands, and the
+slice-4 decision deferred the executable to the app-wiring task. The paths
+`apps/collector` (legacy Java collector) and `apps/query` (React UI) are
+taken until their Stage 4/5 retirement, so the binary and its wiring live in
+`apps/profiler-backend` (`main.go`, `cmd/`, `pkg/envconfig`, `pkg/health`).
+`maintain` and `all` (`03` §8-§9) are not implemented yet.
+
+### 2026-07-04 — readiness is an app-level gate in front of the API handlers
+
+`03` §2 binds the ports during LOADING with probes answering 503, but the
+libs services bind their own listeners only inside `Run`, after recovery. The
+app therefore owns both HTTP servers: a `health.Gate` answers
+`<prefix>/health/{ready,live}` from the §2 state machine and hands everything
+else to the hotread/query handler mounted at READY
+(`collector.Options.InternalAPIAddr` stays empty; the libs surface is
+unchanged). The "no agent traffic before recovery" invariant needs no gate —
+`collector.New` completes recovery before `Run` binds the agent TCP listener.
+The §5.2 per-connection drain (`COMMAND_CLOSE`, 5 s) remains open.
+
+### 2026-07-04 — loop pacing envs: PROFILER_SEAL_CHECK_INTERVAL / PROFILER_UPLOAD_CHECK_INTERVAL
+
+`01` §6.1 defines the seal trigger but no poll cadence, and `hotstore.Config`
+deliberately leaves the intervals zero so tests can seal explicitly. The app
+wiring names the knobs `PROFILER_SEAL_CHECK_INTERVAL` (default 15 s) and
+`PROFILER_UPLOAD_CHECK_INTERVAL` (default 30 s) — ON by default, because a
+collector that never seals is not a collector. Both subcommands verify S3
+connectivity at boot and treat a failure as FATAL; the compose stack orders
+startup on MinIO health instead of retrying in-process.
+
+### 2026-07-04 — the smoke proves the cold tier by stopping the collector
+
+With no hot-retention janitor, every call stays in the hot index, so a
+wide-range read alone cannot prove rows came from S3. The smoke
+(`libs/tests/smoke`, driven by `make smoke`) checks the tiers by
+construction instead: the hot phase asserts `/calls` and `/tree` answer while
+`parquet/v1/` is still empty in MinIO, and the cold phase stops the collector
+container before reading the aged bucket back — the answer can only come from
+the parquet and dictionary-snapshot objects. The final phase restarts the
+collector and re-reads the hot rows, exercising recovery over the compose
+volume.
+
 ## Open issues
 
 - **`stage1-plan.md` does not exist yet.** This slice was specified directly
@@ -530,14 +579,25 @@ Consequences:
   both belong to the budgets/janitors task.
 - **Upload backoff state is per-pass.** Attempts restart on every pass, with
   no jitter and no per-file cross-pass schedule. `UploadStats` is the seam
-  for the Prometheus counters that land with the app wiring task.
+  for the Prometheus counters that land with the metrics task.
 - **`server.Service.Stop()` waits for live agent connections** and is bounded
   only by the socket read timeout (~40 s). The `03` §5.2 drain (send
-  `COMMAND_CLOSE`, 5 s per-connection timeout) is not implemented yet; it
-  belongs to the collector app wiring task.
+  `COMMAND_CLOSE`, 5 s per-connection timeout) is not implemented; the app
+  wiring shipped without it, so on SIGTERM agents see a closed socket after
+  the drain grace instead of a polite close.
 - **Ingest decode errors only log.** A malformed calls/dictionary record skips
-  the record; there is no metric yet. Prometheus counters land with the app
-  wiring task (`01` §5.1 expects counters for dropped/truncated calls).
+  the record; there is no metric yet. Prometheus counters land with the
+  metrics task (`01` §5.1 expects counters for dropped/truncated calls).
+- **`collect` env coverage is partial.** `PROFILER_PARQUET_MAX_SIZE`,
+  `PROFILER_SEAL_CONCURRENCY`, `PROFILER_MEM_BUDGET`,
+  `PROFILER_CHUNKS_STAGING_MAX_BYTES`, `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`,
+  `PROFILER_HOT_RETENTION`, the retention TTLs, and `S3_PATH_PREFIX` are not
+  parsed because nothing behind them is implemented yet (budgets/janitors and
+  maintain tasks); `PROFILER_STARTUP_LOCK_WAIT` is likewise absent — the
+  flock fails fast instead of waiting the `03` §3.1 30 s.
+- **The smoke runs only locally.** `make smoke` needs the Docker CLI and a
+  fresh compose stack (it stops and restarts the collector container); no CI
+  job runs it yet.
 - **`params.wal` phrase-length quirk.** The agent's params/suspend phrase
   length includes bytes (version byte, suspend base time) that the pipe
   decoders do not subtract; single-phrase streams parse fine, which is what
