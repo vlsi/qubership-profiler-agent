@@ -45,7 +45,11 @@ func runMaintain(cmd *cobra.Command, _ []string) error {
 
 	// The job is stateless (03 §8): S3 access is its only dependency and a
 	// failure is FATAL, mirroring the query startup.
-	mc, err := s3.NewClient(ctx, cfg.S3.Params())
+	s3params, err := cfg.S3.Params()
+	if err != nil {
+		return pkgerrors.Wrap(err, "resolve S3 credentials")
+	}
+	mc, err := s3.NewClient(ctx, s3params)
 	if err != nil {
 		return pkgerrors.Wrap(err, "connect to S3")
 	}

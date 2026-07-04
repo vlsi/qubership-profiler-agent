@@ -74,7 +74,11 @@ func runCollect(cmd *cobra.Command, _ []string) error {
 	}
 
 	gate.Set(health.StateLoading, "connecting to S3")
-	mc, err := s3.NewClient(ctx, cfg.S3.Params())
+	s3params, err := cfg.S3.Params()
+	if err != nil {
+		return fatal("resolve S3 credentials", err)
+	}
+	mc, err := s3.NewClient(ctx, s3params)
 	if err != nil {
 		return fatal("connect to S3", err)
 	}

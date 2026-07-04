@@ -44,7 +44,11 @@ func runQuery(cmd *cobra.Command, _ []string) error {
 	}
 
 	// §7.1 step 2: verify the S3 side before serving; unrecoverable → FATAL.
-	mc, err := s3.NewClient(ctx, cfg.S3.Params())
+	s3params, err := cfg.S3.Params()
+	if err != nil {
+		return pkgerrors.Wrap(err, "resolve S3 credentials")
+	}
+	mc, err := s3.NewClient(ctx, s3params)
 	if err != nil {
 		return pkgerrors.Wrap(err, "connect to S3")
 	}

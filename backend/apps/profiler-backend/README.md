@@ -36,7 +36,8 @@ Everything comes from the environment. The authoritative catalogues are
 | `PROFILER_LOG_LEVEL` | `info` | Log level. |
 | `S3_ENDPOINT` | — (required) | S3/MinIO endpoint URL; an `https://` scheme enables TLS. |
 | `S3_BUCKET` | — (required) | Target bucket, created if missing. |
-| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | — (required) | Credentials. |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | — | Credentials from the environment (dev, compose). |
+| `S3_ACCESS_KEY_FILE` / `S3_SECRET_KEY_FILE` | — | Path to a file holding the credential (k8s mounts the Secret as a volume); trailing whitespace is trimmed. Set exactly one source per credential. |
 | `PROFILER_SHUTDOWN_DRAIN_GRACE` | `30s` | DRAINING hold after SIGTERM (`03` §5.1, §7.3). |
 
 ### `collect`
