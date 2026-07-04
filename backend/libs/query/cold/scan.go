@@ -104,6 +104,9 @@ func readRows[T any](ctx context.Context, store ObjectStore, ref FileRef) (rows 
 	f, err := parquet.OpenFile(obj, obj.Size(),
 		parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true))
 	if err != nil {
+		if gone(ctx, store, ref.Key) {
+			return nil, nil
+		}
 		return nil, errors.Wrapf(err, "read parquet footer of %s", ref.Key)
 	}
 	r := parquet.NewGenericReader[T](f)
@@ -112,12 +115,34 @@ func readRows[T any](ctx context.Context, store ObjectStore, ref FileRef) (rows 
 	rows = make([]T, r.NumRows())
 	n, err := r.Read(rows)
 	if err != nil && !errors.Is(err, io.EOF) {
+		if gone(ctx, store, ref.Key) {
+			return nil, nil
+		}
 		return nil, errors.Wrapf(err, "read %s", ref.Key)
 	}
 	if n != len(rows) {
+		if gone(ctx, store, ref.Key) {
+			return nil, nil
+		}
 		return nil, errors.Errorf("read %s: footer promises %d rows, read %d", ref.Key, len(rows), n)
 	}
 	return rows, nil
+}
+
+// gone reports whether a failed read is explained by the object having been
+// deleted after the LIST — a maintain compaction past its delete-grace or a
+// TTL sweep (02 §5.1 pins that case as an empty result, not an error). The
+// Open-time 404 mapping covers a delete before the first byte; this covers a
+// delete racing the column reads, where the store's error surfaces through
+// the parquet reader and its provenance is lost. One extra round-trip, on
+// the error path only.
+func gone(ctx context.Context, store ObjectStore, key string) bool {
+	obj, err := store.Open(ctx, key)
+	if err != nil {
+		return errors.Is(err, ErrNotFound)
+	}
+	_ = obj.Close()
+	return false
 }
 
 // toCallRow maps a projected row to the merged row shape.

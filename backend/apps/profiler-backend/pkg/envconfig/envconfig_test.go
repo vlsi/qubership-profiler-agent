@@ -84,6 +84,48 @@ func TestQueryDefaults(t *testing.T) {
 	assert.True(t, q.S3.Params().UseSSL)
 }
 
+func TestTTLDecode(t *testing.T) {
+	for raw, want := range map[string]TTL{
+		"1d":   TTL(24 * time.Hour),
+		"35d":  TTL(35 * 24 * time.Hour),
+		"0d":   0,
+		" 7 d": TTL(7 * 24 * time.Hour),
+		"36h":  TTL(36 * time.Hour),
+	} {
+		var ttl TTL
+		require.NoError(t, ttl.Decode(raw), raw)
+		assert.Equal(t, want, ttl, raw)
+	}
+	for _, raw := range []string{"", "d", "-1d", "1.5d", "-24h", "abc"} {
+		var ttl TTL
+		assert.Error(t, ttl.Decode(raw), raw)
+	}
+}
+
+func TestMaintainDefaults(t *testing.T) {
+	t.Setenv("S3_ENDPOINT", "http://minio:9000")
+	t.Setenv("S3_BUCKET", "profiler-data")
+	t.Setenv("S3_ACCESS_KEY", "ak")
+	t.Setenv("S3_SECRET_KEY", "sk")
+
+	m, err := ParseMaintain()
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, m.CheckInterval)
+	assert.Equal(t, 5*time.Minute, m.TimeBucket)
+	assert.Equal(t, 30*time.Minute, m.CompactionMinAge)
+	assert.Equal(t, 4, m.CompactionMinFiles)
+	// The delete grace must stay well above one discovery-plus-read round
+	// (01 §6.6); 5m is the contract default (01 §9).
+	assert.Equal(t, 5*time.Minute, m.CompactionDeleteGrace)
+	assert.Equal(t, ByteSize(256<<20), m.CompactionMaxBytes)
+	assert.Equal(t, TTL(24*time.Hour), m.RetentionShortCleanTTL)
+	assert.Equal(t, TTL(7*24*time.Hour), m.RetentionNormalCleanTTL)
+	assert.Equal(t, TTL(30*24*time.Hour), m.RetentionLongCleanTTL)
+	assert.Equal(t, TTL(30*24*time.Hour), m.RetentionAnyErrorTTL)
+	assert.Equal(t, TTL(7*24*time.Hour), m.RetentionCorruptedTTL)
+	assert.Equal(t, TTL(35*24*time.Hour), m.RetentionDictionaryTTL)
+}
+
 func TestS3Required(t *testing.T) {
 	// t.Setenv registers the restore; Unsetenv then truly clears the var —
 	// envconfig's `required` accepts a set-but-empty value.

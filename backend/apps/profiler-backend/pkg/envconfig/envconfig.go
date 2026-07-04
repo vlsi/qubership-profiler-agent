@@ -81,7 +81,36 @@ type (
 		S3 S3
 	}
 
-	// S3 carries the object-store connection shared by both subcommands
+	// Maintain is the `maintain` subcommand configuration (01 §9, 03 §10):
+	// the compaction knobs of 01 §6.6 and the per-class retention TTLs of
+	// 01 §6.4.
+	Maintain struct {
+		LogLevel string `envconfig:"PROFILER_LOG_LEVEL" default:"info"`
+
+		// CheckInterval paces the maintenance loop, mirroring the collector's
+		// *_CHECK_INTERVAL knobs; the name is an implementation choice
+		// recorded in stage1-progress.md.
+		CheckInterval time.Duration `envconfig:"PROFILER_MAINTAIN_CHECK_INTERVAL" default:"5m"`
+		// TimeBucket must mirror the collector's value: the settled check
+		// needs the bucket end and the object key carries only the start.
+		TimeBucket time.Duration `envconfig:"PROFILER_TIME_BUCKET" default:"5m"`
+
+		CompactionMinAge      time.Duration `envconfig:"PROFILER_COMPACTION_MIN_AGE" default:"30m"`
+		CompactionMinFiles    int           `envconfig:"PROFILER_COMPACTION_MIN_FILES" default:"4"`
+		CompactionDeleteGrace time.Duration `envconfig:"PROFILER_COMPACTION_DELETE_GRACE" default:"5m"`
+		CompactionMaxBytes    ByteSize      `envconfig:"PROFILER_COMPACTION_MAX_BYTES" default:"256MB"`
+
+		RetentionShortCleanTTL  TTL `envconfig:"PROFILER_RETENTION_SHORT_CLEAN_TTL" default:"1d"`
+		RetentionNormalCleanTTL TTL `envconfig:"PROFILER_RETENTION_NORMAL_CLEAN_TTL" default:"7d"`
+		RetentionLongCleanTTL   TTL `envconfig:"PROFILER_RETENTION_LONG_CLEAN_TTL" default:"30d"`
+		RetentionAnyErrorTTL    TTL `envconfig:"PROFILER_RETENTION_ANY_ERROR_TTL" default:"30d"`
+		RetentionCorruptedTTL   TTL `envconfig:"PROFILER_RETENTION_CORRUPTED_TTL" default:"7d"`
+		RetentionDictionaryTTL  TTL `envconfig:"PROFILER_RETENTION_DICTIONARY_TTL" default:"35d"`
+
+		S3 S3
+	}
+
+	// S3 carries the object-store connection shared by the subcommands
 	// (01 §9). The scheme of S3_ENDPOINT selects TLS; the path prefix is not
 	// configurable — the seal pass bakes `parquet/v1` into every key (01 §7).
 	S3 struct {
@@ -119,6 +148,13 @@ func ParseQuery() (Query, error) {
 	return q, errors.Wrap(err, "parse query env")
 }
 
+// ParseMaintain reads the `maintain` configuration from the environment.
+func ParseMaintain() (Maintain, error) {
+	var m Maintain
+	err := envconfig.Process("", &m)
+	return m, errors.Wrap(err, "parse maintain env")
+}
+
 // ByteSize decodes the contract's size literals ("64MB", "2GB", plain
 // bytes). Suffixes are powers of 1024; the IEC spellings (KiB, MiB, ...) are
 // accepted as synonyms.
@@ -153,6 +189,30 @@ func (b *ByteSize) Decode(value string) error {
 		return errors.Errorf("byte size %q overflows int64", value)
 	}
 	*b = ByteSize(n << shift)
+	return nil
+}
+
+// TTL decodes the contract's retention literals (01 §9): a plain Go
+// duration, or "<n>d" for n whole days ("1d", "35d") — time.ParseDuration
+// has no day unit.
+type TTL time.Duration
+
+// Decode implements envconfig.Decoder.
+func (t *TTL) Decode(value string) error {
+	raw := strings.TrimSpace(value)
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		n, err := strconv.Atoi(strings.TrimSpace(days))
+		if err != nil || n < 0 {
+			return errors.Errorf("ttl %q: want <non-negative integer>d or a Go duration", value)
+		}
+		*t = TTL(time.Duration(n) * 24 * time.Hour)
+		return nil
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil || v < 0 {
+		return errors.Errorf("ttl %q: want <non-negative integer>d or a Go duration", value)
+	}
+	*t = TTL(v)
 	return nil
 }
 

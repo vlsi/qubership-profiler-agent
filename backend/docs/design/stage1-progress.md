@@ -71,6 +71,13 @@ pending (see open issues).
   - [x] `libs/collector/hotstore` — dropped-bucket escape hatch: `InsertCall` into a dropped partition resurrects it (`dropped_at` cleared, one retry over a racing drop), so a very late Call re-enters the seal loop instead of landing invisible
   - [x] `apps/profiler-backend` — `PROFILER_HOT_RETENTION`, `PROFILER_CHUNKS_STAGING_MAX_BYTES`, `PROFILER_WAL_PURGE_GRACE`, `PROFILER_JANITOR_CHECK_INTERVAL` (default 30 s, ON) wired into `collect`; the janitor loop joins the seal/upload loops in `collector.Service`
   - [x] Tests: `hotstore/janitor_test.go` (lifecycle gates in order, quarantine contiguity barrier, deterministic eviction order, partition resurrect) and `libs/tests/integration/janitor_test.go` — zero-gap acceptance (`/api/v1/calls` returns the same rows before and after the hot drop, hot window provably empty, S3 LIST provably consulted; recovery over the purged PV comes up clean and cold still answers), disk-budget eviction sealing `truncated_reason=disk_budget` next to a surviving blob, snapshot/manifest quarantine stopping the retry and pinning the WALs
+- [x] **Maintain job: S3-side compaction + per-class TTL** (ninth slice; branch `feat/stage1-maintain`)
+  - [x] `libs/maintain` — stateless S3-only worker (`01` §6.6, §6.4): per class, LIST → TTL sweep → per-`(bucket, class)` compaction groups; patch and cross-pod-restart compaction are one code path (every row keeps its own PK, so the merge does not care whose file a row came from)
+  - [x] `libs/maintain/compact.go` — write → grace → delete as three separate passes: a fresh compaction only PUTs the merged object (`maintain-<hashOfInputs>` producer key, `01` §7); a later pass recognises the output by recomputing the hash over the remaining group members and deletes the inputs once `now - LastModified(output) ≥ PROFILER_COMPACTION_DELETE_GRACE`; the merge restores `(ts_ms DESC, pk ASC)` with PK-dedup and rewrites through the full `CallV2` schema (all columns, ZSTD, schema stamp via the new shared `storageparquet.CallV2WriterOptions`)
+  - [x] `libs/maintain/ttl.go` — parquet expiry by the key's `timeMax` stamp alone (widened +999 ms, so the comparison errs on the keep side); `dictionaries`/`pods`/`suspend` snapshots aged from the end of the key's UTC day against `PROFILER_RETENTION_DICTIONARY_TTL`
+  - [x] `libs/query/cold` — mid-read 404 backstop (`02` §5.1): a listed object deleted between the LIST and the column reads now degrades to an empty result (existence re-check on the error path) instead of a spurious `partial`; before this, the §5.1 rule held only for a delete before the first byte
+  - [x] `apps/profiler-backend` — `maintain` subcommand: singleton loop with `PROFILER_MAINTAIN_CHECK_INTERVAL` (immediate first pass), `--run-now` one-shot for a k8s CronJob (`03` §8.2); env: `PROFILER_COMPACTION_{MIN_AGE,MIN_FILES,DELETE_GRACE,MAX_BYTES}`, per-class retention TTLs with a `d` suffix decoder (`35d`)
+  - [x] Tests: `libs/maintain/maintain_test.go` (grace lifecycle on a fake store with a steerable clock, unsettled/small/oversized guards, residue convergence, TTL boundaries, key parsing incl. discovery round-trip) and `libs/tests/integration/maintain_minio_test.go` (`integration` tag) — seeded per-pod-restart + patch files compact to one object with the identical PK set, order, columns, and floor/ceil key stamps; `/api/v1/calls` answers the same rows through every write → grace → delete phase with a concurrent reader; converged bucket re-pass is a no-op; TTL deletes only expired parquet and snapshots
 - [ ] Budgets, remaining: idle accumulator timeout, memory budget (`01` §4.6 — `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`, `PROFILER_MEM_BUDGET`)
 - [ ] Prometheus metrics (`03` §2; `01` §5.1 expects dropped/truncated-call counters — `UploadStats`, `SealCounters`, the new `JanitorStats`, and the ingest decode-error paths are the seams)
 
@@ -638,8 +645,84 @@ handle when a concurrent janitor drop closed the cached one. The
 resurrected bucket is unsealed again, so the janitor leaves it to the seal
 loop and the whole seal→upload→drop cycle repeats for the late row.
 
+### 2026-07-04 — maintain's delete-grace is stateless: hash-of-inputs + output LastModified
+
+**Question:** `01` §6.6 orders write → grace → delete, but the maintainer is
+stateless (`03` §8) and may restart — or run twice — between the write and
+the delete. Where does the grace timer live?
+
+**Choice:** nowhere locally. A compaction pass only PUTs the merged object,
+keyed `maintain-<hash(sorted input keys)>` (`01` §7 hash-of-inputs). A later
+pass recognises the output by recomputing the hash over the *other* members
+of its `(bucket, class)` group and deletes those inputs only when
+`now - LastModified(output) ≥ PROFILER_COMPACTION_DELETE_GRACE` — S3 itself
+carries the clock.
+
+**Reason:** every intermediate state is one the read path already tolerates
+(both copies visible → PK-dedup; inputs gone → the output answers), so a
+crash between any two steps loses nothing. The key is deterministic over the
+input set, so two racing maintainers PUT the same object — the singleton
+deployment is an optimisation, not a correctness requirement. A group whose
+maintain object matches no subset (stragglers arrived, or a delete was cut
+short) recompacts wholesale, even below `PROFILER_COMPACTION_MIN_FILES`, so
+a bucket converges to exactly one object; the merge's PK-dedup absorbs the
+duplicated rows.
+
+### 2026-07-04 — maintain envs: check interval 5m, min age 30m, min files 4, max group 256MB
+
+`01` §9 pins only `PROFILER_COMPACTION_DELETE_GRACE` (5m); `03` §10 sketches
+a 1h `PROFILER_MAINTAIN_INTERVAL` for the cron mode. Implemented as the loop
+knob `PROFILER_MAINTAIN_CHECK_INTERVAL` (default 5m, mirroring the
+collector's `*_CHECK_INTERVAL` family; the delete step lands on the first
+tick past the grace, so the interval should not dwarf the grace) plus
+`PROFILER_COMPACTION_MIN_AGE` (30m — hot retention 15m + margins, the
+late-arrival window a bucket must clear before compaction),
+`PROFILER_COMPACTION_MIN_FILES` (4), and `PROFILER_COMPACTION_MAX_BYTES`
+(256MB), a safety valve: the merge materialises every input row in RAM, so
+an oversized group is skipped with a warning rather than OOMing the
+singleton. The maintain TTL envs accept the contract's `d` suffix (`35d`);
+`PROFILER_TIME_BUCKET` is parsed by maintain too — the settled check needs
+the bucket end and the key carries only the start. Implementation choices,
+not contract changes.
+
+### 2026-07-04 — a 404 racing the column reads is the §5.1 empty case, fixed in cold
+
+The maintain acceptance test (a reader hammering `/calls` while the
+compaction deletes its inputs) surfaced a gap in the `02` §5.1 backstop: the
+cold scan mapped a listed-then-deleted key to an empty result only when the
+delete landed before the first byte (`Open`/`Stat`). A delete racing the
+column reads — any TTL sweep does this to a slow reader, no compaction
+needed — surfaced as a raw S3 error and a spurious `partial: true`.
+`readRows` now re-checks existence on the error path (`gone`, one extra
+round-trip on failures only) and degrades to the empty result §5.1 pins. The
+row set stays complete in the compaction case by construction: inputs are
+deleted only after their compacted copy has been listable for the whole
+grace. A `query`-side fix landed with the maintain slice because its
+acceptance depends on it; the contract text needed no change.
+
 ## Open issues
 
+- **Cold point fetch cannot see compacted objects.** `FetchCall` skips
+  candidates whose key-encoded pod-restart hash does not match the PK, and a
+  maintain object carries the hash of its *inputs* — so `/calls/{pk}/tree`
+  and `/trace` answer 404 for a call whose bucket was compacted cold-side
+  (the `scan.go` comment anticipated this). `/calls` is unaffected (the list
+  path never filters by hash). Fix before enabling compaction where cold
+  `/tree` matters: parse the replica token into `FileRef` and treat
+  `maintain` files as candidates for any PK.
+- **Maintain LISTs each whole class prefix every pass.** O(objects alive in
+  the class) keys per tick, paged serially within the prefix (`02` §5.5).
+  Fine at MVP scale; bound the walk to the TTL window's hour prefixes, or a
+  manifest, if it profiles.
+- **A compaction group is merged in RAM and written as one object.** No
+  `PROFILER_PARQUET_MAX_SIZE` split of the output; a group over
+  `PROFILER_COMPACTION_MAX_BYTES` is skipped with a warning and stays
+  fragmented. A streaming k-way merge (inputs are already sorted) with a
+  size-split output is the upgrade path.
+- **The seal writer does not use `CallV2WriterOptions` yet.** The shared
+  helper landed with the maintain slice for the compactor; `hotstore/seal.go`
+  still carries the identical option list inline. Converge on the next
+  collector touch so the writer invariants cannot drift.
 - **`stage1-plan.md` does not exist yet.** This slice was specified directly
   by the user; the remaining Stage 1 tasks (seal pass, S3, read API, budgets,
   app wiring) need a plan document with dependencies and acceptance criteria.
@@ -668,12 +751,13 @@ loop and the whole seal→upload→drop cycle repeats for the late row.
   metrics task (`01` §5.1 expects counters for dropped/truncated calls).
 - **`collect` env coverage is partial.** `PROFILER_PARQUET_MAX_SIZE`,
   `PROFILER_SEAL_CONCURRENCY`, `PROFILER_MEM_BUDGET`,
-  `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`, the retention TTLs, and
-  `S3_PATH_PREFIX` are not parsed because nothing behind them is implemented
-  yet (remaining budgets and maintain tasks); `PROFILER_STARTUP_LOCK_WAIT` is
-  likewise absent — the flock fails fast instead of waiting the `03` §3.1
-  30 s. (`PROFILER_HOT_RETENTION` and `PROFILER_CHUNKS_STAGING_MAX_BYTES`
-  landed with the janitors slice.)
+  `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`, and `S3_PATH_PREFIX` are not parsed
+  because nothing behind them is implemented yet (remaining budgets tasks);
+  `PROFILER_STARTUP_LOCK_WAIT` is likewise absent — the flock fails fast
+  instead of waiting the `03` §3.1 30 s. (`PROFILER_HOT_RETENTION` and
+  `PROFILER_CHUNKS_STAGING_MAX_BYTES` landed with the janitors slice; the
+  retention TTLs landed with the maintain slice, parsed by `maintain` only —
+  `collect` has no consumer for them.)
 - **The smoke runs only locally.** `make smoke` needs the Docker CLI and a
   fresh compose stack (it stops and restarts the collector container); no CI
   job runs it yet.
