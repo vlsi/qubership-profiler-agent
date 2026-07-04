@@ -53,10 +53,14 @@ func TestCollectDefaults(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, c.TimeBucket)
 	assert.Equal(t, DurationThresholds{100 * time.Millisecond, time.Second}, c.DurationThresholds)
 	assert.Equal(t, ByteSize(4<<20), c.SegmentRotationSize)
-	// The loops must default ON: a collector that never seals or uploads is
-	// not a collector (01 §6.1-§6.2).
+	// The loops must default ON: a collector that never seals, uploads, or
+	// cleans up is not a collector (01 §6.1-§6.3).
 	assert.Positive(t, c.SealCheckInterval)
 	assert.Positive(t, c.UploadCheckInterval)
+	assert.Positive(t, c.JanitorCheckInterval)
+	assert.Equal(t, 15*time.Minute, c.HotRetention)
+	assert.Equal(t, ByteSize(10<<30), c.ChunksStagingMaxBytes)
+	assert.Equal(t, time.Hour, c.WalPurgeGrace)
 
 	p := c.S3.Params()
 	assert.Equal(t, "minio:9000", p.Endpoint)

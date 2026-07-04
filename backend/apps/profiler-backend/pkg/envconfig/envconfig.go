@@ -37,12 +37,24 @@ type (
 		// the wiring falls back to HOSTNAME, then to the libs default.
 		Replica string `envconfig:"STATEFULSET_ORDINAL"`
 
-		// SealCheckInterval / UploadCheckInterval pace the background loops.
-		// The contract defines the seal trigger (01 §6.1) but not the poll
-		// cadence, so these two names are an implementation choice recorded
-		// in stage1-progress.md.
-		SealCheckInterval   time.Duration `envconfig:"PROFILER_SEAL_CHECK_INTERVAL" default:"15s"`
-		UploadCheckInterval time.Duration `envconfig:"PROFILER_UPLOAD_CHECK_INTERVAL" default:"30s"`
+		// SealCheckInterval / UploadCheckInterval / JanitorCheckInterval pace
+		// the background loops. The contract defines the triggers (01 §6.1,
+		// §6.3) but not the poll cadence, so these names are an implementation
+		// choice recorded in stage1-progress.md.
+		SealCheckInterval    time.Duration `envconfig:"PROFILER_SEAL_CHECK_INTERVAL" default:"15s"`
+		UploadCheckInterval  time.Duration `envconfig:"PROFILER_UPLOAD_CHECK_INTERVAL" default:"30s"`
+		JanitorCheckInterval time.Duration `envconfig:"PROFILER_JANITOR_CHECK_INTERVAL" default:"30s"`
+
+		// HotRetention keeps uploaded parquet and the matching call-index
+		// partitions on the PV past upload (01 §6.3, 02 §4.2).
+		HotRetention time.Duration `envconfig:"PROFILER_HOT_RETENTION" default:"15m"`
+		// ChunksStagingMaxBytes bounds the hot-store segment files on disk;
+		// over budget the janitor evicts per 01 §4.6.
+		ChunksStagingMaxBytes ByteSize `envconfig:"PROFILER_CHUNKS_STAGING_MAX_BYTES" default:"10GB"`
+		// WalPurgeGrace is the 01 §3.5 hold-back before a fully flushed
+		// pod-restart's WAL files are deleted; the env name is an
+		// implementation choice recorded in stage1-progress.md.
+		WalPurgeGrace time.Duration `envconfig:"PROFILER_WAL_PURGE_GRACE" default:"1h"`
 
 		ShutdownDrainGrace time.Duration `envconfig:"PROFILER_SHUTDOWN_DRAIN_GRACE" default:"30s"`
 

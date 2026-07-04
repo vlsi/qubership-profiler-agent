@@ -87,15 +87,19 @@ func runCollect(cmd *cobra.Command, _ []string) error {
 	gate.Set(health.StateRecovery, "recovering the hot store")
 	svc, err := collector.New(ctx, collector.Options{
 		Store: hotstore.Config{
-			DataDir:             cfg.DataDir,
-			TimeBucket:          cfg.TimeBucket,
-			TimeBucketGrace:     cfg.TimeBucketGrace,
-			DictFsyncRecords:    cfg.DictFsyncRecords,
-			DictFsyncInterval:   cfg.DictFsyncInterval,
-			DurationThresholds:  [2]time.Duration(cfg.DurationThresholds),
-			Replica:             replica,
-			SealCheckInterval:   cfg.SealCheckInterval,
-			UploadCheckInterval: cfg.UploadCheckInterval,
+			DataDir:               cfg.DataDir,
+			TimeBucket:            cfg.TimeBucket,
+			TimeBucketGrace:       cfg.TimeBucketGrace,
+			DictFsyncRecords:      cfg.DictFsyncRecords,
+			DictFsyncInterval:     cfg.DictFsyncInterval,
+			DurationThresholds:    [2]time.Duration(cfg.DurationThresholds),
+			Replica:               replica,
+			SealCheckInterval:     cfg.SealCheckInterval,
+			UploadCheckInterval:   cfg.UploadCheckInterval,
+			JanitorCheckInterval:  cfg.JanitorCheckInterval,
+			HotRetention:          cfg.HotRetention,
+			ChunksStagingMaxBytes: int64(cfg.ChunksStagingMaxBytes),
+			WalPurgeGrace:         cfg.WalPurgeGrace,
 		},
 		Server: server.ConnectionOpts{
 			ProtocolPort:         cfg.AgentPort,

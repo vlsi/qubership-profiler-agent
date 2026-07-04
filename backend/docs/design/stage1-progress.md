@@ -65,8 +65,14 @@ pending (see open issues).
   - [x] `query` — S3 access verified at boot (`03` §7.1, FATAL on failure), replica discovery from `COLLECTOR_HEADLESS_SVC`, the same gate on `/api/v1/health/*`, 15 s in-flight bound at shutdown (§7.3)
   - [x] `backend/docker-compose.yaml` (`04` §11.1) — MinIO (healthcheck) + collector + query from one image (`apps/profiler-backend/Dockerfile`: distroless static, `/data` owned by 65532 so the named volume inherits it); the services create the bucket themselves (idempotent `MakeBucket`)
   - [x] Smoke `libs/tests/smoke` (build tag `smoke`; `make smoke`): a `libs/emulator` agent sends dictionary + trace + calls + suspend over real TCP; the hot phase asserts `/api/v1/calls` and `/tree` answer while `parquet/v1/` is still empty in MinIO; the cold phase ages a bucket two hours back, waits for the parquet and dictionary-snapshot objects, runs `docker compose stop collector`, and asserts the wide range and `/tree?ts_ms&retention_class` answer from S3 alone; a final phase restarts the collector and re-reads the hot rows through recovery
-- [ ] Budgets and janitors: segment refcounts/eviction, idle accumulator timeout, memory budget (`01` §4.6)
-- [ ] Prometheus metrics (`03` §2; `01` §5.1 expects dropped/truncated-call counters — `UploadStats` and the ingest decode-error paths are the seams)
+- [x] **Lifecycle janitors: hot retention, WAL purge, disk budget, snapshot quarantine** (eighth slice; branch `feat/stage1-lifecycle-janitors`)
+  - [x] `libs/collector/hotstore` — `JanitorPass`/`RunJanitorLoop` (`janitor.go`): aged local parquet deleted per `01` §6.3 (`uploaded_at + hot_retention`), call-index partitions dropped oldest-first behind a contiguity barrier (see the decisions log — zero-gap across the hot→cold drop), WALs purged per `03` §3.9 step 18 (closed + snapshots uploaded + nothing hot left + grace; the pod-restart dir and in-RAM state go with them), disk-budget eviction per `01` §4.6 (refcount-0 first, then oldest referenced, never an open segment; the row stays `evicted` so the seal records `disk_budget`)
+  - [x] `libs/collector/hotstore` — snapshot/manifest quarantine mirroring the slice-3 parquet path: permanent 4xx on a dictionary/suspend object sets the new `dict_upload_failed_at` and parks the body under `upload-failed/<s3-key>`; a rejected pods manifest is parked the same way and the parquet still commits `uploaded_at`
+  - [x] `libs/collector/hotstore` — dropped-bucket escape hatch: `InsertCall` into a dropped partition resurrects it (`dropped_at` cleared, one retry over a racing drop), so a very late Call re-enters the seal loop instead of landing invisible
+  - [x] `apps/profiler-backend` — `PROFILER_HOT_RETENTION`, `PROFILER_CHUNKS_STAGING_MAX_BYTES`, `PROFILER_WAL_PURGE_GRACE`, `PROFILER_JANITOR_CHECK_INTERVAL` (default 30 s, ON) wired into `collect`; the janitor loop joins the seal/upload loops in `collector.Service`
+  - [x] Tests: `hotstore/janitor_test.go` (lifecycle gates in order, quarantine contiguity barrier, deterministic eviction order, partition resurrect) and `libs/tests/integration/janitor_test.go` — zero-gap acceptance (`/api/v1/calls` returns the same rows before and after the hot drop, hot window provably empty, S3 LIST provably consulted; recovery over the purged PV comes up clean and cold still answers), disk-budget eviction sealing `truncated_reason=disk_budget` next to a surviving blob, snapshot/manifest quarantine stopping the retry and pinning the WALs
+- [ ] Budgets, remaining: idle accumulator timeout, memory budget (`01` §4.6 — `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`, `PROFILER_MEM_BUDGET`)
+- [ ] Prometheus metrics (`03` §2; `01` §5.1 expects dropped/truncated-call counters — `UploadStats`, `SealCounters`, the new `JanitorStats`, and the ingest decode-error paths are the seams)
 
 ## Decisions log
 
@@ -549,6 +555,89 @@ the parquet and dictionary-snapshot objects. The final phase restarts the
 collector and re-reads the hot rows, exercising recovery over the compose
 volume.
 
+### 2026-07-04 — hot drop is contiguous oldest-first; the hot index outlives the local parquet question
+
+**Question:** `02` §3 lists recently sealed local parquet as a hot source for
+calls "already moved out of the hot index", and the slice-5 open issue pinned
+that the parquet source must land together with the janitor that starts
+dropping partitions. Read local parquet from the hot API, or never drop a
+partition before its rows stop needing a hot source?
+
+**Choice:** the second. A call-index partition is dropped only when every
+`parquet_local` row of its bucket is gone — which requires `uploaded_at` set
+AND `uploaded_at + hot_retention` elapsed, the same §6.3 clock that deletes
+the local file — and drops walk oldest-first with a contiguity barrier: the
+first bucket that is unsealed, pending, quarantined, or merely young stops
+the walk. The hot index therefore covers everything the local parquet covers
+at every instant, `/internal/v1/calls` keeps its single SQLite source, and
+the `02` §3 "recently sealed local parquet" source is dead code we never
+build. The barrier is what keeps `hot_window_oldest` truthful for the §4.3
+cutoff: a quarantined bucket pins itself AND every newer bucket in the hot
+tier, so no row is ever hot-invisible while its cold copy is unconfirmed —
+the zero-gap invariant. The cost: one stuck upload keeps later partitions on
+the PV until a human resolves it (bounded by partition size, not segment
+size). The local parquet file itself now serves only as re-seal insurance
+between seal and upload; past upload it is dead weight until its §6.3 clock
+deletes it.
+
+### 2026-07-04 — WAL purge waits for the hot drop; env name PROFILER_WAL_PURGE_GRACE
+
+`01` §3.5 / `03` §3.9 step 18 gate the WAL purge on "fully flushed + grace"
+but name no env and no interaction with the hot tier. Implemented gates:
+closed + `dict_uploaded_at` set + no `parquet_local` row with `uploaded_at`
+NULL + **no indexed calls left in any live partition** + `max(closed_at,
+dict_uploaded_at) + PROFILER_WAL_PURGE_GRACE` (default 1 h) elapsed. The
+added no-indexed-calls gate means the purge strictly follows the partition
+drop, so a restart never leaves hot rows whose dictionary WAL is gone (the
+hot `/tree` would render placeholders); it also makes it safe to release the
+pod-restart's in-RAM state and remove its directory in the same step —
+after the purge the pod-restart exists only in S3 and recovery has nothing
+to resurrect. The grace is measured from close/snapshot-upload, not from
+`max(uploaded_at)`: the hot-retention janitor deletes aged parquet rows
+before the grace expires, so their timestamps are not durable inputs.
+
+### 2026-07-04 — snapshot quarantine = dict_upload_failed_at; manifest quarantine unblocks the parquet
+
+The slice-3 open issue: a permanent 4xx on a dictionary, suspend, or pods
+manifest object retried forever. Mirrored the parquet quarantine with one
+asymmetry. Dictionary/suspend: the rejected body is written under
+`upload-failed/<s3-key>`, and the new `pod_restarts.dict_upload_failed_at`
+takes the pod-restart out of the snapshot queue while `dict_uploaded_at`
+stays NULL — so the WAL purge never fires and the WALs (the only remaining
+decodable source) wait on the PV with the quarantined body. Pods manifest:
+the body is parked the same way, but the file's `uploaded_at` still commits —
+the parquet object IS durable, and blocking it would re-PUT a confirmed
+object forever for a listing-only artifact; the marker file's existence
+stops further manifest PUTs for that (day, pod-restart). Degradation: cold
+`/pods` misses that day's entry until a human uploads the parked body; the
+calls themselves stay discoverable. Refcounts are untouched on every path.
+
+### 2026-07-04 — disk budget counts on-disk bytes of all three streams; eviction marks, never deletes rows
+
+`01` §4.6 words the budget as "trace-segment disk usage";
+`03` §3.2 pins that `sql`/`xml` are "refcounted and evicted like trace". The
+janitor accounts the compressed on-disk size (stat, not `logical_size` — the
+budget guards the PV) of every non-evicted segment across all three streams
+and evicts in the deterministic order refcount-0 first, then referenced,
+each oldest-first by `created_at` with the catalog key as tie-break; open
+segments are skipped (a live gzip writer owns the file). Eviction removes
+the file but keeps the catalog row as `status='evicted'` with its refcount:
+the seal pass already maps a missing/evicted segment to
+`truncated_reason=disk_budget`, and a pinned refcount must survive for the
+upload release to balance. In-RAM `chunk_index` entries of evicted segments
+are not released — that is the memory-budget task's job.
+
+### 2026-07-04 — a dropped partition resurrects on a late insert
+
+A Call whose bucket was already dropped (theoretically possible only with a
+pathological agent clock: the bucket aged a full `hot_retention` past upload)
+would land in a partition file that `Buckets()` never lists — invisible to
+the seal loop, permanently. `partition()` therefore clears `dropped_at` when
+it re-opens a dropped bucket, and `InsertCall` retries once with a fresh
+handle when a concurrent janitor drop closed the cached one. The
+resurrected bucket is unsealed again, so the janitor leaves it to the seal
+loop and the whole seal→upload→drop cycle repeats for the late row.
+
 ## Open issues
 
 - **`stage1-plan.md` does not exist yet.** This slice was specified directly
@@ -566,17 +655,6 @@ volume.
   sealed files on disk leaves them orphaned — re-reading parquet footers
   (`03` §3.2 step 4) is not implemented. Orphans re-seal from the WAL, so the
   cost is duplicate rows collapsed by PK-dedup, plus leaked local files.
-- **Snapshot and manifest PUTs have no quarantine.** A permanent 4xx on a
-  dictionary, suspend, or pods-manifest object logs and retries on every
-  pass; only parquet files move to `upload-failed/`. Harmless while the
-  bucket policy matches the parquet PUTs, noisy if it ever diverges.
-- **WAL purge after upload is not implemented.** `01` §3.6 step 4 and `03`
-  §3.9 step 18 delete a closed pod-restart's WALs once its dictionary and
-  parquet are uploaded and the hold-back grace has elapsed; closed
-  pod-restarts currently keep their WALs on the PV.
-- **No hot-retention janitor yet.** Uploaded parquet stays on the PV past
-  `PROFILER_HOT_RETENTION` (`01` §6.3) and call partitions are never dropped;
-  both belong to the budgets/janitors task.
 - **Upload backoff state is per-pass.** Attempts restart on every pass, with
   no jitter and no per-file cross-pass schedule. `UploadStats` is the seam
   for the Prometheus counters that land with the metrics task.
@@ -590,11 +668,12 @@ volume.
   metrics task (`01` §5.1 expects counters for dropped/truncated calls).
 - **`collect` env coverage is partial.** `PROFILER_PARQUET_MAX_SIZE`,
   `PROFILER_SEAL_CONCURRENCY`, `PROFILER_MEM_BUDGET`,
-  `PROFILER_CHUNKS_STAGING_MAX_BYTES`, `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`,
-  `PROFILER_HOT_RETENTION`, the retention TTLs, and `S3_PATH_PREFIX` are not
-  parsed because nothing behind them is implemented yet (budgets/janitors and
-  maintain tasks); `PROFILER_STARTUP_LOCK_WAIT` is likewise absent — the
-  flock fails fast instead of waiting the `03` §3.1 30 s.
+  `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`, the retention TTLs, and
+  `S3_PATH_PREFIX` are not parsed because nothing behind them is implemented
+  yet (remaining budgets and maintain tasks); `PROFILER_STARTUP_LOCK_WAIT` is
+  likewise absent — the flock fails fast instead of waiting the `03` §3.1
+  30 s. (`PROFILER_HOT_RETENTION` and `PROFILER_CHUNKS_STAGING_MAX_BYTES`
+  landed with the janitors slice.)
 - **The smoke runs only locally.** `make smoke` needs the Docker CLI and a
   fresh compose stack (it stops and restarts the collector container); no CI
   job runs it yet.
@@ -623,11 +702,6 @@ volume.
   re-scan). Row-group `ts_ms` pruning from the sorted layout (`01` §5.2),
   parallel per-file scans, and streaming reads are deferred until profiling
   shows the need.
-- **Hot `/internal/v1/calls` does not read sealed local parquet** (`02` §3
-  source 4). Safe today because call partitions are never dropped, so the
-  index covers everything; the parquet source MUST land in the same task as
-  the hot-retention janitor that starts dropping partitions, or aged calls
-  become invisible to the hot tier before their S3 copy is preferred anyway.
 - **Hot /calls materializes each overlapping partition's window rows** before
   sorting in Go (no SQL-level keyset; see the collation decision). Bounded by
   a partition's ~5 minutes of calls per page, but worth a pushed-down seek
@@ -637,8 +711,20 @@ volume.
   "may have more", which can cost one extra empty page with a non-null
   cursor — explicitly allowed by §2.3.1's termination rule.
 - **`/internal/v1/calls/{pk}` probes every partition.** A bare PK carries no
-  time hint (`02` §2.2 suggests a `call_ref`); with few partitions per
-  replica the point SELECTs are cheap, revisit when the janitor lands.
+  time hint (`02` §2.2 suggests a `call_ref`); the janitor now bounds the
+  partition count to roughly `hot_retention / PROFILER_TIME_BUCKET`, so the
+  point SELECTs stay cheap.
+- **The disk-budget pass stats every segment file on every tick.** O(catalog)
+  `stat` calls per `PROFILER_JANITOR_CHECK_INTERVAL`; cache the sizes in the
+  catalog if it ever profiles.
+- **A quarantined manifest's parked body carries first-failure bounds.** The
+  marker file stops further PUT attempts, so a later seal of the same
+  (day, pod-restart) never refreshes the parked `time_max_ms`; whoever
+  uploads the body manually gets slightly narrow bounds. The rows themselves
+  are unaffected.
+- **Eviction leaves in-RAM chunk refs of evicted segments.** The seal and the
+  trace endpoint tolerate them (they map to `disk_budget` / 404), but the
+  memory they hold is only released by the future memory-budget task.
 - **Fan-out health probes run on every page.** Two HTTP round-trips per
   replica per page (hot-window + calls); a short-TTL cache of the hot-window
   report is the obvious lever if page latency ever matters.
