@@ -298,6 +298,30 @@ func TestMaintainMinio(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, wantSet, got, "/calls parity after the inputs are deleted")
 
+	// Point fetch (the /tree, /trace path) once the row lives only in the
+	// compacted object. Its key is `maintain-<hashOfInputs>-…`, so its hash
+	// is not pod-a's pod-restart hash; FetchCall must treat the reserved
+	// `maintain` replica as a candidate for every PK (01 §6.6, §7) or the
+	// point endpoints 404 a call the compaction absorbed.
+	coldStore := query.NewS3ObjectReader(mc.Client)
+	coldSource := &cold.Source{Store: coldStore}
+	target := maintainRow("pod-a", 1000, base+90_000, 300, class) // only in the compacted object now
+	targetPK := maintainRowPK(&target)
+	pointQuery := model.CallsQuery{
+		FromMs:           target.TsMs,
+		ToMs:             target.TsMs + 1,
+		RetentionClasses: []string{class},
+	}
+	disc, err := coldSource.Discover(ctx, pointQuery)
+	require.NoError(t, err)
+	require.Zero(t, disc.FailedPrefixes)
+	require.Len(t, disc.Files, 1, "only the compacted object overlaps the point window")
+	require.Equal(t, cold.MaintainReplica, disc.Files[0].Replica, "the surviving object is a maintain compaction")
+	row, ok, err := cold.FetchCall(ctx, coldStore, disc.Files, targetPK)
+	require.NoError(t, err)
+	require.True(t, ok, "point fetch must find a PK that now lives only in the compacted object")
+	assert.Equal(t, target.TraceBlob, row.TraceBlob, "the compacted row carries its trace_blob")
+
 	// Pass 4: the converged bucket is a no-op.
 	stats, err = job.Pass(ctx, time.Now().Add(3*time.Minute))
 	require.NoError(t, err)

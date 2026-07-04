@@ -76,12 +76,33 @@ pending (see open issues).
   - [x] `libs/maintain/compact.go` — write → grace → delete as three separate passes: a fresh compaction only PUTs the merged object (`maintain-<hashOfInputs>` producer key, `01` §7); a later pass recognises the output by recomputing the hash over the remaining group members and deletes the inputs once `now - LastModified(output) ≥ PROFILER_COMPACTION_DELETE_GRACE`; the merge restores `(ts_ms DESC, pk ASC)` with PK-dedup and rewrites through the full `CallV2` schema (all columns, ZSTD, schema stamp via the new shared `storageparquet.CallV2WriterOptions`)
   - [x] `libs/maintain/ttl.go` — parquet expiry by the key's `timeMax` stamp alone (widened +999 ms, so the comparison errs on the keep side); `dictionaries`/`pods`/`suspend` snapshots aged from the end of the key's UTC day against `PROFILER_RETENTION_DICTIONARY_TTL`
   - [x] `libs/query/cold` — mid-read 404 backstop (`02` §5.1): a listed object deleted between the LIST and the column reads now degrades to an empty result (existence re-check on the error path) instead of a spurious `partial`; before this, the §5.1 rule held only for a delete before the first byte
+  - [x] `libs/query/cold` — point fetch sees compacted objects: `ParseKey` now parses the `<replica>` token (everything left of the hash, dashes and all) into `FileRef`, and `FetchCall` treats a file whose replica is the reserved `maintain` token (`01` §7) as a candidate for every PK — read whole and matched row-by-row — instead of pruning it by a hash that covers the compaction's inputs, not one pod-restart. Before this, `/calls/{pk}/tree` and `/trace` answered 404 for a call whose bucket had been compacted cold-side
   - [x] `apps/profiler-backend` — `maintain` subcommand: singleton loop with `PROFILER_MAINTAIN_CHECK_INTERVAL` (immediate first pass), `--run-now` one-shot for a k8s CronJob (`03` §8.2); env: `PROFILER_COMPACTION_{MIN_AGE,MIN_FILES,DELETE_GRACE,MAX_BYTES}`, per-class retention TTLs with a `d` suffix decoder (`35d`)
-  - [x] Tests: `libs/maintain/maintain_test.go` (grace lifecycle on a fake store with a steerable clock, unsettled/small/oversized guards, residue convergence, TTL boundaries, key parsing incl. discovery round-trip) and `libs/tests/integration/maintain_minio_test.go` (`integration` tag) — seeded per-pod-restart + patch files compact to one object with the identical PK set, order, columns, and floor/ceil key stamps; `/api/v1/calls` answers the same rows through every write → grace → delete phase with a concurrent reader; converged bucket re-pass is a no-op; TTL deletes only expired parquet and snapshots
+  - [x] Tests: `libs/maintain/maintain_test.go` (grace lifecycle on a fake store with a steerable clock, unsettled/small/oversized guards, residue convergence, TTL boundaries, key parsing incl. discovery round-trip) and `libs/tests/integration/maintain_minio_test.go` (`integration` tag) — seeded per-pod-restart + patch files compact to one object with the identical PK set, order, columns, and floor/ceil key stamps; `/api/v1/calls` answers the same rows through every write → grace → delete phase with a concurrent reader; a point fetch (the `/tree`, `/trace` path) finds a PK that, after the inputs are deleted, lives only in the `maintain-`keyed object; converged bucket re-pass is a no-op; TTL deletes only expired parquet and snapshots
 - [ ] Budgets, remaining: idle accumulator timeout, memory budget (`01` §4.6 — `PROFILER_IDLE_ACCUMULATOR_TIMEOUT`, `PROFILER_MEM_BUDGET`)
 - [ ] Prometheus metrics (`03` §2; `01` §5.1 expects dropped/truncated-call counters — `UploadStats`, `SealCounters`, the new `JanitorStats`, and the ingest decode-error paths are the seams)
 
 ## Decisions log
+
+### 2026-07-04 — compacted objects are identified by the reserved `maintain` replica token, not a hash sentinel
+
+**Question:** The cold point fetch (`FetchCall`) prunes a candidate whose
+key-encoded pod-restart hash cannot match the PK. A cross-pod-restart
+compaction keys its output by the hash of its *inputs*, so that hash matches
+no live PK and the object was skipped. How should the point-fetch path
+recognise a compacted object it must read whole?
+
+**Choice:** By the key's `<replica>` slot. `ParseKey` now parses the replica
+(everything left of the hash, dashes included) into `FileRef`, and `FetchCall`
+treats a file whose replica is the reserved `maintain` token (`01` §7) as a
+candidate for every PK — read whole, matched row-by-row. The `scan.go` comment
+that anticipated "compaction may blank the hash later" was wrong: the contract
+never blanks the hash; it substitutes the reserved replica token.
+
+**Reason:** The replica token is already the contract's marker for a compacted
+producer (`01` §6.6, §7); no key change or hash sentinel is needed. The list
+path (`/calls`) is unaffected — it never filters by hash — so only the point
+endpoints (`/tree`, `/trace`) needed the fix.
 
 ### 2026-07-03 — calls.wal record body is length-prefixed JSON, not raw wire bytes
 
@@ -702,14 +723,6 @@ acceptance depends on it; the contract text needed no change.
 
 ## Open issues
 
-- **Cold point fetch cannot see compacted objects.** `FetchCall` skips
-  candidates whose key-encoded pod-restart hash does not match the PK, and a
-  maintain object carries the hash of its *inputs* — so `/calls/{pk}/tree`
-  and `/trace` answer 404 for a call whose bucket was compacted cold-side
-  (the `scan.go` comment anticipated this). `/calls` is unaffected (the list
-  path never filters by hash). Fix before enabling compaction where cold
-  `/tree` matters: parse the replica token into `FileRef` and treat
-  `maintain` files as candidates for any PK.
 - **Maintain LISTs each whole class prefix every pass.** O(objects alive in
   the class) keys per tick, paged serially within the prefix (`02` §5.5).
   Fine at MVP scale; bound the walk to the TTL window's hour prefixes, or a

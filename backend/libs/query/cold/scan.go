@@ -45,7 +45,10 @@ func ScanFile(ctx context.Context, store ObjectStore, ref FileRef, q model.Calls
 // pod-restart hash cannot match the PK are skipped without an open; the rest
 // are read whole, one by one, until the PK matches (a point fetch touches the
 // couple of files of one 5-minute bucket, so row-group pruning is not worth
-// its weight yet). ok is false when no candidate holds the PK.
+// its weight yet). A compacted object (the reserved MaintainReplica token)
+// keys its hash off the compaction's inputs, not one pod-restart, so it is a
+// candidate for every PK and matched row-by-row (01 §6.6, §7). ok is false
+// when no candidate holds the PK.
 func FetchCall(ctx context.Context, store ObjectStore, files []FileRef, pk model.PK) (*storageparquet.CallV2, bool, error) {
 	hash := model.PodRestartHash(model.PodTuple{
 		Namespace: pk.PodNamespace, Service: pk.PodService,
@@ -55,8 +58,8 @@ func FetchCall(ctx context.Context, store ObjectStore, files []FileRef, pk model
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		if ref.Hash != hash {
-			continue // another pod-restart's file (compaction may blank the hash later)
+		if ref.Replica != MaintainReplica && ref.Hash != hash {
+			continue // another pod-restart's write-path file, its hash cannot hold this PK
 		}
 		rows, err := readRows[storageparquet.CallV2](ctx, store, ref)
 		if err != nil {
