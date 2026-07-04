@@ -92,6 +92,9 @@ type (
 		// *_CHECK_INTERVAL knobs; the name is an implementation choice
 		// recorded in stage1-progress.md.
 		CheckInterval time.Duration `envconfig:"PROFILER_MAINTAIN_CHECK_INTERVAL" default:"5m"`
+		// MetricsPort serves /metrics and /health/live in loop mode; the
+		// one-shot --run-now mode (a CronJob pod) binds nothing.
+		MetricsPort int `envconfig:"PROFILER_METRICS_PORT" default:"8081"`
 		// TimeBucket must mirror the collector's value: the settled check
 		// needs the bucket end and the object key carries only the start.
 		TimeBucket time.Duration `envconfig:"PROFILER_TIME_BUCKET" default:"5m"`
