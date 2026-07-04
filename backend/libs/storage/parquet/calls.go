@@ -36,11 +36,10 @@ func (p Parameters) Get(key string) []string {
 }
 
 // LegacyParameters is the params column of the legacy CallParquet shape: the
-// xitongsys/parquet-go dialect cannot derive a MAP value schema from a bare
-// []string, so the values ride in the ParamsValueList wrapper. Only the
-// legacy libs/parquet writer (tools/data-generator) still serializes it; the
-// wrapper must stay until that pipeline retires, or the legacy file shape
-// changes under its consumers.
+// xitongsys/parquet-go dialect could not derive a MAP value schema from a bare
+// []string, so the values ride in the ParamsValueList wrapper. The writer that
+// produced this shape (libs/parquet, via tools/data-generator) has been
+// retired; the type is kept only so its own unit test can pin the shape.
 type (
 	LegacyParameters map[string]*ParamsValueList
 	ParamsValueList  struct {
@@ -76,9 +75,10 @@ func (pvl *ParamsValueList) String() string {
 // -----------------------------------------------------------------------------
 
 // CallParquet is the legacy dumps-collector row shape; the Stage 1 pipeline
-// replaced it with CallV2, and only the legacy libs/parquet writer
-// (tools/data-generator) still serializes it, via the retired
-// xitongsys/parquet-go dialect its struct tags carry.
+// replaced it with CallV2. Its writer (libs/parquet, via tools/data-generator)
+// has been retired, so nothing serializes it now; the struct tags still carry
+// the old xitongsys/parquet-go dialect and the type survives only for its own
+// unit test.
 type CallParquet struct {
 	Time              int64            `parquet:"name=time, type=INT64"`
 	CpuTime           int64            `parquet:"name=cpuTime, type=INT64"`

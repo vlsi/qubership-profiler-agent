@@ -492,11 +492,13 @@ Consequences:
   panicking inside the reader; `readRows` recovers it into that file's scan
   error so a foreign or future-versioned object degrades to a failed source,
   not a crashed query service.
-- **xitongsys is NOT fully gone from go.mod:** the legacy `libs/parquet`
-  writer (used only by `tools/data-generator`, support tooling of the
-  retired dumps pipeline) still imports it. Migrating that tool would change
-  the legacy file shapes it emits for consumers this stage does not own, so
-  it stays on the old library — recorded as an open issue.
+- **xitongsys is gone from `go.mod`.** Its only remaining importer was the
+  legacy `libs/parquet` writer, used solely by `tools/data-generator` (support
+  tooling of the retired dumps pipeline). Porting the writer would have changed
+  the legacy file shapes it emits for consumers this stage does not own, so the
+  maintainer retired `libs/parquet` and `tools/data-generator` outright;
+  `go mod tidy` then dropped `xitongsys/parquet-go` and
+  `xitongsys/parquet-go-source`.
 
 ## Open issues
 
@@ -542,12 +544,6 @@ Consequences:
   the agent produces today. Revisit only if multi-phrase params streams appear
   (would belong in the `streams/ → pipe/` consolidation, `profiler-plan.md`
   decision 8).
-- **`tools/data-generator` still writes parquet via xitongsys** (through the
-  legacy `libs/parquet` writer and the old `CallParquet` / `DumpParquet`
-  shapes), which keeps `github.com/xitongsys/parquet-go` in `go.mod`. The
-  Stage 1 write and read paths no longer touch it. Drop the dependency by
-  migrating or retiring the tool together with the rest of the dumps-pipeline
-  legacy.
 - **Pre-existing test failures** in `libs/parser/...` (`TestIntegration`,
   `TestParsePodDump`, `streams` suites) come from binary fixtures that are
   deliberately not committed (`WORKFLOW.md` §6); they fail identically with
