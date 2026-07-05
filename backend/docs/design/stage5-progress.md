@@ -21,7 +21,11 @@ merge gates a usable tree. Status, decisions, and open issues per
   - [x] `libs/calltree` — the codec re-numbers the Node fields per the new tag table; the decoder caps header-declared preallocations and canonicalises empty optional arrays to nil, so `Decode ∘ Encode` is a fixpoint
   - [x] `Build` fills the new fields per invocation for now — `executions = 1`, `selfDurationMs` computed at exit, suspension zero — the R5 merge (Phase 3) and the R7 timeline (Phase 4) land on top
   - [x] Tests: round-trip + wide values + the unknown-int-key fixture on the new numbers; `FuzzDecode` (error-never-panic on corrupted payloads, decode→encode→decode fixpoint on valid ones; 30 s local run clean)
-- [ ] **Phase 3 — R5/R6: server-side merge in `calltree.Build`** (08 R5–R6)
+- [x] **Phase 3 — R5/R6: server-side merge in `calltree.Build`** (08 R5–R6)
+  - [x] `libs/calltree` — `Build` folds sibling invocations of one method under a parent into one node (`childIdx` lookup per parent), summing `durationMs` / `selfDurationMs` per invocation; `executions` rolls up bottom-up as `selfExecutions + Σ children.executions` — the old UI's `M_EXECUTIONS + M_CHILD_EXECUTIONS`
+  - [x] The merged node carries everything the client collapse heuristic reads (07 §5.4, 08 §5): self/total duration, self/total executions for the fan-out check, and params presence; the collapse itself stays client-side
+  - [x] Params concatenate across folded invocations in event order — the R11 aggregation (Phase 5) replaces this
+  - [x] Tests: merge semantics on a three-invocation loop fixture, distinct siblings kept apart in first-seen order, self-recursion folding per level (never into an ancestor), hotspot flat-profile ranking, and an `assertMergeInvariants` walker (executions and self-duration arithmetic on every node)
 - [ ] **Phase 4 — R7: per-node suspension** (08 R7; the suspend-timeline input to `Build` is designed first)
 - [ ] **Phase 5 — R11: param aggregation** (08 R11; the contract is extracted from the Java `parsers/` first)
 
@@ -46,6 +50,11 @@ merge gates a usable tree. Status, decisions, and open issues per
   `selfDurationMs = durationMs − Σ children`, suspension zero). The schema
   and codec change once; the merge (Phase 3) and the suspension attribution
   (Phase 4) are then semantics-only diffs with no wire churn.
+- **2026-07-05 — merge keying is by method only.** The old UI merged by
+  `(method id, signature)`; the signature axis served the dataflow analyzers,
+  which Stage 5 defers (08 §10). Recursion cannot fold into an ancestor by
+  construction — a node folds only into a sibling under the same parent, so
+  depth structure is preserved and a self-recursive chain stays a chain.
 - **2026-07-05 — the synthetic calls generator writes format 4.** The
   version-1 output could not carry the R1 counters, and the decoders
   (`libs/parser/pipe`, `libs/parser/streams`) have read formats 2–4 all along.

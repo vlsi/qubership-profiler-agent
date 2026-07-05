@@ -104,33 +104,53 @@ func (ev event) bigRef() BigRef {
 	return BigRef{Stream: stream, Seq: ev.bigSeq, Offset: ev.bigOffset}
 }
 
-// Build decodes the blob into the call tree. recordIndex is the PK component
-// locating the root ENTER within the blob's first chunk (01-write-contract.md
-// §4.5). The tree is still one node per invocation — executions is 1
-// everywhere; the R5 sibling merge (08-ui-backend-requirements.md) lands on
-// top of this schema.
+// Build decodes the blob into the merged call tree (08-ui-backend-requirements.md
+// R5): sibling invocations of one method under a parent fold into one node,
+// so the node count is bounded by distinct call paths, not by invocations — a
+// million-iteration loop is one node, not a million. recordIndex is the PK
+// component locating the root ENTER within the blob's first chunk
+// (01-write-contract.md §4.5).
 func Build(blob []byte, recordIndex int, opts Options) (*Tree, error) {
 	b := &builder{
 		opts:      opts,
 		tree:      &Tree{Methods: []string{}, Params: []string{}},
 		methodIdx: map[string]int{},
 		paramIdx:  map[string]int{},
+		childIdx:  map[*Node]map[int]*Node{},
 	}
 	if err := walkCall(blob, recordIndex, b.visit); err != nil {
 		return nil, err
 	}
+	if b.tree.Root != nil {
+		totalExecutions(b.tree.Root)
+	}
 	return b.tree, nil
 }
 
-// builder folds the call's events into the tree. Each stack frame keeps the
-// node's absolute enter time — the wire carries no durations, only the
-// enter/exit pair (01 §4.2) — and the wall-clock its children consumed, so
-// the exit computes both durationMs and selfDurationMs in one pass.
+// totalExecutions rolls invocation counts up the merged tree:
+// executions = selfExecutions + Σ children.executions (02 §2.5.3), the
+// old UI's M_EXECUTIONS + M_CHILD_EXECUTIONS displayed as "calls".
+func totalExecutions(n *Node) int64 {
+	n.Executions = n.SelfExecutions
+	for _, child := range n.Children {
+		n.Executions += totalExecutions(child)
+	}
+	return n.Executions
+}
+
+// builder folds the call's events into the merged tree. Each stack frame is
+// one live invocation: it keeps the absolute enter time — the wire carries no
+// durations, only the enter/exit pair (01 §4.2) — and the wall-clock this
+// invocation's children consumed, so the exit adds both the invocation's
+// total and its self time to the merged node in one pass. childIdx finds the
+// merged node for a method under a parent in O(1); it persists across sibling
+// invocations, which is what makes them fold into one node.
 type builder struct {
 	opts      Options
 	tree      *Tree
 	methodIdx map[string]int
 	paramIdx  map[string]int
+	childIdx  map[*Node]map[int]*Node
 	stack     []frame
 }
 
@@ -143,25 +163,35 @@ type frame struct {
 func (b *builder) visit(ev event, atMs int64) {
 	switch ev.kind {
 	case pipe.EventEnterRecord:
-		node := &Node{
-			MethodIdx:      b.internMethod(ev.tagId),
-			Executions:     1,
-			SelfExecutions: 1,
-		}
+		methodIdx := b.internMethod(ev.tagId)
+		var node *Node
 		if b.tree.Root == nil {
+			node = &Node{MethodIdx: methodIdx}
 			b.tree.Root = node
 		} else {
 			parent := b.stack[len(b.stack)-1].node
-			parent.Children = append(parent.Children, node)
+			byMethod := b.childIdx[parent]
+			if byMethod == nil {
+				byMethod = map[int]*Node{}
+				b.childIdx[parent] = byMethod
+			}
+			node = byMethod[methodIdx]
+			if node == nil {
+				node = &Node{MethodIdx: methodIdx}
+				byMethod[methodIdx] = node
+				parent.Children = append(parent.Children, node)
+			}
 		}
+		node.SelfExecutions++
 		b.stack = append(b.stack, frame{node: node, enterMs: atMs})
 	case pipe.EventExitRecord:
 		top := b.stack[len(b.stack)-1]
-		top.node.DurationMs = atMs - top.enterMs
-		top.node.SelfDurationMs = top.node.DurationMs - top.childrenMs
+		duration := atMs - top.enterMs
+		top.node.DurationMs += duration
+		top.node.SelfDurationMs += duration - top.childrenMs
 		b.stack = b.stack[:len(b.stack)-1]
 		if len(b.stack) > 0 {
-			b.stack[len(b.stack)-1].childrenMs += top.node.DurationMs
+			b.stack[len(b.stack)-1].childrenMs += duration
 		}
 	case pipe.EventTagRecord:
 		node := b.stack[len(b.stack)-1].node

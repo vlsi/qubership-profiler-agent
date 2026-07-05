@@ -54,7 +54,7 @@ func TestBuildNestingAndTimes(t *testing.T) {
 	assert.Equal(t, "com.example.Service.handle", tree.Methods[root.MethodIdx])
 	assert.Equal(t, int64(15), root.DurationMs, "exit at +20 minus enter at +5")
 	assert.Equal(t, int64(10), root.SelfDurationMs, "15 total minus 4+1 in children")
-	assert.Equal(t, int64(1), root.Executions)
+	assert.Equal(t, int64(3), root.Executions, "itself plus one invocation of each child")
 	assert.Equal(t, int64(1), root.SelfExecutions)
 	require.Len(t, root.Children, 2)
 
@@ -153,6 +153,150 @@ func TestBuildParams(t *testing.T) {
 	assert.Equal(t, []string{"xml:3:40"}, xml.Values,
 		"an unresolvable reference is marked, not silently dropped")
 	assert.Equal(t, []int{0}, xml.Unresolved)
+}
+
+// TestBuildMergesSiblingInvocations pins the R5 merge semantics
+// (08-ui-backend-requirements.md): three invocations of query under handle —
+// two of them calling render — fold into one query node with one render
+// child, every metric summed across the folded invocations.
+func TestBuildMergesSiblingInvocations(t *testing.T) {
+	blob := blobOf(t, wire.TraceChunk{ThreadId: 7, StartMs: timerStartMs, Events: []wire.TraceEvent{
+		wire.Enter(0, 1),                       // handle at +0
+		wire.Enter(1, 2), wire.Tag(0, 4, "q1"), // query #1 at +1
+		wire.Enter(1, 3), wire.Exit(2), // its render, +2..+4
+		wire.Exit(1),                   // query #1 exits at +5: total 4, self 2
+		wire.Enter(2, 2),               // query #2 at +7
+		wire.Enter(1, 3), wire.Exit(1), // its render, +8..+9
+		wire.Exit(3),                           // query #2 exits at +12: total 5, self 4
+		wire.Enter(1, 2), wire.Tag(0, 4, "q3"), // query #3 at +13, no render
+		wire.Exit(4), // query #3 exits at +17: total 4, self 4
+		wire.Exit(3), // handle exits at +20
+	}})
+
+	tree, err := Build(blob, 0, dictOpt())
+	require.NoError(t, err)
+
+	root := tree.Root
+	assert.Equal(t, int64(20), root.DurationMs)
+	assert.Equal(t, int64(7), root.SelfDurationMs, "20 total minus 4+5+4 in query invocations")
+	assert.Equal(t, int64(1), root.SelfExecutions)
+	assert.Equal(t, int64(6), root.Executions, "1 handle + 3 query + 2 render")
+	require.Len(t, root.Children, 1, "three sibling query invocations fold into one node")
+
+	q := root.Children[0]
+	assert.Equal(t, "com.example.Service.query", tree.Methods[q.MethodIdx])
+	assert.Equal(t, int64(3), q.SelfExecutions)
+	assert.Equal(t, int64(5), q.Executions)
+	assert.Equal(t, int64(13), q.DurationMs, "4+5+4 across the folded invocations")
+	assert.Equal(t, int64(10), q.SelfDurationMs, "13 total minus 2+1 in render")
+	require.Len(t, q.Params, 1)
+	assert.Equal(t, []string{"q1", "q3"}, q.Params[0].Values,
+		"params concatenate across folded invocations in event order (R11 aggregates them later)")
+
+	require.Len(t, q.Children, 1)
+	r := q.Children[0]
+	assert.Equal(t, "com.example.Service.render", tree.Methods[r.MethodIdx])
+	assert.Equal(t, int64(2), r.SelfExecutions)
+	assert.Equal(t, int64(2), r.Executions)
+	assert.Equal(t, int64(3), r.DurationMs)
+	assert.Equal(t, int64(3), r.SelfDurationMs)
+
+	assertMergeInvariants(t, root)
+}
+
+// TestBuildMergeKeepsDistinctSiblings pins what the merge must NOT do: only
+// same-method siblings fold; an a-b-a interleave keeps two nodes in
+// first-seen order, with the a invocations folded.
+func TestBuildMergeKeepsDistinctSiblings(t *testing.T) {
+	blob := blobOf(t, wire.TraceChunk{ThreadId: 7, StartMs: timerStartMs, Events: []wire.TraceEvent{
+		wire.Enter(0, 1),
+		wire.Enter(1, 2), wire.Exit(1), // a
+		wire.Enter(1, 3), wire.Exit(1), // b
+		wire.Enter(1, 2), wire.Exit(1), // a again
+		wire.Exit(1),
+	}})
+	tree, err := Build(blob, 0, dictOpt())
+	require.NoError(t, err)
+
+	require.Len(t, tree.Root.Children, 2)
+	a, b := tree.Root.Children[0], tree.Root.Children[1]
+	assert.Equal(t, "com.example.Service.query", tree.Methods[a.MethodIdx])
+	assert.Equal(t, int64(2), a.SelfExecutions)
+	assert.Equal(t, "com.example.Service.render", tree.Methods[b.MethodIdx])
+	assert.Equal(t, int64(1), b.SelfExecutions)
+	assertMergeInvariants(t, tree.Root)
+}
+
+// TestBuildMergeRecursion pins that recursion keeps its depth structure: a
+// self-recursive chain merges per level, never into its own ancestor.
+func TestBuildMergeRecursion(t *testing.T) {
+	blob := blobOf(t, wire.TraceChunk{ThreadId: 7, StartMs: timerStartMs, Events: []wire.TraceEvent{
+		wire.Enter(0, 1),
+		wire.Enter(1, 1), wire.Exit(1), // recurse #1
+		wire.Enter(1, 1),               // recurse #2 ...
+		wire.Enter(1, 1), wire.Exit(1), // ... goes one deeper
+		wire.Exit(1),
+		wire.Exit(1),
+	}})
+	tree, err := Build(blob, 0, dictOpt())
+	require.NoError(t, err)
+
+	root := tree.Root
+	assert.Equal(t, int64(1), root.SelfExecutions)
+	require.Len(t, root.Children, 1, "both recursive invocations fold at depth 1")
+	assert.Equal(t, int64(2), root.Children[0].SelfExecutions)
+	require.Len(t, root.Children[0].Children, 1)
+	assert.Equal(t, int64(1), root.Children[0].Children[0].SelfExecutions)
+	assert.Equal(t, int64(4), root.Executions)
+	assertMergeInvariants(t, root)
+}
+
+// TestBuildMergeHotspotRanking drives the merged tree through the flat
+// profile the UI's Hotspots tab computes — self time aggregated by method —
+// and pins the ranking a known synthetic trace must produce (07-ui-design.md
+// §5.3).
+func TestBuildMergeHotspotRanking(t *testing.T) {
+	// handle self 7, query self 10, render self 3 (the merge-test fixture).
+	blob := blobOf(t, wire.TraceChunk{ThreadId: 7, StartMs: timerStartMs, Events: []wire.TraceEvent{
+		wire.Enter(0, 1),
+		wire.Enter(1, 2), wire.Enter(1, 3), wire.Exit(2), wire.Exit(1),
+		wire.Enter(2, 2), wire.Enter(1, 3), wire.Exit(1), wire.Exit(3),
+		wire.Enter(1, 2), wire.Exit(4),
+		wire.Exit(3),
+	}})
+	tree, err := Build(blob, 0, dictOpt())
+	require.NoError(t, err)
+
+	selfByMethod := map[string]int64{}
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		selfByMethod[tree.Methods[n.MethodIdx]] += n.SelfDurationMs
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(tree.Root)
+
+	assert.Equal(t, map[string]int64{
+		"com.example.Service.query":  10,
+		"com.example.Service.handle": 7,
+		"com.example.Service.render": 3,
+	}, selfByMethod, "the hotspot profile ranks query > handle > render")
+}
+
+// assertMergeInvariants checks the arithmetic every merged node must satisfy:
+// executions = selfExecutions + Σ children.executions, and
+// selfDurationMs = durationMs − Σ children.durationMs (02 §2.5.3).
+func assertMergeInvariants(t *testing.T, n *Node) {
+	t.Helper()
+	childExecutions, childDuration := int64(0), int64(0)
+	for _, child := range n.Children {
+		childExecutions += child.Executions
+		childDuration += child.DurationMs
+		assertMergeInvariants(t, child)
+	}
+	assert.Equal(t, n.SelfExecutions+childExecutions, n.Executions)
+	assert.Equal(t, n.DurationMs-childDuration, n.SelfDurationMs)
 }
 
 func TestBuildDictMiss(t *testing.T) {

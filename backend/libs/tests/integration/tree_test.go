@@ -169,7 +169,7 @@ func TestTreeAndTraceAPI(t *testing.T) {
 		root := tree.Root
 		assert.Equal(t, int64(15), root.DurationMs)
 		assert.Equal(t, int64(10), root.SelfDurationMs, "15 total minus the child's 5")
-		assert.Equal(t, int64(1), root.Executions)
+		assert.Equal(t, int64(2), root.Executions, "itself plus the one child invocation")
 		assert.Equal(t, int64(1), root.SelfExecutions)
 		require.Len(t, root.Params, 2)
 		assert.Equal(t, []string{"req-hot"}, root.Params[0].Values)
