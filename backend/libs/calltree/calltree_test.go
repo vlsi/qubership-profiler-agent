@@ -284,19 +284,96 @@ func TestBuildMergeHotspotRanking(t *testing.T) {
 	}, selfByMethod, "the hotspot profile ranks query > handle > render")
 }
 
-// assertMergeInvariants checks the arithmetic every merged node must satisfy:
-// executions = selfExecutions + Σ children.executions, and
-// selfDurationMs = durationMs − Σ children.durationMs (02 §2.5.3).
+// TestBuildSuspensionAttribution pins the R7 semantics
+// (08-ui-backend-requirements.md): each node's suspension is its work
+// interval intersected with the global timeline, and a pause spanning a
+// child's exit splits between the child and the parent's self time. The
+// timeline is deliberately out of order — Build normalizes it.
+func TestBuildSuspensionAttribution(t *testing.T) {
+	// root [+0, +40) with one child [+10, +20).
+	blob := blobOf(t, wire.TraceChunk{ThreadId: 7, StartMs: timerStartMs, Events: []wire.TraceEvent{
+		wire.Enter(0, 1),
+		wire.Enter(10, 2), wire.Exit(10),
+		wire.Exit(20),
+	}})
+	opts := dictOpt()
+	opts.Suspend = []SuspendInterval{
+		{TimeMs: timerStartMs + 50, DurationMs: 5}, // past the root exit: ignored
+		{TimeMs: timerStartMs + 18, DurationMs: 4}, // [18, 22): 2 ms child, 2 ms root self
+		{TimeMs: timerStartMs + 5, DurationMs: 2},  // [5, 7): before the child, root self
+		{TimeMs: timerStartMs + 12, DurationMs: 3}, // [12, 15): inside the child
+	}
+
+	tree, err := Build(blob, 0, opts)
+	require.NoError(t, err)
+
+	root := tree.Root
+	assert.Equal(t, int64(9), root.SuspensionMs, "2 + 3 + 4 of the pauses land inside [0, 40)")
+	assert.Equal(t, int64(4), root.SelfSuspensionMs, "9 total minus the child's 5")
+	require.Len(t, root.Children, 1)
+	child := root.Children[0]
+	assert.Equal(t, int64(5), child.SuspensionMs, "[12, 15) whole, [18, 22) clipped to the exit at +20")
+	assert.Equal(t, int64(5), child.SelfSuspensionMs)
+	assertMergeInvariants(t, root)
+}
+
+// TestBuildSuspensionAcrossMergedInvocations pins that suspension, like
+// duration, sums per invocation before the R5 fold: one pause spanning the
+// gap between two folded invocations counts only their work intervals.
+func TestBuildSuspensionAcrossMergedInvocations(t *testing.T) {
+	// root [+0, +20); q #1 [+2, +6), q #2 [+10, +14); pause [4, 12).
+	blob := blobOf(t, wire.TraceChunk{ThreadId: 7, StartMs: timerStartMs, Events: []wire.TraceEvent{
+		wire.Enter(0, 1),
+		wire.Enter(2, 2), wire.Exit(4),
+		wire.Enter(4, 2), wire.Exit(4),
+		wire.Exit(6),
+	}})
+	opts := dictOpt()
+	opts.Suspend = []SuspendInterval{{TimeMs: timerStartMs + 4, DurationMs: 8}}
+
+	tree, err := Build(blob, 0, opts)
+	require.NoError(t, err)
+
+	root := tree.Root
+	assert.Equal(t, int64(8), root.SuspensionMs)
+	assert.Equal(t, int64(4), root.SelfSuspensionMs,
+		"the [6, 10) middle of the pause falls between the invocations: root self time")
+	require.Len(t, root.Children, 1)
+	q := root.Children[0]
+	assert.Equal(t, int64(4), q.SuspensionMs, "[4, 6) of #1 plus [10, 12) of #2")
+	assert.Equal(t, int64(4), q.SelfSuspensionMs)
+	assertMergeInvariants(t, root)
+}
+
+func TestNormalizeSuspend(t *testing.T) {
+	got := normalizeSuspend([]SuspendInterval{
+		{TimeMs: 30, DurationMs: 5},
+		{TimeMs: 0, DurationMs: 10},
+		{TimeMs: 5, DurationMs: 20}, // overlaps the previous: one [0, 25) pause
+	})
+	assert.Equal(t, []SuspendInterval{
+		{TimeMs: 0, DurationMs: 25},
+		{TimeMs: 30, DurationMs: 5},
+	}, got, "unsorted and overlapping pauses normalize; overlap is never double-counted")
+}
+
+// assertMergeInvariants checks the arithmetic every merged node must satisfy
+// (02 §2.5.3): executions = selfExecutions + Σ children.executions,
+// selfDurationMs = durationMs − Σ children.durationMs, and the same self
+// arithmetic for suspension, which can also never exceed the duration.
 func assertMergeInvariants(t *testing.T, n *Node) {
 	t.Helper()
-	childExecutions, childDuration := int64(0), int64(0)
+	childExecutions, childDuration, childSuspension := int64(0), int64(0), int64(0)
 	for _, child := range n.Children {
 		childExecutions += child.Executions
 		childDuration += child.DurationMs
+		childSuspension += child.SuspensionMs
 		assertMergeInvariants(t, child)
 	}
 	assert.Equal(t, n.SelfExecutions+childExecutions, n.Executions)
 	assert.Equal(t, n.DurationMs-childDuration, n.SelfDurationMs)
+	assert.Equal(t, n.SuspensionMs-childSuspension, n.SelfSuspensionMs)
+	assert.LessOrEqual(t, n.SuspensionMs, n.DurationMs)
 }
 
 func TestBuildDictMiss(t *testing.T) {

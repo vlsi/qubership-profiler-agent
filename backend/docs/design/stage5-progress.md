@@ -26,7 +26,11 @@ merge gates a usable tree. Status, decisions, and open issues per
   - [x] The merged node carries everything the client collapse heuristic reads (07 §5.4, 08 §5): self/total duration, self/total executions for the fan-out check, and params presence; the collapse itself stays client-side
   - [x] Params concatenate across folded invocations in event order — the R11 aggregation (Phase 5) replaces this
   - [x] Tests: merge semantics on a three-invocation loop fixture, distinct siblings kept apart in first-seen order, self-recursion folding per level (never into an ancestor), hotspot flat-profile ranking, and an `assertMergeInvariants` walker (executions and self-duration arithmetic on every node)
-- [ ] **Phase 4 — R7: per-node suspension** (08 R7; the suspend-timeline input to `Build` is designed first)
+- [x] **Phase 4 — R7: per-node suspension** (08 R7)
+  - [x] `libs/calltree` — `Options.Suspend []SuspendInterval` feeds `Build`; the timeline is normalized (sorted, overlaps merged) once, and each invocation's `[enter, exit]` intersects it via binary search, split self/total like durations
+  - [x] `libs/collector/hotread` — `GET /internal/v1/pods/{pod-restart}/suspend` serves the replica's `suspend.wal` RAM mirror (recovery reloads it, so recovered pod-restarts answer too) in the `suspend/v1` snapshot shape
+  - [x] `libs/query` — the hot `/tree` branch fetches the timeline from the serving replica, the cold branch from the `suspend/v1` snapshot (`model.SuspendSnapshotKey`, now shared by the uploader and `cold.Suspend`); a missing snapshot or a pod-restart that left the replica degrades to zero suspension, transport errors are a 504
+  - [x] Tests: `calltree` attribution suite (pause spanning a child boundary splits child/parent-self, merged invocations sum per work interval, out-of-order and overlapping timelines normalize, suspension invariants joined `assertMergeInvariants`); `tree_test.go` asserts per-node suspension end to end on both tiers
 - [ ] **Phase 5 — R11: param aggregation** (08 R11; the contract is extracted from the Java `parsers/` first)
 
 ## Decisions log
@@ -50,6 +54,17 @@ merge gates a usable tree. Status, decisions, and open issues per
   `selfDurationMs = durationMs − Σ children`, suspension zero). The schema
   and codec change once; the merge (Phase 3) and the suspension attribution
   (Phase 4) are then semantics-only diffs with no wire churn.
+- **2026-07-05 — R7 data path: reuse the suspend artefacts both tiers already
+  have.** `Build` takes the timeline as an explicit `Options.Suspend` input —
+  the builder stays storage-agnostic. The hot tier serves it from the
+  `suspend.wal` RAM mirror over a new internal endpoint (the mirror landed
+  with Phase 1 for the index-time `suspend_ms`); the cold tier reads the
+  `suspend/v1` snapshot the uploader has written since Stage 1 — no new
+  storage. Both carry agent wall-clock Unix ms, the same clock as the trace
+  timer epoch, so intervals intersect without translation. Degrade rule: a
+  missing timeline (snapshot TTL'd, pod-restart left the replica between the
+  blob fetch and the suspend fetch) renders the tree with zero suspension —
+  the pre-R7 behaviour — while transport failures stay a 504.
 - **2026-07-05 — merge keying is by method only.** The old UI merged by
   `(method id, signature)`; the signature axis served the dataflow analyzers,
   which Stage 5 defers (08 §10). Recursion cannot fold into an ancestor by

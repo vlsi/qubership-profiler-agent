@@ -196,6 +196,13 @@ Two consumption paths:
 - **`/calls/{pk}/tree` — canonical path** for UI, MCP, CLI. Server pre-aggregates the per-call blob into a tree, encodes as MessagePack with stable int-keyed maps and a version envelope. Self-contained (the response carries its own per-tree dictionary inline). Hand-written decoders in any language are ~50–80 LOC.
 - **`/calls/{pk}/trace` + `/pods/{pod-restart}/dictionary` — advanced path** for consumers that want the raw wire format (third-party tooling re-using our Go decoder, full-fidelity offline analysis). Smaller payload, but more client code to maintain.
 
+Per-node suspension (§2.5.3 fields 3–4) is attributed at tree build: each invocation's `[enter, exit]`
+interval is intersected with the pod-restart's global stop-the-world timeline
+(`08-ui-backend-requirements.md` R7). On the hot tier the timeline comes from the replica's `suspend.wal`
+mirror via the internal suspend endpoint (§3); on the cold tier from the `suspend/v1` snapshot uploaded at
+pod-restart close (`01-write-contract.md` §3.6). A missing snapshot (unclean close, TTL) degrades to zero
+suspension rather than failing the tree.
+
 Big parameter values (`sql` / `xml`) are the one asymmetry between the two paths. The blob does not inline them — it holds `(rolling_seq, offset)` references into the value streams (§3, `01-write-contract.md` §4.4). `/tree` resolves each reference and inlines the value string in the returned tree, so its consumers need nothing else. On the hot tier the references resolve against the replica's value segments (via the internal values endpoint, §3); on the cold tier they resolve against the values the seal pass inlined into the row's `big_params_json` column (`01-write-contract.md` §4.4, §5.2) — the value segments themselves never reach S3. A reference that cannot be resolved (its segment was evicted before the seal, or the file predates the column) is marked explicitly in the tree (`unresolved`, §2.5.3) with the reference text in the value slot; a value is never dropped silently. The raw `/trace` blob keeps the references; the MVP does not expose the value streams over a separate external endpoint, so an advanced consumer resolves big params only against a full dump. Add an external `/calls/{pk}/values` endpoint if a raw-path consumer needs them.
 
 The decision in MVP: ship `/tree` as the canonical contract. `/trace` + `/dictionary` remain as the secondary, lower-traffic interface — useful, but not the default.
@@ -332,6 +339,7 @@ Base path: `/internal/v1`. Same JSON shapes as `/api/v1`. Aggregation is done in
 |---|---|---|
 | GET | `/internal/v1/pods` | Pods/restarts this replica holds data for. Used by `query` for targeted fan-out. |
 | GET | `/internal/v1/pods/{pod-restart}/dictionary` | Same shape as `/api/v1/pods/{pod-restart}/dictionary` (§2.6). For live pod-restarts hosted by this replica. |
+| GET | `/internal/v1/pods/{pod-restart}/suspend` | The pod-restart's stop-the-world timeline from the replica's `suspend.wal` mirror: `{ "events": [{ "start_ms": ..., "duration_ms": ... }] }` — the same shape as the `suspend/v1` cold snapshot (`01-write-contract.md` §3.6). `query` intersects it with node work intervals for the per-node suspension of `/tree` (§2.5.3, `08-ui-backend-requirements.md` R7). |
 | GET | `/internal/v1/pods/{pod-restart}/values` | Batched big-parameter values from this replica's `sql` / `xml` segments: `?ref=<stream>:<seq>:<offset>` (repeatable) → `{ "values": { "<ref>": "<value>", ... } }`. A reference that does not resolve is absent, and `query` marks it `unresolved` in the tree (§2.5.3). Internal only — the external API never exposes the value streams (§2.5). |
 | GET | `/internal/v1/calls` | Same params as `/api/v1/calls`; returns only rows this replica holds. |
 | GET | `/internal/v1/calls/{pk}` | Single-row fetch from this replica. |

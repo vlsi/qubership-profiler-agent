@@ -10,6 +10,7 @@ package calltree
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/parser/pipe"
 	"github.com/pkg/errors"
@@ -27,9 +28,9 @@ type (
 	// Node is one merged tree node (§2.5.3): every metric comes in a
 	// self/total pair. Total duration spans enter to exit as reconstructed
 	// from the event deltas (01-write-contract.md §4.2); self is total minus
-	// the children's totals. Suspension is attributed from the pod-restart's
-	// suspend timeline (08-ui-backend-requirements.md R7); it stays zero
-	// until the timeline input lands.
+	// the children's totals. Suspension intersects each invocation's
+	// [enter, exit] with the Options.Suspend timeline
+	// (08-ui-backend-requirements.md R7), split self/total the same way.
 	Node struct {
 		MethodIdx        int
 		DurationMs       int64
@@ -52,7 +53,8 @@ type (
 		Unresolved []int
 	}
 
-	// Options resolve the blob's dictionary ids and big-parameter references.
+	// Options resolve the blob's dictionary ids and big-parameter references
+	// and carry the suspension timeline the tree attributes from.
 	Options struct {
 		// Dict resolves a dictionary id to its word. A missing word renders as
 		// the "#<id>" placeholder, matching the /calls list path.
@@ -61,6 +63,19 @@ type (
 		// sql / xml value streams (01-write-contract.md §4.4). false marks the
 		// value unresolved. Nil treats every reference as unresolved.
 		BigValue func(stream string, seq int, offset int64) (string, bool)
+		// Suspend is the pod-restart's global stop-the-world timeline
+		// (08-ui-backend-requirements.md R7): on the hot tier the replica's
+		// suspend.wal mirror, on the cold tier the suspend/v1 snapshot. Both
+		// are agent wall-clock Unix ms — the same clock as the trace timer
+		// epoch, so intervals intersect without translation. Build sorts and
+		// merges the pauses itself; empty means zero suspension everywhere.
+		Suspend []SuspendInterval
+	}
+
+	// SuspendInterval is one stop-the-world pause of the suspension timeline.
+	SuspendInterval struct {
+		TimeMs     int64
+		DurationMs int64
 	}
 
 	// BigRef is one big-parameter reference found in a blob.
@@ -117,6 +132,7 @@ func Build(blob []byte, recordIndex int, opts Options) (*Tree, error) {
 		methodIdx: map[string]int{},
 		paramIdx:  map[string]int{},
 		childIdx:  map[*Node]map[int]*Node{},
+		pauses:    normalizeSuspend(opts.Suspend),
 	}
 	if err := walkCall(blob, recordIndex, b.visit); err != nil {
 		return nil, err
@@ -125,6 +141,56 @@ func Build(blob []byte, recordIndex int, opts Options) (*Tree, error) {
 		totalExecutions(b.tree.Root)
 	}
 	return b.tree, nil
+}
+
+// normalizeSuspend sorts the timeline and merges overlapping or touching
+// pauses, so overlapMs can binary-search and never double-counts. The input
+// is not mutated; agent pauses are already sorted and disjoint in practice,
+// making this a cheap copy.
+func normalizeSuspend(pauses []SuspendInterval) []SuspendInterval {
+	if len(pauses) == 0 {
+		return nil
+	}
+	sorted := append([]SuspendInterval(nil), pauses...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].TimeMs < sorted[j].TimeMs })
+	out := sorted[:1]
+	for _, p := range sorted[1:] {
+		last := &out[len(out)-1]
+		if p.TimeMs <= last.TimeMs+last.DurationMs {
+			if end := p.TimeMs + p.DurationMs; end > last.TimeMs+last.DurationMs {
+				last.DurationMs = end - last.TimeMs
+			}
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// overlapMs sums the intersection of [fromMs, toMs) with the normalized
+// timeline — the same arithmetic the seal pass applies to whole calls
+// (01 §5.1 step 4), here per invocation.
+func overlapMs(pauses []SuspendInterval, fromMs, toMs int64) int64 {
+	first := sort.Search(len(pauses), func(i int) bool {
+		return pauses[i].TimeMs+pauses[i].DurationMs > fromMs
+	})
+	total := int64(0)
+	for _, p := range pauses[first:] {
+		if p.TimeMs >= toMs {
+			break
+		}
+		lo, hi := fromMs, toMs
+		if p.TimeMs > lo {
+			lo = p.TimeMs
+		}
+		if end := p.TimeMs + p.DurationMs; end < hi {
+			hi = end
+		}
+		if hi > lo {
+			total += hi - lo
+		}
+	}
+	return total
 }
 
 // totalExecutions rolls invocation counts up the merged tree:
@@ -151,13 +217,15 @@ type builder struct {
 	methodIdx map[string]int
 	paramIdx  map[string]int
 	childIdx  map[*Node]map[int]*Node
+	pauses    []SuspendInterval
 	stack     []frame
 }
 
 type frame struct {
-	node       *Node
-	enterMs    int64
-	childrenMs int64
+	node           *Node
+	enterMs        int64
+	childrenMs     int64
+	childrenSuspMs int64
 }
 
 func (b *builder) visit(ev event, atMs int64) {
@@ -187,11 +255,16 @@ func (b *builder) visit(ev event, atMs int64) {
 	case pipe.EventExitRecord:
 		top := b.stack[len(b.stack)-1]
 		duration := atMs - top.enterMs
+		suspension := overlapMs(b.pauses, top.enterMs, atMs)
 		top.node.DurationMs += duration
 		top.node.SelfDurationMs += duration - top.childrenMs
+		top.node.SuspensionMs += suspension
+		top.node.SelfSuspensionMs += suspension - top.childrenSuspMs
 		b.stack = b.stack[:len(b.stack)-1]
 		if len(b.stack) > 0 {
-			b.stack[len(b.stack)-1].childrenMs += duration
+			parent := &b.stack[len(b.stack)-1]
+			parent.childrenMs += duration
+			parent.childrenSuspMs += suspension
 		}
 	case pipe.EventTagRecord:
 		node := b.stack[len(b.stack)-1].node

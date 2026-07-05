@@ -51,6 +51,7 @@ func New(store *hotstore.Store) *API {
 	e.GET("/internal/v1/calls/:pk/trace", a.handleTrace)
 	e.GET("/internal/v1/pods", a.handlePods)
 	e.GET("/internal/v1/pods/:podRestart/dictionary", a.handleDictionary)
+	e.GET("/internal/v1/pods/:podRestart/suspend", a.handleSuspend)
 	e.GET("/internal/v1/pods/:podRestart/values", a.handleValues)
 	e.GET("/internal/v1/health/hot-window", a.handleHotWindow)
 	return a
@@ -407,6 +408,44 @@ func (a *API) handleDictionary(c echo.Context) error {
 		return c.NoContent(http.StatusNotModified)
 	}
 	return c.JSON(http.StatusOK, dictionarySnapshot{Version: len(words), Methods: words, Params: words})
+}
+
+// suspendTimeline is the suspend endpoint's body: the pod-restart's
+// stop-the-world pauses in the shape of the suspend/v1 cold snapshot, so a
+// consumer parses one format on either tier.
+type suspendTimeline struct {
+	Events []suspendTimelineEvent `json:"events"`
+}
+
+type suspendTimelineEvent struct {
+	StartMs    int64 `json:"start_ms"`
+	DurationMs int   `json:"duration_ms"`
+}
+
+// handleSuspend serves GET /internal/v1/pods/{pod-restart}/suspend: the
+// global suspension timeline the /tree rendering intersects node work
+// intervals with (08-ui-backend-requirements.md R7). The timeline comes from
+// the replica's RAM mirror of suspend.wal, which recovery reloads, so live
+// and recovered pod-restarts both answer.
+func (a *API) handleSuspend(c echo.Context) error {
+	tuple, err := model.ParsePodRestartPath(c.Param("podRestart"))
+	if err != nil {
+		return badRequest(c, err.Error())
+	}
+	key := hotstore.PodRestartKey{
+		Namespace: tuple.Namespace, Service: tuple.Service,
+		PodName: tuple.Pod, RestartTimeMs: tuple.RestartTimeMs,
+	}
+	pr, ok := a.store.PodRestart(key)
+	if !ok {
+		return notFound(c, "this replica hosts no pod-restart "+c.Param("podRestart"))
+	}
+	pauses := pr.SuspendPauses()
+	body := suspendTimeline{Events: make([]suspendTimelineEvent, 0, len(pauses))}
+	for _, p := range pauses {
+		body.Events = append(body.Events, suspendTimelineEvent{StartMs: p.TimeMs, DurationMs: p.DurationMs})
+	}
+	return c.JSON(http.StatusOK, body)
 }
 
 // valuesResponse maps the resolved big-parameter references
