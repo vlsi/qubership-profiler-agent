@@ -37,6 +37,14 @@ merge gates a usable tree. Status, decisions, and open issues per
   - [x] `libs/calltree/msgpack.go` — `groups` at Param field 3; `ParamGroup` codec (nested params recurse, `unresolved` bool emitted only when true)
   - [x] Tests: the `sqlSignature` port pinned against the JS chain (literals with `''` escapes, digit-in-word cases), signature grouping + binds nesting, deterministic cap-3 eviction, and the acceptance fixture — 2000 distinct-signature SQL + 3 hot ones → 256 groups + `::other`, hot groups on top with nested binds; codec round-trip and fuzz re-run on the new shape
 
+- [x] **Phase 6 — UI 5.0: scaffold** (07 §10 step 5.0)
+  - [x] `apps/ui` — Vite 8 + React 19.2 + TypeScript (strict) + AntD 6.5 app, served under `/ui` (Vite base + router basename); routes `/ui/calls`, `/ui/pods`, `/ui/tree/:pk`; dev proxy of `/api/v1` to a running query, `dev:mock` runs against MSW
+  - [x] Typed `/api/v1` client: wire models mirror `libs/query/model/wire.go` (R1 columns included), PK path codec plus the component-wise comparator (02 §2.3.1), RFC 7807 parsing with the guard extensions; wide-query and cursor rejections are recognised by the api.go titles and details
+  - [x] Hand-written MessagePack decoder for the merged-v1 `/tree` envelope (02 §2.5.3): generic int-keyed-map layer that skips unknown keys (forward compat), typed mapping with dictionary bounds checks, preallocation and depth caps; mirror encoder for tests and the mock
+  - [x] MSW mock = the contract: the same validation order and problem bodies as api.go / guard.go / cursor.go / tree.go; deterministic hash-derived dataset (no committed fixtures); keyset pages in the shared (ts_ms DESC, pk ASC) order; span-layer guard; cursor TTL and frozen-query mismatch; cold-404 and truncated-404 details
+  - [x] URL-as-state utilities for the 09 §6 scheme; the pagination cursor never enters the URL
+  - [x] Tests: decoder round-trip and malformed-payload suite, fast-check fuzz (totality on arbitrary and corrupted bytes; decode∘encode identity on synthetic trees), URL state round-trip; `tsc` strict and `vite build` clean
+
 ## Decisions log
 
 - **2026-07-05 — hot-tier `suspend_ms` is attributed at index time.** The wire
@@ -95,6 +103,23 @@ merge gates a usable tree. Status, decisions, and open issues per
   (`PARAM_BIG_DEDUP`), not from a name list; `binds` is the one name-keyed
   param.
 
+- **2026-07-05 — UI data layer is a thin typed fetch, not RTK Query.** The
+  contract removes everything a declarative cache would manage: data loads
+  only on an explicit Apply (09 §2.2), pages 2..N are driven by an opaque
+  cursor whose query is frozen server-side (02 §2.3.1), and `/tree` is
+  immutable binary already covered by HTTP caching. RTK Query would need a
+  custom baseQuery for MessagePack plus serializeQueryArgs/merge gymnastics
+  for cursor accumulation, and the bundle ships inside the query image
+  (07 §6), so the smaller dependency set wins. Revisit only if the app grows
+  cross-screen server state that needs invalidation.
+- **2026-07-05 — the MSW mock mirrors the backend's problem bodies
+  verbatim.** The UI recognises rejections by the api.go title/detail texts
+  ("query too wide"; details naming the cursor), so the mock reproduces the
+  exact validation order and wording of api.go / guard.go / cursor.go /
+  tree.go rather than inventing its own. When the real service and the mock
+  disagree, the mock is right by definition — fix the backend or the
+  contract, not the mock.
+
 ## Open issues
 
 - The hot `/internal/v1/calls` row never carries `truncated_reason` /
@@ -102,3 +127,8 @@ merge gates a usable tree. Status, decisions, and open issues per
   and `truncated_reason` columns, so a truncated call looks intact until it
   goes cold. Predates this stage; surfaced by the parity test (which passes
   because both tiers see un-truncated calls).
+- 02 §2.7 words the `/pods` response as a bare array, but api.go returns
+  `{ pods, partial, partial_reasons }` — the fan-out can partially fail on
+  the pods path too, so the envelope is right and the doc sentence is stale.
+  The UI and its mock follow the implementation; align 02 §2.7 when it is
+  next touched.
