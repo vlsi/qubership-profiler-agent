@@ -52,16 +52,17 @@ func TestBuildNestingAndTimes(t *testing.T) {
 	root := tree.Root
 	require.NotNil(t, root)
 	assert.Equal(t, "com.example.Service.handle", tree.Methods[root.MethodIdx])
-	assert.Equal(t, int64(0), root.EnterMsRel)
 	assert.Equal(t, int64(15), root.DurationMs, "exit at +20 minus enter at +5")
+	assert.Equal(t, int64(10), root.SelfDurationMs, "15 total minus 4+1 in children")
+	assert.Equal(t, int64(1), root.Executions)
+	assert.Equal(t, int64(1), root.SelfExecutions)
 	require.Len(t, root.Children, 2)
 
 	q, r := root.Children[0], root.Children[1]
 	assert.Equal(t, "com.example.Service.query", tree.Methods[q.MethodIdx])
-	assert.Equal(t, int64(2), q.EnterMsRel)
 	assert.Equal(t, int64(4), q.DurationMs)
+	assert.Equal(t, int64(4), q.SelfDurationMs, "a leaf's self equals its total")
 	assert.Equal(t, "com.example.Service.render", tree.Methods[r.MethodIdx])
-	assert.Equal(t, int64(7), r.EnterMsRel)
 	assert.Equal(t, int64(1), r.DurationMs)
 	assert.Empty(t, tree.Params)
 }
@@ -112,8 +113,8 @@ func TestBuildMultiChunk(t *testing.T) {
 	tree, err := Build(blob, 0, dictOpt())
 	require.NoError(t, err)
 	assert.Equal(t, int64(45), tree.Root.DurationMs, "50 - 5")
+	assert.Equal(t, int64(21), tree.Root.SelfDurationMs, "45 minus the child's 24")
 	require.Len(t, tree.Root.Children, 1)
-	assert.Equal(t, int64(1), tree.Root.Children[0].EnterMsRel)
 	assert.Equal(t, int64(24), tree.Root.Children[0].DurationMs, "30 - 6")
 }
 

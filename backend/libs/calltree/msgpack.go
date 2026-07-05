@@ -25,13 +25,20 @@ const (
 	treeFieldRoot    = 3
 )
 
-// Field numbers of a Node (§2.5.3).
+// Field numbers of a Node (§2.5.3, merged v1). The original raw-tree v1
+// (enterMsRel at 1, durationMs at 2, params at 3, children at 4) shipped to
+// no consumer, so v1 was redefined in place rather than bumped — see the
+// "v1 redefined" note in the contract.
 const (
-	nodeFieldMethodIdx  = 0
-	nodeFieldEnterMsRel = 1
-	nodeFieldDurationMs = 2
-	nodeFieldParams     = 3
-	nodeFieldChildren   = 4
+	nodeFieldMethodIdx        = 0
+	nodeFieldDurationMs       = 1
+	nodeFieldSelfDurationMs   = 2
+	nodeFieldSuspensionMs     = 3
+	nodeFieldSelfSuspensionMs = 4
+	nodeFieldExecutions       = 5
+	nodeFieldSelfExecutions   = 6
+	nodeFieldParams           = 7
+	nodeFieldChildren         = 8
 )
 
 // Field numbers of a Param (§2.5.3).
@@ -59,7 +66,7 @@ func Encode(t *Tree) []byte {
 type encoder struct{ buf []byte }
 
 func (e *encoder) putNode(n *Node) {
-	fields := 3
+	fields := 7
 	if len(n.Params) > 0 {
 		fields++
 	}
@@ -69,10 +76,18 @@ func (e *encoder) putNode(n *Node) {
 	e.putMapHeader(fields)
 	e.putInt(nodeFieldMethodIdx)
 	e.putInt(int64(n.MethodIdx))
-	e.putInt(nodeFieldEnterMsRel)
-	e.putInt(n.EnterMsRel)
 	e.putInt(nodeFieldDurationMs)
 	e.putInt(n.DurationMs)
+	e.putInt(nodeFieldSelfDurationMs)
+	e.putInt(n.SelfDurationMs)
+	e.putInt(nodeFieldSuspensionMs)
+	e.putInt(n.SuspensionMs)
+	e.putInt(nodeFieldSelfSuspensionMs)
+	e.putInt(n.SelfSuspensionMs)
+	e.putInt(nodeFieldExecutions)
+	e.putInt(n.Executions)
+	e.putInt(nodeFieldSelfExecutions)
+	e.putInt(n.SelfExecutions)
 	if len(n.Params) > 0 {
 		e.putInt(nodeFieldParams)
 		e.putArrayHeader(len(n.Params))
@@ -174,7 +189,7 @@ func (e *encoder) putString(s string) {
 // skipped, so an old client keeps working when the server appends fields.
 func Decode(data []byte) (*Tree, int64, error) {
 	d := &decoder{data: data}
-	tree := &Tree{Methods: []string{}, Params: []string{}}
+	tree := &Tree{}
 	version := int64(0)
 	n, err := d.mapHeader()
 	if err != nil {
@@ -219,6 +234,18 @@ type decoder struct {
 	pos  int
 }
 
+// prealloc caps a header-declared count before it becomes an allocation: a
+// hostile array32 header can claim 2^32 elements while the payload holds
+// none. append grows the slice to the real size; the cap only bounds the
+// upfront reservation.
+func prealloc(n int) int {
+	const max = 1024
+	if n > max {
+		return max
+	}
+	return n
+}
+
 func (d *decoder) node() (*Node, error) {
 	n, err := d.mapHeader()
 	if err != nil {
@@ -237,12 +264,28 @@ func (d *decoder) node() (*Node, error) {
 				return nil, err
 			}
 			node.MethodIdx = int(v)
-		case nodeFieldEnterMsRel:
-			if node.EnterMsRel, err = d.int(); err != nil {
-				return nil, err
-			}
 		case nodeFieldDurationMs:
 			if node.DurationMs, err = d.int(); err != nil {
+				return nil, err
+			}
+		case nodeFieldSelfDurationMs:
+			if node.SelfDurationMs, err = d.int(); err != nil {
+				return nil, err
+			}
+		case nodeFieldSuspensionMs:
+			if node.SuspensionMs, err = d.int(); err != nil {
+				return nil, err
+			}
+		case nodeFieldSelfSuspensionMs:
+			if node.SelfSuspensionMs, err = d.int(); err != nil {
+				return nil, err
+			}
+		case nodeFieldExecutions:
+			if node.Executions, err = d.int(); err != nil {
+				return nil, err
+			}
+		case nodeFieldSelfExecutions:
+			if node.SelfExecutions, err = d.int(); err != nil {
 				return nil, err
 			}
 		case nodeFieldParams:
@@ -250,7 +293,11 @@ func (d *decoder) node() (*Node, error) {
 			if err != nil {
 				return nil, err
 			}
-			node.Params = make([]Param, 0, cnt)
+			if cnt > 0 {
+				// An empty optional array stays nil: Encode omits the field,
+				// so nil is the canonical form a round-trip preserves.
+				node.Params = make([]Param, 0, prealloc(cnt))
+			}
 			for j := 0; j < cnt; j++ {
 				p, err := d.param()
 				if err != nil {
@@ -263,7 +310,9 @@ func (d *decoder) node() (*Node, error) {
 			if err != nil {
 				return nil, err
 			}
-			node.Children = make([]*Node, 0, cnt)
+			if cnt > 0 {
+				node.Children = make([]*Node, 0, prealloc(cnt))
+			}
 			for j := 0; j < cnt; j++ {
 				child, err := d.node()
 				if err != nil {
@@ -307,7 +356,9 @@ func (d *decoder) param() (Param, error) {
 			if err != nil {
 				return Param{}, err
 			}
-			p.Unresolved = make([]int, 0, cnt)
+			if cnt > 0 {
+				p.Unresolved = make([]int, 0, prealloc(cnt))
+			}
 			for j := 0; j < cnt; j++ {
 				v, err := d.int()
 				if err != nil {
@@ -329,7 +380,12 @@ func (d *decoder) strings() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, n)
+	// nil for an empty array: Encode writes the same empty array for nil, so
+	// nil is the canonical form a round-trip preserves.
+	var out []string
+	if n > 0 {
+		out = make([]string, 0, prealloc(n))
+	}
 	for i := 0; i < n; i++ {
 		s, err := d.string()
 		if err != nil {

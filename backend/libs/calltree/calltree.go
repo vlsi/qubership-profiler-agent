@@ -24,15 +24,22 @@ type (
 		Root    *Node
 	}
 
-	// Node is one call in the tree (§2.5.3). Times are milliseconds relative
-	// to the root's enter, reconstructed as timerStartTime + Σ(event deltas)
-	// within each chunk (01-write-contract.md §4.2).
+	// Node is one merged tree node (§2.5.3): every metric comes in a
+	// self/total pair. Total duration spans enter to exit as reconstructed
+	// from the event deltas (01-write-contract.md §4.2); self is total minus
+	// the children's totals. Suspension is attributed from the pod-restart's
+	// suspend timeline (08-ui-backend-requirements.md R7); it stays zero
+	// until the timeline input lands.
 	Node struct {
-		MethodIdx  int
-		EnterMsRel int64
-		DurationMs int64
-		Params     []Param
-		Children   []*Node
+		MethodIdx        int
+		DurationMs       int64
+		SelfDurationMs   int64
+		SuspensionMs     int64
+		SelfSuspensionMs int64
+		Executions       int64
+		SelfExecutions   int64
+		Params           []Param
+		Children         []*Node
 	}
 
 	// Param is one parameter of a node (§2.5.3). Values keeps the tag-event
@@ -99,7 +106,9 @@ func (ev event) bigRef() BigRef {
 
 // Build decodes the blob into the call tree. recordIndex is the PK component
 // locating the root ENTER within the blob's first chunk (01-write-contract.md
-// §4.5).
+// §4.5). The tree is still one node per invocation — executions is 1
+// everywhere; the R5 sibling merge (08-ui-backend-requirements.md) lands on
+// top of this schema.
 func Build(blob []byte, recordIndex int, opts Options) (*Tree, error) {
 	b := &builder{
 		opts:      opts,
@@ -113,35 +122,49 @@ func Build(blob []byte, recordIndex int, opts Options) (*Tree, error) {
 	return b.tree, nil
 }
 
-// builder folds the call's events into the tree.
+// builder folds the call's events into the tree. Each stack frame keeps the
+// node's absolute enter time — the wire carries no durations, only the
+// enter/exit pair (01 §4.2) — and the wall-clock its children consumed, so
+// the exit computes both durationMs and selfDurationMs in one pass.
 type builder struct {
 	opts      Options
 	tree      *Tree
 	methodIdx map[string]int
 	paramIdx  map[string]int
-	stack     []*Node
-	rootEnter int64
+	stack     []frame
+}
+
+type frame struct {
+	node       *Node
+	enterMs    int64
+	childrenMs int64
 }
 
 func (b *builder) visit(ev event, atMs int64) {
 	switch ev.kind {
 	case pipe.EventEnterRecord:
-		node := &Node{MethodIdx: b.internMethod(ev.tagId)}
+		node := &Node{
+			MethodIdx:      b.internMethod(ev.tagId),
+			Executions:     1,
+			SelfExecutions: 1,
+		}
 		if b.tree.Root == nil {
 			b.tree.Root = node
-			b.rootEnter = atMs
 		} else {
-			parent := b.stack[len(b.stack)-1]
+			parent := b.stack[len(b.stack)-1].node
 			parent.Children = append(parent.Children, node)
 		}
-		node.EnterMsRel = atMs - b.rootEnter
-		b.stack = append(b.stack, node)
+		b.stack = append(b.stack, frame{node: node, enterMs: atMs})
 	case pipe.EventExitRecord:
-		node := b.stack[len(b.stack)-1]
-		node.DurationMs = atMs - b.rootEnter - node.EnterMsRel
+		top := b.stack[len(b.stack)-1]
+		top.node.DurationMs = atMs - top.enterMs
+		top.node.SelfDurationMs = top.node.DurationMs - top.childrenMs
 		b.stack = b.stack[:len(b.stack)-1]
+		if len(b.stack) > 0 {
+			b.stack[len(b.stack)-1].childrenMs += top.node.DurationMs
+		}
 	case pipe.EventTagRecord:
-		node := b.stack[len(b.stack)-1]
+		node := b.stack[len(b.stack)-1].node
 		idx := b.internParam(ev.tagId)
 		var param *Param
 		for i := range node.Params {

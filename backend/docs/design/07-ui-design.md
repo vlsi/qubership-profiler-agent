@@ -181,16 +181,17 @@ versioned fixtures.
 
 - `Tree` — `0: v` (version), `1: methods[str]` (per-tree method dictionary), `2: params[str]` (per-tree
   param-key dictionary), `3: root: Node`.
-- `Node` — `0: methodIdx` (into `methods`), `1: enterMsRel` (ms from root enter), `2: durationMs`,
-  `3: params[Param]` (optional), `4: children[Node]` (optional; absent on leaves).
+- `Node` (merged v1, `02-read-contract.md` §2.5.3) — `0: methodIdx` (into `methods`), `1: durationMs`,
+  `2: selfDurationMs`, `3: suspensionMs`, `4: selfSuspensionMs`, `5: executions`, `6: selfExecutions`,
+  `7: params[Param]` (optional), `8: children[Node]` (optional; absent on leaves).
 - `Param` — `0: paramIdx` (into `params`), `1: values[str]`, `2: unresolved[int]` (optional; big-param
   references the seal pass could not inline).
 
 Big parameters (`sql` / `xml`) are resolved server-side and inlined into `Param.values`, so the tree is
 self-contained — the UI needs no dictionary fetch and no value-stream call for this path.
 
-The node model the tree UI needs is richer than today's wire: self and total duration, self and total
-suspension, and self and total execution counts — a uniform `self/total` model (doc 08 R5–R7). The server
+The node model carries the uniform `self/total` shape the tree UI needs: self and total duration, self and
+total suspension, and self and total execution counts (doc 08 R5–R7). The server
 merges once (`calltree.Build`); the client computations transform this merged model, they do not re-fetch.
 Self-time is derivable (`durationMs − Σ children.durationMs`); per-node suspension is not — the backend
 attributes it by intersecting each node's work interval with the suspend timeline. The method's `source file:line` and `jar` need no wire field — they

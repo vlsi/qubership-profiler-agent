@@ -16,7 +16,11 @@ merge gates a usable tree. Status, decisions, and open issues per
   - [x] `libs/collector/hotread` — `toCallRow` projects the new index columns
   - [x] `libs/tests/helpers/wire` — the calls generator writes format 4 (cpu/wait/memory, file/net, transactions/queue-wait)
   - [x] Test: `libs/tests/integration/parity_test.go` — the same synthetic calls render the identical `CallJSON` from `/internal/v1/calls` (SQLite index) and `/api/v1/calls` (sealed parquet), values asserted end to end
-- [ ] **Phase 2 — merged-v1 `Node` schema + MessagePack codec** (02 §2.5.3)
+- [x] **Phase 2 — merged-v1 `Node` schema + MessagePack codec** (02 §2.5.3)
+  - [x] `libs/calltree` — `Node` carries the uniform self/total pairs (`durationMs`/`selfDurationMs`, `suspensionMs`/`selfSuspensionMs`, `executions`/`selfExecutions`); `enterMsRel` is gone; the envelope stays `v: 1` (the "v1 redefined" note in 02 §2.5.3)
+  - [x] `libs/calltree` — the codec re-numbers the Node fields per the new tag table; the decoder caps header-declared preallocations and canonicalises empty optional arrays to nil, so `Decode ∘ Encode` is a fixpoint
+  - [x] `Build` fills the new fields per invocation for now — `executions = 1`, `selfDurationMs` computed at exit, suspension zero — the R5 merge (Phase 3) and the R7 timeline (Phase 4) land on top
+  - [x] Tests: round-trip + wide values + the unknown-int-key fixture on the new numbers; `FuzzDecode` (error-never-panic on corrupted payloads, decode→encode→decode fixpoint on valid ones; 30 s local run clean)
 - [ ] **Phase 3 — R5/R6: server-side merge in `calltree.Build`** (08 R5–R6)
 - [ ] **Phase 4 — R7: per-node suspension** (08 R7; the suspend-timeline input to `Build` is designed first)
 - [ ] **Phase 5 — R11: param aggregation** (08 R11; the contract is extracted from the Java `parsers/` first)
@@ -36,6 +40,12 @@ merge gates a usable tree. Status, decisions, and open issues per
   RAM mirror — was rejected: it needs pause access for recovered
   (non-live) pod-restarts on every list query, for a value the UI treats as
   indicative until the row goes cold.
+- **2026-07-05 — Phase 2 ships the merged schema with per-invocation
+  values.** `Build` keeps emitting one node per invocation until the R5 merge
+  lands, but already through the merged-v1 wire shape (`executions = 1`,
+  `selfDurationMs = durationMs − Σ children`, suspension zero). The schema
+  and codec change once; the merge (Phase 3) and the suspension attribution
+  (Phase 4) are then semantics-only diffs with no wire churn.
 - **2026-07-05 — the synthetic calls generator writes format 4.** The
   version-1 output could not carry the R1 counters, and the decoders
   (`libs/parser/pipe`, `libs/parser/streams`) have read formats 2–4 all along.

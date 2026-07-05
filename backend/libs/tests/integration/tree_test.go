@@ -167,8 +167,10 @@ func TestTreeAndTraceAPI(t *testing.T) {
 		assert.Equal(t, []string{"request.id", "xml", "sql"}, tree.Params)
 
 		root := tree.Root
-		assert.Equal(t, int64(0), root.EnterMsRel)
 		assert.Equal(t, int64(15), root.DurationMs)
+		assert.Equal(t, int64(10), root.SelfDurationMs, "15 total minus the child's 5")
+		assert.Equal(t, int64(1), root.Executions)
+		assert.Equal(t, int64(1), root.SelfExecutions)
 		require.Len(t, root.Params, 2)
 		assert.Equal(t, []string{"req-hot"}, root.Params[0].Values)
 		assert.Equal(t, []string{"xml:7:0"}, root.Params[1].Values,
@@ -178,8 +180,8 @@ func TestTreeAndTraceAPI(t *testing.T) {
 		require.Len(t, root.Children, 1)
 		child := root.Children[0]
 		assert.Equal(t, "com.example.Db.query", tree.Methods[child.MethodIdx])
-		assert.Equal(t, int64(3), child.EnterMsRel)
 		assert.Equal(t, int64(5), child.DurationMs)
+		assert.Equal(t, int64(5), child.SelfDurationMs, "a leaf's self equals its total")
 		require.Len(t, child.Params, 1)
 		assert.Equal(t, "sql", tree.Params[child.Params[0].ParamIdx])
 		assert.Equal(t, []string{hotSqlValue}, child.Params[0].Values,
@@ -197,15 +199,14 @@ func TestTreeAndTraceAPI(t *testing.T) {
 		assert.Equal(t, []string{"request.id", "sql", "xml"}, tree.Params)
 
 		root := tree.Root
-		assert.Equal(t, int64(0), root.EnterMsRel)
 		assert.Equal(t, int64(19), root.DurationMs, "tail noise before record_index only advances the clock (01 §4.5)")
+		assert.Equal(t, int64(11), root.SelfDurationMs, "19 total minus 5+3 in children")
 		require.Len(t, root.Params, 1)
 		assert.Equal(t, []string{"req-cold"}, root.Params[0].Values)
 
 		require.Len(t, root.Children, 2)
 		q, p := root.Children[0], root.Children[1]
 		assert.Equal(t, "com.example.Db.query", tree.Methods[q.MethodIdx])
-		assert.Equal(t, int64(3), q.EnterMsRel)
 		assert.Equal(t, int64(5), q.DurationMs)
 		require.Len(t, q.Params, 1)
 		assert.Equal(t, []string{coldSqlValue}, q.Params[0].Values,
@@ -213,7 +214,6 @@ func TestTreeAndTraceAPI(t *testing.T) {
 		assert.Empty(t, q.Params[0].Unresolved)
 
 		assert.Equal(t, "com.example.Service.process", tree.Methods[p.MethodIdx])
-		assert.Equal(t, int64(9), p.EnterMsRel)
 		assert.Equal(t, int64(3), p.DurationMs)
 		require.Len(t, p.Params, 1)
 		assert.Equal(t, []string{coldXmlValue}, p.Params[0].Values)
