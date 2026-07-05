@@ -328,6 +328,8 @@ const TREE_METHODS = [
   'int org.postgresql.jdbc.PgPreparedStatement.executeUpdate() (PgPreparedStatement.java:132) [postgresql.jar]',
   'Response com.acme.gateway.PaymentGateway.authorize(PaymentRequest) (PaymentGateway.java:75) [gateway.jar]',
   'void com.acme.audit.AuditWriter.append(AuditEvent) (AuditWriter.java:19) [app.jar]',
+  'void org.springframework.web.servlet.DispatcherServlet.doDispatch(HttpServletRequest, HttpServletResponse) (DispatcherServlet.java:1089) [spring-webmvc.jar]',
+  'Object com.acme.web.OrderController.handle(OrderRequest) (OrderController.java:44) [app.jar]',
 ];
 
 const TREE_PARAM_KEYS = ['sql', 'binds', 'request.id', 'node.name', 'java.thread'];
@@ -413,20 +415,21 @@ export function treeForCall(call: CallJSON): TreeWire {
     return node;
   };
 
-  // Entry chain: CoyoteAdapter → ApiFilter passes ~everything to the business
-  // node — the degenerate chain the one-click expand must skip (07 §5.4).
-  const business = build(2 + Math.floor(r() * 4), Math.max(1, Math.floor(call.duration_ms * 0.97)) , 1, 2);
-  const filter: TreeNodeWire = {
-    methodIdx: 1,
-    durationMs: Math.max(business.durationMs, Math.floor(call.duration_ms * 0.99)),
+  // Entry chain: CoyoteAdapter → ApiFilter → DispatcherServlet →
+  // OrderController each pass ~everything to the business node — the
+  // degenerate chain the one-click expand must skip (07 §5.4).
+  const passThrough = (methodIdx: number, child: TreeNodeWire): TreeNodeWire => ({
+    methodIdx,
+    durationMs: child.durationMs,
     selfDurationMs: 0,
-    suspensionMs: business.suspensionMs,
+    suspensionMs: child.suspensionMs,
     selfSuspensionMs: 0,
-    executions: 1 + business.executions,
+    executions: 1 + child.executions,
     selfExecutions: 1,
-    children: [business],
-  };
-  filter.selfDurationMs = filter.durationMs - business.durationMs;
+    children: [child],
+  });
+  const business = build(2 + Math.floor(r() * 4), Math.max(1, Math.floor(call.duration_ms * 0.97)), 1, 2);
+  const filter = passThrough(1, passThrough(10, passThrough(11, business)));
   const root: TreeNodeWire = {
     methodIdx: 0,
     durationMs: call.duration_ms,

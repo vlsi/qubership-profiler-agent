@@ -77,6 +77,39 @@ merge gates a usable tree. Status, decisions, and open issues per
     visible tab (rAF/ResizeObserver are suspended in hidden tabs) — noted in
     open issues
 
+- [x] **Phase 8 — UI 5.2: call tree v1** (07 §10 step 5.2)
+  - [x] `/tree` decode → client model: wire executions split into the old
+    self/child pair, params carried as the R11 mini-tree, unresolved flags
+    surfaced; ids stable for expansion state
+  - [x] `sortNode` ported verbatim from profiler.mjs:6186 — child ordering
+    (duration and self-duration comparators incl. the adjust-marker float),
+    the collapse-levels protocol with its negative states (-1 fan-out, -2
+    params/adjust pin, -3.. accumulate-above-a-break), and the bottom-up
+    parent fan-out check; pinned by a behavioural test suite
+  - [x] Visible rows replicate the old renderer: >10%-of-context subtrees
+    auto-expand (root-scoped on first render, node-scoped on expand),
+    pass-through chains skip on expand with a reveal affordance, params
+    render as rows (groups, `::other` last, binds nested, unresolved tag)
+  - [x] Virtualised render: fixed-row windowing (~60 LOC, no dependency) —
+    params-as-rows keeps heights uniform, matching how the old UI rendered
+    tags as tree items; 20k-row budget degrades expansion with a banner
+    instead of freezing (07 §5.4)
+  - [x] Search within the tree (search-elements.ts semantics: title +
+    formatted numbers), ancestors force-expanded, chains revealed while a
+    search is active; match count + highlight
+  - [x] Node row: total(self) duration, suspension pair, ×N executions,
+    shortened signature from the line_parser port (file:line + jar in the
+    Ctrl+hover stats popover); kebab with Get stacktrace (modal + copy) and
+    Mark red; the transform-backed operations arrive with 5.3
+  - [x] Tree page: context header (identity, ts/duration/class chips, raw
+    trace download), tabs Call Tree · Hotspots (5.3) · Parameters (whole-tree
+    group aggregation); 09 §5 states — cold-404 told apart from
+    truncated-404 by the backend problem titles, unresolved-params and
+    too-large banners
+  - [x] Tests: sortNode behaviour suite, line_parser port cases,
+    initial-expansion/chain-skip/param-row/search fixtures, MSW page tests
+    (hinted decode renders, cold state, truncated state) — 69 green
+
 ## Decisions log
 
 - **2026-07-05 — hot-tier `suspend_ms` is attributed at index time.** The wire
@@ -170,6 +203,21 @@ merge gates a usable tree. Status, decisions, and open issues per
   shell clamps to the viewport (`height: 100vh`) so the virtual body is the
   only scroller — with `minHeight` the page itself scrolled and the
   virtualiser never saw a bounded viewport.
+
+- **2026-07-05 — params render as rows, so the tree virtualiser stays
+  fixed-height.** The old UI rendered a node's tags as tree items, not as
+  variable-height cells; keeping that shape means every row (node or param
+  group) is one fixed-height line, and a ~60-LOC windowing component
+  replaces a dynamic-height virtualiser dependency. The 09 §3.3 "params as
+  mini-tree" reads exactly the same to the user: groups indent under the
+  node, binds indent under their SQL group, `::other` last.
+- **2026-07-05 — sortNode ported verbatim, including the negative-state
+  protocol.** The -1/-2/-3.. states and the "levels resume accumulating
+  above a break" behaviour are pinned by tests rather than simplified to
+  the doc's 10%-heuristic summary (08 §5 explicitly asks for the exact
+  logic). One UI-level addition, not in the old code: an active search
+  reveals every skipped chain, because a match inside a skipped
+  pass-through node would otherwise be unreachable.
 
 ## Open issues
 

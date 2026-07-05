@@ -155,7 +155,7 @@ export function CallsPage() {
             <Alert
               type="error"
               showIcon
-              message="Loading calls failed"
+              title="Loading calls failed"
               description={state.message}
               action={
                 <Button size="small" onClick={refetch}>
@@ -168,7 +168,7 @@ export function CallsPage() {
             <Alert
               type="error"
               showIcon
-              message="Cannot resolve the service selection without /pods"
+              title="Cannot resolve the service selection without /pods"
               description={podsState.message}
               action={
                 <Button size="small" onClick={refetchPods}>

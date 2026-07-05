@@ -1,10 +1,11 @@
 import { Table } from 'antd';
 import type { TableColumnType } from 'antd';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import type { ReactNode, ThHTMLAttributes } from 'react';
 
 import { pkToPath } from '../api/pk';
 import type { CallJSON } from '../api/types';
+import { useElementHeight } from '../ui/use-element-height';
 import type { ColumnPrefs } from './column-prefs';
 import { buildCallColumns } from './columns';
 import type { ColumnHandlers } from './columns';
@@ -57,21 +58,6 @@ function ResizableHeaderCell({ onColumnResize, width, children, ...rest }: Resiz
       />
     </th>
   );
-}
-
-/** Tracks the pixel height available to the table body for virtual scroll. */
-function useElementHeight<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T | null>(null);
-  const [height, setHeight] = useState(400);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el === null || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => setHeight(el.clientHeight));
-    observer.observe(el);
-    setHeight(el.clientHeight);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, height];
 }
 
 export interface CallsTableProps {

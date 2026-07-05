@@ -53,7 +53,7 @@ export function TooWideBanner({ problem, search, onSearchChange }: TooWideBanner
     <Alert
       type="error"
       showIcon
-      message="Query too wide"
+      title="Query too wide"
       description={
         <Space orientation="vertical" size={4}>
           <Typography.Text>{problem.detail}</Typography.Text>
@@ -84,7 +84,7 @@ export function PartialBanner({ reasons, onRetry }: { reasons: string[]; onRetry
     <Alert
       type="warning"
       showIcon
-      message="Results may be incomplete — some sources did not answer"
+      title="Results may be incomplete — some sources did not answer"
       description={reasons.length > 0 ? reasons.join('; ') : undefined}
       action={
         <Button size="small" onClick={onRetry}>
@@ -100,7 +100,7 @@ export function CursorExpiredBanner({ onReload }: { onReload: () => void }) {
     <Alert
       type="warning"
       showIcon
-      message="The scroll position expired. Reload from the first page."
+      title="The scroll position expired. Reload from the first page."
       action={
         <Button size="small" type="primary" onClick={onReload}>
           Reload
@@ -115,7 +115,7 @@ export function EmptyPausedBanner({ onContinue }: { onContinue: () => void }) {
     <Alert
       type="info"
       showIcon
-      message="Several pages in a row came back empty — data in this stretch may have aged out."
+      title="Several pages in a row came back empty — data in this stretch may have aged out."
       action={
         <Button size="small" onClick={onContinue}>
           Keep searching
@@ -130,7 +130,7 @@ export function LoadMoreErrorBanner({ message, onRetry }: { message: string; onR
     <Alert
       type="error"
       showIcon
-      message="Loading the next page failed"
+      title="Loading the next page failed"
       description={message}
       action={
         <Button size="small" onClick={onRetry}>
@@ -146,7 +146,7 @@ export function AllFailedBanner({ detail, onRetry }: { detail: string; onRetry: 
     <Alert
       type="error"
       showIcon
-      message="No source answered in time. Narrow the range or retry."
+      title="No source answered in time. Narrow the range or retry."
       description={detail}
       action={
         <Button size="small" type="primary" onClick={onRetry}>

@@ -137,7 +137,7 @@ export function DiscoveryRail({ pods, selection, onSelectionChange }: DiscoveryR
       {pods.kind === 'loading' ? (
         <Spin style={{ marginTop: 24 }} />
       ) : pods.kind === 'error' ? (
-        <Alert type="error" message="Cannot load pods" description={pods.message} showIcon />
+        <Alert type="error" title="Cannot load pods" description={pods.message} showIcon />
       ) : pods.kind === 'idle' ? (
         <Typography.Text type="secondary">Pick a period to discover services.</Typography.Text>
       ) : treeData.length === 0 ? (
@@ -145,7 +145,7 @@ export function DiscoveryRail({ pods, selection, onSelectionChange }: DiscoveryR
       ) : (
         <>
           {pods.partial ? (
-            <Alert type="warning" showIcon message="Pod list may be incomplete" description={pods.partialReasons.join('; ')} />
+            <Alert type="warning" showIcon title="Pod list may be incomplete" description={pods.partialReasons.join('; ')} />
           ) : null}
           <Tree
             checkable

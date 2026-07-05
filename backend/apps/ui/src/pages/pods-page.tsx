@@ -61,9 +61,9 @@ export function PodsPage() {
 
   return (
     <Layout.Content style={{ padding: '12px 16px' }}>
-      {state.kind === 'error' ? <Alert type="error" showIcon message="Cannot load pods" description={state.message} /> : null}
+      {state.kind === 'error' ? <Alert type="error" showIcon title="Cannot load pods" description={state.message} /> : null}
       {state.kind === 'ready' && state.partial ? (
-        <Alert type="warning" showIcon message="Pod list may be incomplete" description={state.partialReasons.join('; ')} />
+        <Alert type="warning" showIcon title="Pod list may be incomplete" description={state.partialReasons.join('; ')} />
       ) : null}
       <Table<PodRow>
         size="small"
