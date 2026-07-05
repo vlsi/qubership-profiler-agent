@@ -22,6 +22,14 @@ npm run build      # tsc + vite build into dist/
 
 `VITE_QUERY_URL=http://host:8080 npm run dev` points the proxy at a remote query.
 
+## Deployment
+
+`embed.go` embeds `dist/` into the query binary (`go:embed`), which serves it at `/ui` with an SPA
+fallback (07 §6). Run `npm run build` before `go build ./apps/profiler-backend` for a UI-carrying
+binary; a build without it still compiles and serves `/api/v1`, logging that `/ui` is disabled. The
+profiler-backend Dockerfile builds the bundle in a node stage, so `docker compose up --build` needs no
+host toolchain. End to end: `make query-ui` in `it-e2e/`.
+
 ## Layout
 
 | Path | Contents |

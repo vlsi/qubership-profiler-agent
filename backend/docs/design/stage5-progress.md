@@ -140,6 +140,29 @@ merge gates a usable tree. Status, decisions, and open issues per
     with cascade and param rescale, category propagation/overrides — 82
     green overall
 
+- [x] **Phase 10 — UI 5.4: deploy** (07 §10 step 5.4)
+  - [x] `apps/ui/embed.go` — `go:embed all:dist` behind `ui.Dist()`; a Go
+    build without the npm step still compiles (committed `dist/.gitkeep`)
+    and the query command serves /api/v1 with a warning instead of /ui
+  - [x] `libs/query` — `Options.UI fs.FS`; /ui and /ui/* serve the bundle
+    with an SPA fallback to index.html (client routes deep-link and
+    refresh), immutable caching for the hashed assets/, gzip per route;
+    /api/v1, /metrics, and the health routes untouched; covered by
+    handler-level tests over an fstest.MapFS (traversal, fallback, caching,
+    UI-less 404)
+  - [x] Dockerfile — a node stage builds the bundle, so `docker compose up
+    --build` produces a UI-carrying image with no host toolchain;
+    `.dockerignore` keeps node_modules out of the context
+  - [x] `tools/ui-seed` — emulated agents feed the dev stack over the real
+    TCP protocol (dictionary, traces with nested enter/exit and sql tags,
+    format-4 calls covering every R1 counter and both sides of the >500ms
+    chip), then poll /api/v1/calls until the rows serve
+  - [x] it-e2e — `playwright.query.config.ts` + `e2e-query/query-ui.spec.ts`
+    against the embedded UI: discovery rail from /pods, service selection +
+    Apply, duration-chip filtering, the new-tab tree drill with the cold
+    hints in the URL, params and Hotspots on the tree page; `make query-ui`
+    orchestrates stack-up → seed → test → down
+
 ## Decisions log
 
 - **2026-07-05 — hot-tier `suspend_ms` is attributed at index time.** The wire
@@ -259,6 +282,18 @@ merge gates a usable tree. Status, decisions, and open issues per
   alone — the signature axis went away with the server-side merge keying
   decision above. (4) Param merging extends the old flat tag merge to the
   R11 group mini-tree (values merge recursively, binds under their SQL).
+
+- **2026-07-05 — the e2e run caught a real §2.2 divergence: echo hands path
+  params over still percent-encoded.** 02 §2.2 pins the pk segment as
+  percent-encoded, and a JS client's encodeURIComponent escapes the ':'
+  separators to %3A — which `ParsePKPath` then rejected with "expected 7
+  colon-separated components". The Go smoke test never saw it because
+  `url.PathEscape` leaves ':' literal. Fixed by decoding in a `pkParam`
+  helper in front of both point handlers; the MSW mock had decoded all
+  along, so this was the backend diverging from the contract and the mock,
+  exactly the failure mode the mock-is-contract policy is for. The full
+  query-ui suite passes against the compose stack after the fix
+  (discovery → selection → chips → tree drill → params → hotspots).
 
 ## Open issues
 
