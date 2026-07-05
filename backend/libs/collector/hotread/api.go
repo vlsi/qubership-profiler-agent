@@ -215,8 +215,9 @@ func (a *API) queryCalls(q model.CallsQuery, after *model.Position, limit int) (
 // toCallRow maps an index row to the merged row shape: the method resolves
 // against the pod-restart's dictionary (a missing word keeps the "#<id>"
 // placeholder, as the write path does), params decode from the indexed JSON.
-// error_flag and retention_class are the provisional index values — the seal
-// re-derives them for the cold copy, which is why the §6.3 dedup prefers cold.
+// error_flag, retention_class, and suspend_ms are the provisional index
+// values — the seal re-derives them for the cold copy, which is why the §6.3
+// dedup prefers cold.
 func (a *API) toCallRow(idx hotstore.CallIndexRow, dicts map[string]map[int]string) (model.CallRow, error) {
 	key, err := hotstore.ParsePodRestartKey(idx.PodRestart)
 	if err != nil {
@@ -250,7 +251,16 @@ func (a *API) toCallRow(idx hotstore.CallIndexRow, dicts map[string]map[int]stri
 		CpuTimeMs:      idx.CpuTimeMs,
 		WaitTimeMs:     idx.WaitTimeMs,
 		MemoryUsed:     idx.MemoryUsed,
+		QueueWaitMs:    int32(idx.QueueWaitMs),
+		SuspendMs:      int32(idx.SuspendMs),
 		ChildCalls:     int32(idx.ChildCalls),
+		Transactions:   int32(idx.Transactions),
+		LogsGenerated:  idx.LogsGenerated,
+		LogsWritten:    idx.LogsWritten,
+		FileRead:       idx.FileRead,
+		FileWritten:    idx.FileWritten,
+		NetRead:        idx.NetRead,
+		NetWritten:     idx.NetWritten,
 		ErrorFlag:      idx.ErrorFlag,
 		RetentionClass: idx.RetentionClass,
 		Tier:           model.TierHot,
