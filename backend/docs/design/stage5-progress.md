@@ -110,6 +110,36 @@ merge gates a usable tree. Status, decisions, and open issues per
     initial-expansion/chain-skip/param-row/search fixtures, MSW page tests
     (hinted decode renders, cold state, truncated state) — 69 green
 
+- [x] **Phase 9 — UI 5.3: the five computations** (07 §10 step 5.3)
+  - [x] `transforms/flat-profile` — computeFlatProfile port: per-method
+    aggregation within business-category contexts, the recursive-occurrence
+    guard (self time always, totals once per outermost occurrence), param
+    groups merged per (key, value); zero-self methods counted, not shown
+  - [x] `transforms/merge` — outgoingCalls (mergeTopDown: occurrences merge
+    into one subtree, nested self-recursion folds into the root, totals
+    recomputed bottom-up), incomingCalls (mergeBottomUp: rooted at the
+    method, grows to the callers, the time[] subtraction counts recursion
+    once, optional category filter), findUsages (top-down caller paths with
+    the minLevel guard against double-counting shared prefixes)
+  - [x] `transforms/adjust` — factor/fraction config parser ('*' wildcards,
+    longest pattern wins), the cascading-k walk with prevSelf* stash,
+    ancestor totals and param-group kTags rescale; local hotspots =
+    flat-profile over outgoingCalls
+  - [x] `transforms/categories` — config parser ('>' assigns children, hsl
+    palette, longest pattern wins), effective category propagated down with
+    child overrides; drives row colouring and category-first hotspots
+  - [x] UI: Hotspots tab (per-category sections, share bars, incoming pivot),
+    ops on the tree rows (incoming/outgoing on hover + kebab: find usages,
+    local hotspots, adjust quick-add, add category quick-add) opening a
+    Drawer with a derived TreeView or profile; Adjust duration and Setup
+    categories modals; a what-if banner while adjustments are active; the
+    model rebuilds from the wire per config change, keeping transforms pure
+  - [x] Tests: 13-case transform suite over a synthetic recursive fixture —
+    hotspot ranking and category split, usage paths and recursion
+    attribution, incoming/outgoing shapes and param merges, adjusted totals
+    with cascade and param rescale, category propagation/overrides — 82
+    green overall
+
 ## Decisions log
 
 - **2026-07-05 — hot-tier `suspend_ms` is attributed at index time.** The wire
@@ -218,6 +248,17 @@ merge gates a usable tree. Status, decisions, and open issues per
   logic). One UI-level addition, not in the old code: an active search
   reveals every skipped chain, because a match inside a skipped
   pass-through node would otherwise be unreachable.
+
+- **2026-07-05 — 5.3 port deviations from profiler.mjs, recorded per 08 §5's
+  "document any deviations".** (1) The old Tree__makeAdjustments never
+  assigned `newDuration` (`var newDuration;` — a latent bug that wrote
+  `undefined` into M_DURATION of adjusted nodes); the port computes the
+  intent, child duration + scaled self. (2) The old hotspots grouped
+  methods under javaModules package nodes; 07 §5.3 specifies category →
+  flat, so the package grouping is dropped. (3) Merge identity is methodIdx
+  alone — the signature axis went away with the server-side merge keying
+  decision above. (4) Param merging extends the old flat tag merge to the
+  R11 group mini-tree (values merge recursively, binds under their SQL).
 
 ## Open issues
 

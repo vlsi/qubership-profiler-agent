@@ -30,6 +30,16 @@ export interface TreeNode {
    * to the top of the order, and −2 pins it as never-collapsible.
    */
   prevSelfDurationMs?: number;
+  prevSelfSuspensionMs?: number;
+  prevSelfExecutions?: number;
+  /** Effective business category (old M_CATEGORY), assigned client-side. */
+  category?: CategoryDef;
+}
+
+/** A business category from Setup categories (old BC_COLOR / BC_NAME pair). */
+export interface CategoryDef {
+  color: string;
+  name: string;
 }
 
 export interface TreeModel {
@@ -80,6 +90,24 @@ export function buildTreeModel(wire: TreeWire): TreeModel {
     root,
     nodeCount: nextId,
     hasUnresolvedParams: unresolved,
+  };
+}
+
+/** A blank node for the 5.3 merge transforms (old Tree__createNode). */
+export function createNode(id: number, methodIdx: number): TreeNode {
+  return {
+    id,
+    methodIdx,
+    durationMs: 0,
+    selfDurationMs: 0,
+    suspensionMs: 0,
+    selfSuspensionMs: 0,
+    selfExecutions: 0,
+    childExecutions: 0,
+    params: [],
+    children: [],
+    parent: null,
+    collapseLevels: 0,
   };
 }
 

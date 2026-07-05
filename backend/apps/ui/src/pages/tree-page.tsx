@@ -1,19 +1,41 @@
 import { DownloadOutlined } from '@ant-design/icons';
-import { Alert, Button, Empty, Layout, Result, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Drawer, Empty, Input, Layout, Modal, Result, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 
 import { parsePkPath, pkToPath } from '../api/pk';
 import type { CallPK } from '../api/types';
 import { formatCount, formatDurationMs, formatTs } from '../calls/format';
+import { HotspotsView, nodeTitle } from '../tree/hotspots-view';
+import { buildTreeModel } from '../tree/model';
+import type { TreeModel, TreeNode } from '../tree/model';
 import { summariseParams } from '../tree/params-summary';
+import { applyAdjustments, factorByMethod, parseAdjustConfig } from '../tree/transforms/adjust';
+import { applyCategories, parseCategoryConfig } from '../tree/transforms/categories';
+import { computeFlatProfile } from '../tree/transforms/flat-profile';
+import type { CategoryProfile } from '../tree/transforms/flat-profile';
+import { findUsages, incomingCalls, outgoingCalls } from '../tree/transforms/merge';
 import { TreeView } from '../tree/tree-view';
+import type { TreeViewOps } from '../tree/tree-view';
 import { useTree } from '../tree/use-tree';
 import { parseTreeSearch } from '../url/search-params';
 
-// Call Tree route (09 §3): opened in a new tab from a calls row, carrying
-// the §2.2 cold hints in the query string. Tabs: Call Tree · Hotspots ·
-// Parameters (Database and Gantt are dropped).
+// Call Tree route (09 §3): tabs Call Tree · Hotspots · Parameters, the
+// per-node operations backed by the 5.3 transforms, and the Adjust duration
+// / Setup categories configs. The model rebuilds from the decoded wire on
+// every config change, so the transforms stay pure and re-applicable.
+
+type OpResult =
+  | { kind: 'tree'; title: string; model: TreeModel }
+  | { kind: 'hotspots'; title: string; model: TreeModel; profiles: CategoryProfile[] };
+
+const ADJUST_PLACEHOLDER = `# <factor> <method pattern>, '*' wildcards, e.g.:
+# 1/10 com.acme.billing.InvoiceService.createInvoice
+# 2 *PgPreparedStatement.execute*`;
+
+const CATEGORY_PLACEHOLDER = `# <category> <method pattern>; '>' assigns the children, e.g.:
+# create_order com.acme.orders.CheckoutFlow.placeOrder
+# db >*.PgPreparedStatement.*`;
 
 export function TreePage() {
   const { pk: pkRaw } = useParams<{ pk: string }>();
@@ -34,8 +56,67 @@ export function TreePage() {
   });
   const [capped, setCapped] = useState(false);
 
-  const model = state.kind === 'ready' ? state.model : null;
+  // Applied configs; the modals edit drafts.
+  const [adjustText, setAdjustText] = useState('');
+  const [categoryText, setCategoryText] = useState('');
+  const [adjustModal, setAdjustModal] = useState<string | null>(null);
+  const [categoryModal, setCategoryModal] = useState<string | null>(null);
+  const [op, setOp] = useState<OpResult | null>(null);
+
+  const wire = state.kind === 'ready' ? state.wire : null;
+  const model = useMemo(() => {
+    if (wire === null) return null;
+    const m = buildTreeModel(wire);
+    const adjustRules = parseAdjustConfig(adjustText);
+    if (adjustRules.length > 0) applyAdjustments(m, factorByMethod(m, adjustRules));
+    applyCategories(m, categoryText.trim() === '' ? null : parseCategoryConfig(categoryText));
+    return m;
+  }, [wire, adjustText, categoryText]);
+
+  const profiles = useMemo(() => (model === null ? [] : computeFlatProfile(model)), [model]);
   const paramStats = useMemo(() => (model === null ? [] : summariseParams(model)), [model]);
+
+  const openIncoming = (methodIdx: number, category?: string): void => {
+    if (model === null) return;
+    const result = incomingCalls(model, methodIdx, category);
+    setOp({ kind: 'tree', title: `Incoming calls · ${nodeTitle(result, result.root)}`, model: result });
+  };
+
+  const ops: TreeViewOps = {
+    incoming: (node) => openIncoming(node.methodIdx),
+    outgoing: (node) => {
+      if (model === null) return;
+      const result = outgoingCalls(model, node.methodIdx);
+      setOp({ kind: 'tree', title: `Outgoing calls · ${nodeTitle(model, node)}`, model: result });
+    },
+    findUsages: (node) => {
+      if (model === null) return;
+      const result = findUsages(model, node.methodIdx);
+      setOp({ kind: 'tree', title: `Find usages · ${nodeTitle(model, node)}`, model: result });
+    },
+    localHotspots: (node) => {
+      if (model === null) return;
+      const scoped = outgoingCalls(model, node.methodIdx);
+      setOp({
+        kind: 'hotspots',
+        title: `Local hotspots · ${nodeTitle(model, node)}`,
+        model: scoped,
+        profiles: computeFlatProfile(scoped),
+      });
+    },
+    adjust: (node) => {
+      if (model === null) return;
+      const method = model.methods[node.methodIdx] ?? '';
+      const factor = node.selfExecutions > 1 ? node.selfExecutions : 10000;
+      setAdjustModal(`${adjustText === '' ? '' : `${adjustText}\n`}1/${factor} ${method}`);
+    },
+    addCategory: (node) => {
+      if (model === null) return;
+      const method = model.methods[node.methodIdx] ?? '';
+      const name = nodeTitle(model, node).split('(')[0]!.split('.').slice(-2).join('_').replace(/\s/g, '');
+      setCategoryModal(`${categoryText === '' ? '' : `${categoryText}\n`}${name} ${method}`);
+    },
+  };
 
   if (parseError !== null || pk === null) {
     return (
@@ -67,9 +148,17 @@ export function TreePage() {
           {hints.retentionClass !== null ? <Tag>{hints.retentionClass}</Tag> : null}
         </Space>
         <span style={{ flex: 1 }} />
-        <Button size="small" icon={<DownloadOutlined />} href={traceHref} download>
-          Raw trace
-        </Button>
+        <Space>
+          <Button size="small" onClick={() => setAdjustModal(adjustText)}>
+            Adjust duration
+          </Button>
+          <Button size="small" onClick={() => setCategoryModal(categoryText)}>
+            Setup categories
+          </Button>
+          <Button size="small" icon={<DownloadOutlined />} href={traceHref} download>
+            Raw trace
+          </Button>
+        </Space>
       </Layout.Header>
       <Layout.Content style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {state.kind === 'loading' ? (
@@ -127,6 +216,18 @@ export function TreePage() {
                   description="Branches are still expandable by hand; the raw trace download carries full fidelity."
                 />
               ) : null}
+              {adjustText.trim() !== '' ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="Durations are adjusted — this is a what-if view"
+                  action={
+                    <Button size="small" onClick={() => setAdjustText('')}>
+                      Reset
+                    </Button>
+                  }
+                />
+              ) : null}
             </Space>
             <Tabs
               style={{ flex: 1, minHeight: 0 }}
@@ -137,14 +238,18 @@ export function TreePage() {
                   label: 'Call Tree',
                   children: (
                     <div style={{ height: 'calc(100vh - 200px)' }}>
-                      <TreeView model={model} onCapped={setCapped} />
+                      <TreeView model={model} onCapped={setCapped} ops={ops} />
                     </div>
                   ),
                 },
                 {
                   key: 'hotspots',
                   label: 'Hotspots',
-                  children: <Empty description="Hotspots land with step 5.3." />,
+                  children: (
+                    <div style={{ height: 'calc(100vh - 200px)', overflow: 'auto' }}>
+                      <HotspotsView model={model} profiles={profiles} onIncoming={(idx, cat) => openIncoming(idx, cat)} />
+                    </div>
+                  ),
                 },
                 {
                   key: 'params',
@@ -166,7 +271,11 @@ export function TreePage() {
                           render: (_, r) => (
                             <Typography.Text ellipsis style={{ maxWidth: 640 }} title={r.value}>
                               {r.value}
-                              {r.unresolved ? <Tag color="orange" style={{ marginLeft: 8 }}>unresolved</Tag> : null}
+                              {r.unresolved ? (
+                                <Tag color="orange" style={{ marginLeft: 8 }}>
+                                  unresolved
+                                </Tag>
+                              ) : null}
                             </Typography.Text>
                           ),
                         },
@@ -193,7 +302,77 @@ export function TreePage() {
             />
           </>
         ) : null}
+
+        <Drawer
+          open={op !== null}
+          onClose={() => setOp(null)}
+          title={op?.title}
+          width="75%"
+          destroyOnHidden
+        >
+          {op === null ? null : hasNoOccurrences(op.model.root) ? (
+            <Empty description="The method does not occur in this tree." />
+          ) : op.kind === 'tree' ? (
+            <div style={{ height: 'calc(100vh - 140px)' }}>
+              <TreeView model={op.model} />
+            </div>
+          ) : (
+            <HotspotsView model={op.model} profiles={op.profiles} />
+          )}
+        </Drawer>
+
+        <Modal
+          open={adjustModal !== null}
+          title="Adjust duration"
+          okText="Apply"
+          onOk={() => {
+            setAdjustText(adjustModal ?? '');
+            setAdjustModal(null);
+          }}
+          onCancel={() => setAdjustModal(null)}
+          width={720}
+        >
+          <Typography.Paragraph type="secondary">
+            One rule per line: <Typography.Text code>&lt;factor&gt; &lt;method pattern&gt;</Typography.Text>. A
+            factor of <Typography.Text code>1/10</Typography.Text> means “what if this were 10× faster”; the
+            factor cascades down the matched subtree and ancestor totals recompute.
+          </Typography.Paragraph>
+          <Input.TextArea
+            rows={10}
+            value={adjustModal ?? ''}
+            onChange={(e) => setAdjustModal(e.target.value)}
+            placeholder={ADJUST_PLACEHOLDER}
+          />
+        </Modal>
+
+        <Modal
+          open={categoryModal !== null}
+          title="Setup categories"
+          okText="Apply"
+          onOk={() => {
+            setCategoryText(categoryModal ?? '');
+            setCategoryModal(null);
+          }}
+          onCancel={() => setCategoryModal(null)}
+          width={720}
+        >
+          <Typography.Paragraph type="secondary">
+            One rule per line: <Typography.Text code>&lt;category&gt; &lt;method pattern&gt;</Typography.Text>.
+            The category colours the matched subtree (a deeper match overrides) and Hotspots groups by it. A
+            pattern starting with <Typography.Text code>&gt;</Typography.Text> assigns the method's children.
+          </Typography.Paragraph>
+          <Input.TextArea
+            rows={10}
+            value={categoryModal ?? ''}
+            onChange={(e) => setCategoryModal(e.target.value)}
+            placeholder={CATEGORY_PLACEHOLDER}
+          />
+        </Modal>
       </Layout.Content>
     </Layout>
   );
+}
+
+function hasNoOccurrences(root: TreeNode): boolean {
+  return root.selfExecutions === 0 && root.childExecutions === 0 && root.children.length === 0;
 }

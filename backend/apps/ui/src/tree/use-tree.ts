@@ -4,19 +4,19 @@ import { ApiError } from '../api/client';
 import { fetchTree } from '../api/endpoints';
 import type { TreeHints } from '../api/endpoints';
 import type { CallPK } from '../api/types';
-import { buildTreeModel } from './model';
-import type { TreeModel } from './model';
+import type { TreeWire } from '../msgpack/tree-wire';
 
 // Tree loading with the 09 §5 point-fetch states told apart by the backend's
 // problem titles (tree.go pointProblem): "call not found" is the cold miss,
-// "trace blob unavailable" is a truncated blob.
+// "trace blob unavailable" is a truncated blob. The page derives the model
+// from the wire itself, so adjust/category configs rebuild it cheaply.
 
 export type TreeState =
   | { kind: 'loading' }
   | { kind: 'cold'; detail: string }
   | { kind: 'truncated'; detail: string }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; model: TreeModel };
+  | { kind: 'ready'; wire: TreeWire };
 
 export function useTree(pk: CallPK | null, hints: TreeHints): { state: TreeState; refetch: () => void } {
   const [state, setState] = useState<TreeState>({ kind: 'loading' });
@@ -31,7 +31,7 @@ export function useTree(pk: CallPK | null, hints: TreeHints): { state: TreeState
     abortRef.current = controller;
     setState({ kind: 'loading' });
     fetchTree(pk, hints, controller.signal)
-      .then((wire) => setState({ kind: 'ready', model: buildTreeModel(wire) }))
+      .then((wire) => setState({ kind: 'ready', wire }))
       .catch((e: unknown) => {
         if (controller.signal.aborted) return;
         if (e instanceof ApiError && e.status === 404) {

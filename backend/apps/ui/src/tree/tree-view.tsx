@@ -1,4 +1,4 @@
-import { MoreOutlined } from '@ant-design/icons';
+import { LoginOutlined, LogoutOutlined, MoreOutlined } from '@ant-design/icons';
 import { Alert, App, Button, Dropdown, Input, Modal, Popover, Space, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
@@ -113,13 +113,25 @@ const rowBase: CSSProperties = {
   fontSize: 13,
 };
 
+/** Per-node operations (09 §3.4), backed by the 5.3 transforms. */
+export interface TreeViewOps {
+  incoming: (node: TreeNode) => void;
+  outgoing: (node: TreeNode) => void;
+  findUsages: (node: TreeNode) => void;
+  localHotspots: (node: TreeNode) => void;
+  adjust: (node: TreeNode) => void;
+  addCategory: (node: TreeNode) => void;
+}
+
 interface TreeViewProps {
   model: TreeModel;
   /** Auto-expansion hit the row budget; the view degraded, not froze. */
   onCapped?: (capped: boolean) => void;
+  /** Absent on derived trees (op results), which stay read-only. */
+  ops?: TreeViewOps;
 }
 
-export function TreeView({ model, onCapped }: TreeViewProps) {
+export function TreeView({ model, onCapped, ops }: TreeViewProps) {
   const { message } = App.useApp();
   const dict = useMethodDict(model);
   const [containerRef, height] = useElementHeight<HTMLDivElement>(480);
@@ -196,7 +208,7 @@ export function TreeView({ model, onCapped }: TreeViewProps) {
         style={{
           ...rowBase,
           paddingLeft: row.depth * 16,
-          background: marked.has(node.id) ? '#fff1f0' : isMatch ? '#fffbe6' : undefined,
+          background: marked.has(node.id) ? '#fff1f0' : isMatch ? '#fffbe6' : node.category?.color,
         }}
         onMouseEnter={() => setHoverNode(node.id)}
         onMouseLeave={() => setHoverNode((cur) => (cur === node.id ? null : cur))}
@@ -248,6 +260,26 @@ export function TreeView({ model, onCapped }: TreeViewProps) {
         <Typography.Text ellipsis style={{ flex: 1 }} title={info.original}>
           {info.signature}
         </Typography.Text>
+        {ops !== undefined && hoverNode === node.id ? (
+          <>
+            <Button
+              size="small"
+              type="text"
+              icon={<LoginOutlined />}
+              title="Incoming calls"
+              style={{ width: 22, minWidth: 22 }}
+              onClick={() => ops.incoming(node)}
+            />
+            <Button
+              size="small"
+              type="text"
+              icon={<LogoutOutlined />}
+              title="Outgoing calls"
+              style={{ width: 22, minWidth: 22 }}
+              onClick={() => ops.outgoing(node)}
+            />
+          </>
+        ) : null}
         <Dropdown
           trigger={['click']}
           menu={{
@@ -255,12 +287,12 @@ export function TreeView({ model, onCapped }: TreeViewProps) {
               { key: 'stacktrace', label: 'Get stacktrace' },
               { key: 'mark', label: marked.has(node.id) ? 'Unmark red' : 'Mark red' },
               { type: 'divider' },
-              { key: 'incoming', label: 'Incoming calls', disabled: true },
-              { key: 'outgoing', label: 'Outgoing calls', disabled: true },
-              { key: 'usages', label: 'Find usages', disabled: true },
-              { key: 'local', label: 'Local hotspots', disabled: true },
-              { key: 'adjust', label: 'Adjust duration', disabled: true },
-              { key: 'category', label: 'Setup category', disabled: true },
+              { key: 'incoming', label: 'Incoming calls', disabled: ops === undefined },
+              { key: 'outgoing', label: 'Outgoing calls', disabled: ops === undefined },
+              { key: 'usages', label: 'Find usages', disabled: ops === undefined },
+              { key: 'local', label: 'Local hotspots', disabled: ops === undefined },
+              { key: 'adjust', label: 'Adjust duration', disabled: ops === undefined },
+              { key: 'category', label: 'Add category', disabled: ops === undefined },
             ],
             onClick: ({ key }) => {
               if (key === 'stacktrace') {
@@ -272,6 +304,13 @@ export function TreeView({ model, onCapped }: TreeViewProps) {
                   else next.add(node.id);
                   return next;
                 });
+              } else if (ops !== undefined) {
+                if (key === 'incoming') ops.incoming(node);
+                else if (key === 'outgoing') ops.outgoing(node);
+                else if (key === 'usages') ops.findUsages(node);
+                else if (key === 'local') ops.localHotspots(node);
+                else if (key === 'adjust') ops.adjust(node);
+                else if (key === 'category') ops.addCategory(node);
               }
             },
           }}
