@@ -184,8 +184,10 @@ versioned fixtures.
 - `Node` (merged v1, `02-read-contract.md` §2.5.3) — `0: methodIdx` (into `methods`), `1: durationMs`,
   `2: selfDurationMs`, `3: suspensionMs`, `4: selfSuspensionMs`, `5: executions`, `6: selfExecutions`,
   `7: params[Param]` (optional), `8: children[Node]` (optional; absent on leaves).
-- `Param` — `0: paramIdx` (into `params`), `1: values[str]`, `2: unresolved[int]` (optional; big-param
-  references the seal pass could not inline).
+- `Param` (aggregated per R11, `02-read-contract.md` §2.5.3) — `0: paramIdx` (into `params`),
+  `3: groups[ParamGroup]` (1 and 2 are reserved). `ParamGroup` — `0: value`, `1: durationMs`,
+  `2: executions`, `3: params[Param]` (optional; binds nested under their SQL), `4: unresolved` (optional
+  bool; a big-param reference the server could not inline).
 
 Big parameters (`sql` / `xml`) are resolved server-side and inlined into `Param.values`, so the tree is
 self-contained — the UI needs no dictionary fetch and no value-stream call for this path.

@@ -41,11 +41,21 @@ const (
 	nodeFieldChildren         = 8
 )
 
-// Field numbers of a Param (§2.5.3).
+// Field numbers of a Param (§2.5.3). 1 (the pre-R11 flat values list) and
+// 2 (its unresolved index list) are reserved — see the contract's
+// reserved-number registry.
 const (
-	paramFieldParamIdx   = 0
-	paramFieldValues     = 1
-	paramFieldUnresolved = 2
+	paramFieldParamIdx = 0
+	paramFieldGroups   = 3
+)
+
+// Field numbers of a ParamGroup (§2.5.3).
+const (
+	groupFieldValue      = 0
+	groupFieldDurationMs = 1
+	groupFieldExecutions = 2
+	groupFieldParams     = 3
+	groupFieldUnresolved = 4
 )
 
 // Encode renders the tree as the §2.5.2 MessagePack envelope.
@@ -105,21 +115,41 @@ func (e *encoder) putNode(n *Node) {
 }
 
 func (e *encoder) putParam(p *Param) {
-	fields := 2
-	if len(p.Unresolved) > 0 {
+	e.putMapHeader(2)
+	e.putInt(paramFieldParamIdx)
+	e.putInt(int64(p.ParamIdx))
+	e.putInt(paramFieldGroups)
+	e.putArrayHeader(len(p.Groups))
+	for i := range p.Groups {
+		e.putGroup(&p.Groups[i])
+	}
+}
+
+func (e *encoder) putGroup(g *ParamGroup) {
+	fields := 3
+	if len(g.Params) > 0 {
+		fields++
+	}
+	if g.Unresolved {
 		fields++
 	}
 	e.putMapHeader(fields)
-	e.putInt(paramFieldParamIdx)
-	e.putInt(int64(p.ParamIdx))
-	e.putInt(paramFieldValues)
-	e.putStrings(p.Values)
-	if len(p.Unresolved) > 0 {
-		e.putInt(paramFieldUnresolved)
-		e.putArrayHeader(len(p.Unresolved))
-		for _, i := range p.Unresolved {
-			e.putInt(int64(i))
+	e.putInt(groupFieldValue)
+	e.putString(g.Value)
+	e.putInt(groupFieldDurationMs)
+	e.putInt(g.DurationMs)
+	e.putInt(groupFieldExecutions)
+	e.putInt(g.Executions)
+	if len(g.Params) > 0 {
+		e.putInt(groupFieldParams)
+		e.putArrayHeader(len(g.Params))
+		for i := range g.Params {
+			e.putParam(&g.Params[i])
 		}
+	}
+	if g.Unresolved {
+		e.putInt(groupFieldUnresolved)
+		e.buf = append(e.buf, 0xc3) // msgpack true
 	}
 }
 
@@ -347,24 +377,20 @@ func (d *decoder) param() (Param, error) {
 				return Param{}, err
 			}
 			p.ParamIdx = int(v)
-		case paramFieldValues:
-			if p.Values, err = d.strings(); err != nil {
-				return Param{}, err
-			}
-		case paramFieldUnresolved:
+		case paramFieldGroups:
 			cnt, err := d.arrayHeader()
 			if err != nil {
 				return Param{}, err
 			}
 			if cnt > 0 {
-				p.Unresolved = make([]int, 0, prealloc(cnt))
+				p.Groups = make([]ParamGroup, 0, prealloc(cnt))
 			}
 			for j := 0; j < cnt; j++ {
-				v, err := d.int()
+				g, err := d.group()
 				if err != nil {
 					return Param{}, err
 				}
-				p.Unresolved = append(p.Unresolved, int(v))
+				p.Groups = append(p.Groups, g)
 			}
 		default:
 			if err := d.skip(); err != nil {
@@ -373,6 +399,73 @@ func (d *decoder) param() (Param, error) {
 		}
 	}
 	return p, nil
+}
+
+func (d *decoder) group() (ParamGroup, error) {
+	n, err := d.mapHeader()
+	if err != nil {
+		return ParamGroup{}, err
+	}
+	g := ParamGroup{}
+	for i := 0; i < n; i++ {
+		key, err := d.int()
+		if err != nil {
+			return ParamGroup{}, err
+		}
+		switch key {
+		case groupFieldValue:
+			if g.Value, err = d.string(); err != nil {
+				return ParamGroup{}, err
+			}
+		case groupFieldDurationMs:
+			if g.DurationMs, err = d.int(); err != nil {
+				return ParamGroup{}, err
+			}
+		case groupFieldExecutions:
+			if g.Executions, err = d.int(); err != nil {
+				return ParamGroup{}, err
+			}
+		case groupFieldParams:
+			cnt, err := d.arrayHeader()
+			if err != nil {
+				return ParamGroup{}, err
+			}
+			if cnt > 0 {
+				g.Params = make([]Param, 0, prealloc(cnt))
+			}
+			for j := 0; j < cnt; j++ {
+				p, err := d.param()
+				if err != nil {
+					return ParamGroup{}, err
+				}
+				g.Params = append(g.Params, p)
+			}
+		case groupFieldUnresolved:
+			if g.Unresolved, err = d.bool(); err != nil {
+				return ParamGroup{}, err
+			}
+		default:
+			if err := d.skip(); err != nil {
+				return ParamGroup{}, err
+			}
+		}
+	}
+	return g, nil
+}
+
+func (d *decoder) bool() (bool, error) {
+	b, err := d.byte()
+	if err != nil {
+		return false, err
+	}
+	switch b {
+	case 0xc2:
+		return false, nil
+	case 0xc3:
+		return true, nil
+	default:
+		return false, errors.Errorf("expected a bool, got 0x%02x", b)
+	}
 }
 
 func (d *decoder) strings() ([]string, error) {

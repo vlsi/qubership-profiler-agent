@@ -11,10 +11,13 @@ import (
 func sampleTree() *Tree {
 	return &Tree{
 		Methods: []string{"com.example.Service.handle", "com.example.Service.query"},
-		Params:  []string{"request.id", "sql"},
+		Params:  []string{"request.id", "sql", "binds"},
 		Root: &Node{
 			MethodIdx: 0,
-			Params:    []Param{{ParamIdx: 0, Values: []string{"req-1"}}},
+			Params: []Param{{
+				ParamIdx: 0,
+				Groups:   []ParamGroup{{Value: "req-1", DurationMs: 1247, Executions: 1}},
+			}},
 			Children: []*Node{
 				{
 					MethodIdx:        1,
@@ -25,9 +28,18 @@ func sampleTree() *Tree {
 					Executions:       12,
 					SelfExecutions:   12,
 					Params: []Param{{
-						ParamIdx:   1,
-						Values:     []string{"SELECT 1", "sql:2:17"},
-						Unresolved: []int{1},
+						ParamIdx: 1,
+						Groups: []ParamGroup{
+							{
+								Value: "SELECT 1", DurationMs: 25, Executions: 10,
+								Params: []Param{{
+									ParamIdx: 2,
+									Groups:   []ParamGroup{{Value: "42", DurationMs: 25, Executions: 10}},
+								}},
+							},
+							{Value: "sql:2:17", DurationMs: 10, Executions: 1, Unresolved: true},
+							{Value: OtherGroupValue, DurationMs: 5, Executions: 1},
+						},
 					}},
 				},
 			},
@@ -62,7 +74,10 @@ func TestMsgpackWideValues(t *testing.T) {
 		tree.Root.Children = append(tree.Root.Children, &Node{
 			DurationMs: 1,
 			Executions: int64(i),
-			Params:     []Param{{ParamIdx: 0, Values: []string{strings.Repeat("v", 70_000)}}},
+			Params: []Param{{
+				ParamIdx: 0,
+				Groups:   []ParamGroup{{Value: strings.Repeat("v", 70_000), DurationMs: 1, Executions: 1}},
+			}},
 		})
 	}
 

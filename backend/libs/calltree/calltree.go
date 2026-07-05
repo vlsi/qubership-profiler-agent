@@ -43,14 +43,26 @@ type (
 		Children         []*Node
 	}
 
-	// Param is one parameter of a node (§2.5.3). Values keeps the tag-event
-	// order. Unresolved lists the indexes of values whose big-parameter
-	// reference could not be resolved; such a value carries the textual
-	// reference instead of the payload, so nothing is lost silently.
+	// Param is one parameter of a node (§2.5.3): an aggregated mini-tree, not
+	// a flat value list — a node can hold thousands of SQL texts
+	// (08-ui-backend-requirements.md R11). Groups is ordered by durationMs
+	// descending, with the ::other bucket, when present, last.
 	Param struct {
-		ParamIdx   int
-		Values     []string
-		Unresolved []int
+		ParamIdx int
+		Groups   []ParamGroup
+	}
+
+	// ParamGroup is one aggregated value group (§2.5.3). Value carries the
+	// first-seen full text, the literal "::other" for the overflow bucket, or
+	// the "<stream>:<seq>:<offset>" reference text when Unresolved — an
+	// unresolvable value is marked, never dropped silently. Params nests
+	// binds under their SQL.
+	ParamGroup struct {
+		Value      string
+		DurationMs int64
+		Executions int64
+		Params     []Param
+		Unresolved bool
 	}
 
 	// Options resolve the blob's dictionary ids and big-parameter references
@@ -70,6 +82,10 @@ type (
 		// epoch, so intervals intersect without translation. Build sorts and
 		// merges the pauses itself; empty means zero suspension everywhere.
 		Suspend []SuspendInterval
+		// MaxParamGroups caps the value groups per container — a node's
+		// top-level params jointly, or one group's nested params (02 §2.5.3).
+		// 0 means the contract default of 256 (the Java Hotspot.MAX_PARAMS).
+		MaxParamGroups int
 	}
 
 	// SuspendInterval is one stop-the-world pause of the suspension timeline.
@@ -126,19 +142,26 @@ func (ev event) bigRef() BigRef {
 // component locating the root ENTER within the blob's first chunk
 // (01-write-contract.md §4.5).
 func Build(blob []byte, recordIndex int, opts Options) (*Tree, error) {
+	maxGroups := opts.MaxParamGroups
+	if maxGroups <= 0 {
+		maxGroups = DefaultMaxParamGroups
+	}
 	b := &builder{
-		opts:      opts,
-		tree:      &Tree{Methods: []string{}, Params: []string{}},
-		methodIdx: map[string]int{},
-		paramIdx:  map[string]int{},
-		childIdx:  map[*Node]map[int]*Node{},
-		pauses:    normalizeSuspend(opts.Suspend),
+		opts:       opts,
+		tree:       &Tree{Methods: []string{}, Params: []string{}},
+		methodIdx:  map[string]int{},
+		paramIdx:   map[string]int{},
+		childIdx:   map[*Node]map[int]*Node{},
+		containers: map[*Node]*container{},
+		maxGroups:  maxGroups,
+		pauses:     normalizeSuspend(opts.Suspend),
 	}
 	if err := walkCall(blob, recordIndex, b.visit); err != nil {
 		return nil, err
 	}
 	if b.tree.Root != nil {
 		totalExecutions(b.tree.Root)
+		b.materializeParams(b.tree.Root)
 	}
 	return b.tree, nil
 }
@@ -212,13 +235,15 @@ func totalExecutions(n *Node) int64 {
 // merged node for a method under a parent in O(1); it persists across sibling
 // invocations, which is what makes them fold into one node.
 type builder struct {
-	opts      Options
-	tree      *Tree
-	methodIdx map[string]int
-	paramIdx  map[string]int
-	childIdx  map[*Node]map[int]*Node
-	pauses    []SuspendInterval
-	stack     []frame
+	opts       Options
+	tree       *Tree
+	methodIdx  map[string]int
+	paramIdx   map[string]int
+	childIdx   map[*Node]map[int]*Node
+	containers map[*Node]*container
+	maxGroups  int
+	pauses     []SuspendInterval
+	stack      []frame
 }
 
 type frame struct {
@@ -226,6 +251,17 @@ type frame struct {
 	enterMs        int64
 	childrenMs     int64
 	childrenSuspMs int64
+	tags           []invocationTag
+}
+
+// invocationTag is one tag event of a live invocation, held until the exit
+// knows the invocation's duration to attribute (02 §2.5.3).
+type invocationTag struct {
+	paramIdx   int
+	value      string
+	unresolved bool
+	isSQL      bool
+	isBinds    bool
 }
 
 func (b *builder) visit(ev event, atMs int64) {
@@ -260,6 +296,7 @@ func (b *builder) visit(ev event, atMs int64) {
 		top.node.SelfDurationMs += duration - top.childrenMs
 		top.node.SuspensionMs += suspension
 		top.node.SelfSuspensionMs += suspension - top.childrenSuspMs
+		b.foldTags(top.node, top.tags, duration)
 		b.stack = b.stack[:len(b.stack)-1]
 		if len(b.stack) > 0 {
 			parent := &b.stack[len(b.stack)-1]
@@ -267,19 +304,9 @@ func (b *builder) visit(ev event, atMs int64) {
 			parent.childrenSuspMs += suspension
 		}
 	case pipe.EventTagRecord:
-		node := b.stack[len(b.stack)-1].node
+		top := &b.stack[len(b.stack)-1]
 		idx := b.internParam(ev.tagId)
-		var param *Param
-		for i := range node.Params {
-			if node.Params[i].ParamIdx == idx {
-				param = &node.Params[i]
-				break
-			}
-		}
-		if param == nil {
-			node.Params = append(node.Params, Param{ParamIdx: idx})
-			param = &node.Params[len(node.Params)-1]
-		}
+		tag := invocationTag{paramIdx: idx}
 		if isBigParam(ev.paramType) {
 			ref := ev.bigRef()
 			value, ok := "", false
@@ -287,15 +314,21 @@ func (b *builder) visit(ev event, atMs int64) {
 				value, ok = b.opts.BigValue(ref.Stream, ref.Seq, ref.Offset)
 			}
 			if !ok {
-				// Explicit, not silent: the value slot carries the reference
-				// text and Unresolved flags it (02 §2.5.3).
-				param.Unresolved = append(param.Unresolved, len(param.Values))
+				// Explicit, not silent: the group carries the reference text
+				// and its Unresolved flag (02 §2.5.3).
+				tag.unresolved = true
 				value = ref.String()
 			}
-			param.Values = append(param.Values, value)
+			tag.value = value
+			// The deduplicated big-value stream carries SQL by construction
+			// (01 §4.4): these groups key by the normalised signature, and
+			// binds of the same invocation nest under them.
+			tag.isSQL = int(ev.paramType) == pipe.ParamBigDedup
 		} else {
-			param.Values = append(param.Values, ev.value)
+			tag.value = ev.value
 		}
+		tag.isBinds = b.tree.Params[idx] == "binds"
+		top.tags = append(top.tags, tag)
 	}
 }
 

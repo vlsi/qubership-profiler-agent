@@ -18,6 +18,7 @@ var testDict = map[int]string{
 	4: "request.id",
 	5: "sql",
 	6: "xml",
+	7: "binds",
 }
 
 func dictOpt() Options {
@@ -141,18 +142,22 @@ func TestBuildParams(t *testing.T) {
 
 	reqId := tree.Root.Params[0]
 	assert.Equal(t, "request.id", tree.Params[reqId.ParamIdx])
-	assert.Equal(t, []string{"req-1", "req-2"}, reqId.Values, "same param id merges, order kept")
-	assert.Empty(t, reqId.Unresolved)
+	require.Len(t, reqId.Groups, 2, "distinct exact values are distinct groups")
+	assert.Equal(t, ParamGroup{Value: "req-1", DurationMs: 1, Executions: 1}, reqId.Groups[0])
+	assert.Equal(t, ParamGroup{Value: "req-2", DurationMs: 1, Executions: 1}, reqId.Groups[1])
 
 	sql := tree.Root.Params[1]
 	assert.Equal(t, "sql", tree.Params[sql.ParamIdx])
-	assert.Equal(t, []string{"SELECT 1"}, sql.Values, "PARAM_BIG_DEDUP resolves from the sql stream")
+	require.Len(t, sql.Groups, 1)
+	assert.Equal(t, "SELECT 1", sql.Groups[0].Value, "PARAM_BIG_DEDUP resolves from the sql stream")
+	assert.False(t, sql.Groups[0].Unresolved)
 
 	xml := tree.Root.Params[2]
 	assert.Equal(t, "xml", tree.Params[xml.ParamIdx])
-	assert.Equal(t, []string{"xml:3:40"}, xml.Values,
+	require.Len(t, xml.Groups, 1)
+	assert.Equal(t, "xml:3:40", xml.Groups[0].Value,
 		"an unresolvable reference is marked, not silently dropped")
-	assert.Equal(t, []int{0}, xml.Unresolved)
+	assert.True(t, xml.Groups[0].Unresolved)
 }
 
 // TestBuildMergesSiblingInvocations pins the R5 merge semantics
@@ -190,8 +195,10 @@ func TestBuildMergesSiblingInvocations(t *testing.T) {
 	assert.Equal(t, int64(13), q.DurationMs, "4+5+4 across the folded invocations")
 	assert.Equal(t, int64(10), q.SelfDurationMs, "13 total minus 2+1 in render")
 	require.Len(t, q.Params, 1)
-	assert.Equal(t, []string{"q1", "q3"}, q.Params[0].Values,
-		"params concatenate across folded invocations in event order (R11 aggregates them later)")
+	require.Len(t, q.Params[0].Groups, 2, "folded invocations aggregate their values per group")
+	assert.Equal(t, ParamGroup{Value: "q1", DurationMs: 4, Executions: 1}, q.Params[0].Groups[0],
+		"the group carries its own invocation's duration")
+	assert.Equal(t, ParamGroup{Value: "q3", DurationMs: 4, Executions: 1}, q.Params[0].Groups[1])
 
 	require.Len(t, q.Children, 1)
 	r := q.Children[0]

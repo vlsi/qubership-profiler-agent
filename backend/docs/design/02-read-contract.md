@@ -276,21 +276,54 @@ The `methods` and `params` arrays carry only strings that this specific tree ref
 > `enterMsRel` and first/last-invocation offsets are dropped; raw per-invocation fidelity stays available via
 > `/calls/{pk}/trace`.
 
-`Param`:
+`Param` — an aggregated mini-tree (`08-ui-backend-requirements.md` R11), not a flat value list: a node can
+hold thousands of SQL texts and binds, so values fold into groups server-side.
 
 | # | Field | Type | Required | Notes |
 |---|---|---|---|---|
 | 0 | `paramIdx` | int | yes | Index into top-level `params`. |
-| 1 | `values` | `[str]` | yes | Multi-value list (`01-write-contract.md` §5.2 carries `params` as `MAP<UTF8, LIST<UTF8>>`). |
-| 2 | `unresolved` | `[int]` | no | Indexes into `values` whose big-parameter reference did not resolve (§2.5); such a value slot carries the reference text `<stream>:<seq>:<offset>` instead of the payload. Omitted when every value resolved. |
+| 1 | reserved | — | — | The pre-R11 flat `values` list (see the registry below). |
+| 2 | reserved | — | — | The pre-R11 `unresolved` index list (see the registry below). |
+| 3 | `groups` | `[ParamGroup]` | yes | Value groups, ordered `durationMs` descending; the `::other` bucket, when present, is last. |
 
-> **Param becomes an aggregated mini-tree (R11).** A node can hold thousands of SQL texts and binds, so the
-> merged tree groups them — top-N by time, `::other` for the rest, similar SQL by a normalised signature,
-> binds nested — each group carrying its own `durationMs` / `executions`. The exact aggregated shape is being
-> formalised from the Java `parsers/` aggregation (`08-ui-backend-requirements.md` R11) and will replace the
-> flat `values` list above.
+`ParamGroup`:
 
-**Reserved-number registry.** When a field is removed in a future version, its number is added below and never re-used. (Empty in v1.)
+| # | Field | Type | Required | Notes |
+|---|---|---|---|---|
+| 0 | `value` | str | yes | The group's representative value: the first-seen full text; the literal `::other` for the overflow bucket; the reference text `<stream>:<seq>:<offset>` when unresolved. |
+| 1 | `durationMs` | int | yes | Σ total duration of the invocations that carried a value of this group. Values co-occurring on one invocation each carry its full duration — sum groups of one param and the total can exceed the node's `durationMs`. |
+| 2 | `executions` | int | yes | Number of invocations folded into this group. |
+| 3 | `params` | `[Param]` | no | Nested params — binds under their SQL. Omitted when empty. |
+| 4 | `unresolved` | bool | no | The value is an unresolved big-parameter reference (§2.5). Omitted when false. |
+
+**Aggregation semantics** (ported from the Java `parsers/` `Hotspot` / `TreeBuilderTrace`, deviations noted):
+
+- **Group key.** Values group per param by the normalised signature when the param is SQL-shaped —
+  it arrived as `PARAM_BIG_DEDUP` (the deduplicated big-value stream carries SQL by construction,
+  `01-write-contract.md` §4.4) or its key word is `binds` — and by the exact value otherwise. The
+  normalisation is the old UI's `signatures.sql` (`profiler-ui/src/profiler.mjs:3469`): drop commas, strip
+  single-quoted literals (`''` escapes included) and digits, abbreviate every word to its first character,
+  strip whitespace. *Deviation:* the Java aggregation keyed a group by an invocation's whole value-set; the
+  per-value key is what makes the signature axis work, and one invocation's duration is attributed to a
+  given group at most once either way.
+- **Attribution.** Each invocation adds its own total duration to every distinct group its values fall
+  into, and 1 to that group's `executions` — the Java `tag.totalTime += invocation total; count += 1`.
+- **Top-N and `::other`.** A container holds at most 256 groups (the Java `Hotspot.MAX_PARAMS` default; a
+  container is a node's top-level params jointly, or one group's nested params). Overflow evicts the
+  current smallest-`durationMs` group into its param's `::other` bucket, which sums the evicted durations
+  and executions, never evicts, and does not count against the cap. An evicted group's nested params are
+  folded away — `::other` keeps totals only. *Deviation:* eviction picks the true current minimum (the
+  Java priority queue could act on a stale ordering).
+- **Binds nesting.** Within one invocation, `binds` values nest under that invocation's most recent
+  `PARAM_BIG_DEDUP` group (the SQL they bind); a `binds` value with no preceding SQL in its invocation
+  stays a top-level param.
+
+**Reserved-number registry.** When a field is removed in a future version, its number is added below and never re-used.
+
+| Record | # | Was | Removed |
+|---|---|---|---|
+| `Param` | 1 | `values [str]` — the pre-R11 flat value list | 2026-07-05, replaced by `groups` (R11) |
+| `Param` | 2 | `unresolved [int]` — indexes into `values` | 2026-07-05, replaced by the per-group `unresolved` flag |
 
 #### 2.5.4 Versioning rules
 
