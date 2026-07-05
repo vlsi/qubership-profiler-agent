@@ -96,7 +96,16 @@ Response:
       "cpu_time_ms": 873,
       "wait_time_ms": 12,
       "memory_used": 1048576,
+      "queue_wait_ms": 15,
+      "suspend_ms": 20,
       "child_calls": 42,
+      "transactions": 2,
+      "logs_generated": 2048,
+      "logs_written": 512,
+      "file_read": 100,
+      "file_written": 200,
+      "net_read": 300,
+      "net_written": 400,
       "error_flag": false,
       "retention_class": "long_clean",
       "params": { "request.id": ["abc123"] },
@@ -109,6 +118,13 @@ Response:
   "partial_reasons": []
 }
 ```
+
+Every metric column of `CallV2` (`01-write-contract.md` §5.2) is projected into the row: `queue_wait_ms`,
+`suspend_ms`, `transactions`, `logs_generated`, `logs_written`, `file_read`, `file_written`, `net_read`, and
+`net_written` ride alongside the original six (`08-ui-backend-requirements.md` R1). On the hot tier
+`suspend_ms` is a provisional value — the call interval intersected with the pauses known at index time; the
+seal pass re-derives it from the full `suspend.wal` (`01-write-contract.md` §5.1 step 4), which is one more
+reason the §6.3 dedup prefers the cold copy.
 
 `trace_blob_size` reports the blob's byte length, and is `0` when `truncated_reason != null` (the blob was dropped under pressure; see §4.6 of `01-write-contract.md`). On the cold list path the exact length is not available — `CallV2` (`01-write-contract.md` §5.2) carries no size column and the list projection does not read the blob — so the field is `null` there, and blob presence is `truncated_reason == null`; a client that needs the exact size fetches the blob via `/tree` or `/trace`. Adding a `trace_blob_size INT32` column to `CallV2` is the option if the list must carry the exact size — an additive change, backward-readable by column name (`01-write-contract.md` §5.2): rows sealed before the column read back as `null`, which degrades to today's behaviour. Tracked in `stage1-progress.md`.
 
@@ -232,16 +248,26 @@ The `methods` and `params` arrays carry only strings that this specific tree ref
 | 2 | `params` | `[str]` | Per-tree param-key dictionary. |
 | 3 | `root` | `Node` | Root node of the call tree. |
 
-`Node`:
+`Node` — **merged**: one node aggregates all sibling invocations of the same method under a parent.
 
 | # | Field | Type | Required | Notes |
 |---|---|---|---|---|
 | 0 | `methodIdx` | int | yes | Index into top-level `methods`. |
-| 1 | `enterMsRel` | int | yes | Millis from root's enter. Root's value is `0`. |
-| 2 | `durationMs` | int | yes | Millis. |
-| 3 | `params` | `[Param]` | no | Omitted if the node has no params. |
-| 4 | `children` | `[Node]` | no | Omitted for leaf nodes. |
-| 5+ | reserved | — | — | Future additions (e.g. `cpuMs`, `memBytes`) use the next free numbers. |
+| 1 | `durationMs` | int | yes | Total wall-clock, self + children. |
+| 2 | `selfDurationMs` | int | yes | Time in this method only (`durationMs − Σ children.durationMs`). |
+| 3 | `suspensionMs` | int | yes | Total suspension (self + children), attributed from the suspend timeline (§3, `08-ui-backend-requirements.md` R7). |
+| 4 | `selfSuspensionMs` | int | yes | Suspension in this method only. |
+| 5 | `executions` | int | yes | Total invocations aggregated into and below this node. |
+| 6 | `selfExecutions` | int | yes | Invocations of this method directly under its parent. |
+| 7 | `params` | `[Param]` | no | Omitted if the node has no params. |
+| 8 | `children` | `[Node]` | no | Omitted for leaf nodes. |
+| 9+ | reserved | — | — | Future additions (e.g. `cpuMs`, `memBytes`) use the next free numbers. |
+
+> **v1 redefined (Stage 5, 2026-07-05).** The original v1 modelled a *raw* per-invocation tree
+> (`enterMsRel` + a plain `durationMs`, no aggregation). No consumer shipped against it, so v1 is redefined
+> here as the merged tree the UI needs (`08-ui-backend-requirements.md` R5–R7) rather than bumped to `v: 2`.
+> `enterMsRel` and first/last-invocation offsets are dropped; raw per-invocation fidelity stays available via
+> `/calls/{pk}/trace`.
 
 `Param`:
 
@@ -250,6 +276,12 @@ The `methods` and `params` arrays carry only strings that this specific tree ref
 | 0 | `paramIdx` | int | yes | Index into top-level `params`. |
 | 1 | `values` | `[str]` | yes | Multi-value list (`01-write-contract.md` §5.2 carries `params` as `MAP<UTF8, LIST<UTF8>>`). |
 | 2 | `unresolved` | `[int]` | no | Indexes into `values` whose big-parameter reference did not resolve (§2.5); such a value slot carries the reference text `<stream>:<seq>:<offset>` instead of the payload. Omitted when every value resolved. |
+
+> **Param becomes an aggregated mini-tree (R11).** A node can hold thousands of SQL texts and binds, so the
+> merged tree groups them — top-N by time, `::other` for the rest, similar SQL by a normalised signature,
+> binds nested — each group carrying its own `durationMs` / `executions`. The exact aggregated shape is being
+> formalised from the Java `parsers/` aggregation (`08-ui-backend-requirements.md` R11) and will replace the
+> flat `values` list above.
 
 **Reserved-number registry.** When a field is removed in a future version, its number is added below and never re-used. (Empty in v1.)
 
