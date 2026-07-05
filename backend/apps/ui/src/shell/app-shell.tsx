@@ -17,7 +17,9 @@ export function AppShell() {
   const active = NAV_ITEMS.find((item) => location.pathname.startsWith(item.key))?.key;
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    // height (not minHeight): the data screens clamp to the viewport so the
+    // virtualised table body is the only scroller.
+    <Layout style={{ height: '100vh' }}>
       <Layout.Header style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
         <Typography.Title level={4} style={{ margin: 0, color: '#fff', whiteSpace: 'nowrap' }}>
           Profiler

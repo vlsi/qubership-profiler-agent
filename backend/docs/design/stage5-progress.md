@@ -45,6 +45,38 @@ merge gates a usable tree. Status, decisions, and open issues per
   - [x] URL-as-state utilities for the 09 §6 scheme; the pagination cursor never enters the URL
   - [x] Tests: decoder round-trip and malformed-payload suite, fast-check fuzz (totality on arbitrary and corrupted bytes; decode∘encode identity on synthetic trees), URL state round-trip; `tsc` strict and `vite build` clean
 
+- [x] **Phase 7 — UI 5.1: discovery + calls** (07 §10 step 5.1)
+  - [x] Left rail: namespace → service → pod tree grouped client-side from
+    `/pods`, tri-state service checkboxes (AntD check conduction), search,
+    live/closed markers, restart counts, pin-pod from a calls row
+  - [x] Controls: absolute range picker + 15m/1h/2h/4h quick ranges; Apply
+    commits the draft window and selection to the URL, which keys the fetch;
+    a shared URL reopens and loads the same view
+  - [x] Calls table: the full column set (Start, Duration with heat dot +
+    new-tab tree link carrying the cold hints, Pod, Title with sql/error/no-
+    trace tags, CPU, Suspend, Queue, Calls, Tx, Disk IO, Net IO, Memory);
+    duration chips (>500ms default), errors-only, hide-system/proxy (the
+    dataFormat.mjs idleTags list, client-side), method-substring query;
+    show/hide/reorder/resize columns persisted in localStorage; client sort
+    scoped to the loaded pages
+  - [x] Keyset pagination: accumulate pages, cross-page PK dedup, bounded
+    auto-follow of empty pages (3 rounds, then a manual continue), expired
+    cursor → restart-from-page-one banner
+  - [x] 09 §5 states wired: empty, loading, partial (reasons, no invented
+    counts), all-sources-failed 504, too-wide with one-click narrowing chips
+    and the by_class breakdown, expired cursor, repeated empty pages
+  - [x] Pods Info: pod-restart listing (restart time, data range, live or
+    closed) for the selected services
+  - [x] Tests: hook-level MSW suites (pagination order + dedup, too-wide,
+    partial, cursor expiry, bounded empty pages), DOM-level CallsPage suite
+    (rows render; too-wide chip re-runs the query), pods grouping/expansion
+    unit tests, cold-404 and hint-decoding endpoint tests — 40 green
+  - [x] Virtualisation measured on an 1100-row page in the browser: AntD 6
+    `virtual` keeps the DOM at the visible window (5–17 row elements), heap
+    ~64 MB; no SlickGrid escalation needed. Frame-time profiling needs a
+    visible tab (rAF/ResizeObserver are suspended in hidden tabs) — noted in
+    open issues
+
 ## Decisions log
 
 - **2026-07-05 — hot-tier `suspend_ms` is attributed at index time.** The wire
@@ -120,6 +152,25 @@ merge gates a usable tree. Status, decisions, and open issues per
   disagree, the mock is right by definition — fix the backend or the
   contract, not the mock.
 
+- **2026-07-05 — Apply gates the window and the selection; toolbar filters
+  commit immediately.** 09 §2.2 words the no-refetch-until-Apply rule over
+  "selection, range, or filters", but the too-wide rejection turns
+  `suggested_filters` into one-click chips (09 §5) — a chip that still waits
+  for Apply is not one click. Resolution: the expensive axes (service/pod
+  selection, period) stay Apply-gated; the narrowing axes (duration chips,
+  errors-only, retention classes, method query, hide-system) write the URL
+  and refetch at once. `/pods` also follows the *draft* window as it changes,
+  so services are selectable before the first Apply — it reads manifests,
+  not parquet, and is not the fan-out the rule protects.
+- **2026-07-05 — AntD 6 virtual table is enough for the calls list.**
+  Measured against the mock with 1100 rows loaded: the virtual body keeps
+  5–17 row elements in the DOM regardless of loaded count, heap stays
+  ~64 MB. Keyset paging bounds the dataset itself, so the SlickGrid
+  escalation path (07 §5.4 analogue for the list) stays closed. The app
+  shell clamps to the viewport (`height: 100vh`) so the virtual body is the
+  only scroller — with `minHeight` the page itself scrolled and the
+  virtualiser never saw a bounded viewport.
+
 ## Open issues
 
 - The hot `/internal/v1/calls` row never carries `truncated_reason` /
@@ -127,6 +178,16 @@ merge gates a usable tree. Status, decisions, and open issues per
   and `truncated_reason` columns, so a truncated call looks intact until it
   goes cold. Predates this stage; surfaced by the parity test (which passes
   because both tiers see un-truncated calls).
+- Scroll frame-time profiling of the virtual calls table is pending a
+  visible-browser session: hidden tabs suspend rAF and ResizeObserver
+  delivery, so only structural metrics (bounded DOM, heap) were measurable
+  headlessly. Re-measure interactively before calling 5.1 performance done;
+  the escalation options (headless virtualiser, SlickGrid) stay documented
+  in the Stage 5 plan.
+- The service→pods expansion for `/calls` uses the rail's `/pods` data,
+  which follows the draft window; if the draft has moved past the committed
+  window, a service selection can expand against slightly newer pod sets.
+  Harmless at v1 cluster sizes; revisit if it ever surprises.
 - 02 §2.7 words the `/pods` response as a bare array, but api.go returns
   `{ pods, partial, partial_reasons }` — the fan-out can partially fail on
   the pods path too, so the envelope is right and the doc sentence is stale.
