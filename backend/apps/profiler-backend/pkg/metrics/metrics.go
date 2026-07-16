@@ -49,6 +49,21 @@ func Mux(reg *prometheus.Registry, next http.Handler, withPprof bool) http.Handl
 	return mux
 }
 
+// InstrumentHTTP wraps next with the profiler_query_http_request_seconds
+// histogram (code, method). No path label: call PKs in paths would explode
+// the cardinality, and the load dashboards (load-testing-plan.md §6.2) need
+// rates and latency percentiles, not per-route breakdowns.
+func InstrumentHTTP(reg prometheus.Registerer, next http.Handler) http.Handler {
+	seconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace, Subsystem: "query",
+		Name:    "http_request_seconds",
+		Help:    "Duration of one external API request (/api/v1 and the UI assets).",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"code", "method"})
+	reg.MustRegister(seconds)
+	return promhttp.InstrumentHandlerDuration(seconds, next)
+}
+
 // RegisterPprof mounts the net/http/pprof handlers under /debug/pprof/.
 // Importing net/http/pprof registers them only on http.DefaultServeMux, which
 // no subcommand serves; this explicit registration is the sole route to the
