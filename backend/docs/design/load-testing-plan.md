@@ -1,6 +1,6 @@
 # Load-testing plan: Go profiler backend
 
-Status: agreed plan (interview 2026-07-15). Owner: @vlsi.
+Status: phase 1 (stand + observability) done 2026-07-16, see §11; phase 2 (generator fidelity) is next. Owner: @vlsi.
 
 This plan defines the load tests for the Go backend (`backend/apps/profiler-backend` and `backend/libs`): what we
 measure, on which stands, with which generator, and what counts as a pass. The outcome is an engineering report
@@ -243,3 +243,37 @@ The checker fails the run when any of these break:
 - k6 runner resources on the large cluster: at 1000+ virtual pods with trace streams the generator itself needs
   sizing (several CPUs, pinned nodes) so it does not become the bottleneck being measured.
 - Accelerated-timer soak can mask slow leaks; that is why the real-timer 24–48 h run stays mandatory.
+
+## 11. Phase 1 status (done 2026-07-16)
+
+Everything landed on the `feat/load-tests` branch; the exit criterion — a contract-shaped run on the local stand is
+fully observable — was verified live on OrbStack.
+
+Shipped:
+
+- **pprof** (§6.1): `net/http/pprof` in `collect`/`query`/`maintain` behind `PROFILER_PPROF_ENABLED` (default off),
+  on the internal/metrics port; on `query` it rides the external listener (its only port).
+- **Stand** (§5.3): `backend/tools/load-generator/deploy/` — helmfile with `local` / `cluster` environments.
+  qubership-monitoring-operator v0.88.0 comes straight from its git tag via helmfile `git::` charts (the helm-git
+  plugin 1.3.0 is broken with helm 4); CRDs are a separate first release, `needs:` orders CRDs → operator → CRs.
+- **Dashboards** (§6.2): six JSON dashboards under `dashboards/` (ingest, backpressure, pipeline, resources, query,
+  k6), shipped as `GrafanaDashboard` CRs by the `monitoring-crs` release.
+- **Checker** (§6.3): `checker/` polls `/metrics`; §8.1–§8.4 implemented, §8.5–§8.8 are declared TODO stubs (need S3
+  credentials, pod limits, and the k8s API).
+- **Query HTTP histogram**: `profiler_query_http_request_seconds` (code, method) — no series covered the external
+  API round-trip, and the query dashboard needs rates and percentiles.
+- **Feeder**: `feeder/` holds N emulated agent connections and sends contract-shaped bursts; it exists only to light
+  up phase-1 observability and deliberately skips the fidelity gaps (§3).
+
+Verified on the local stand (20 feeder pods, 5 s cadence): ingest → seal → upload visible end to end in
+VictoriaMetrics (97 sealed rows, 40 uploaded files, matching MinIO server-side PUTs), all six dashboards imported by
+Grafana with live panel queries, `/debug/pprof` answers 200 on all three subcommands, `/api/v1/calls` serves the fed
+rows, and a checker run passes §8.1–§8.4 against the live collector.
+
+Carried into later phases:
+
+- The k6 runner release is parked (`k6.installed: false`): its image needs captured wire dumps the repo must not
+  carry. The phase-2 virtual dumper replaces that input; the k6 dashboard is unverified against live k6 series until
+  then.
+- No explicit active-connections gauge yet (§6.4); the ingest dashboard uses the goroutine count as a proxy.
+- Run orchestration (ramp steps, artifact collection) remains to be designed as the script layer of §5.3.
