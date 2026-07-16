@@ -30,12 +30,9 @@ const (
 	FlushCheckInterval = 500 * time.Millisecond
 )
 
-var (
-	ErrNotConnected = errors.New("not connected")
-	// errAgentClosed is returned when the agent sends COMMAND_CLOSE, so the
-	// handler loop stops without logging it as a failure.
-	errAgentClosed = errors.New("agent requested close")
-)
+// errAgentClosed is returned when the agent sends COMMAND_CLOSE, so the
+// handler loop stops without logging it as a failure.
+var errAgentClosed = errors.New("agent requested close")
 
 type (
 	ConnectionOpts struct {

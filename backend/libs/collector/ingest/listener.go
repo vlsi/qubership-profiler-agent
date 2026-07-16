@@ -261,7 +261,6 @@ func (l *Listener) noteDecoderError() { l.decoderErrors.Add(1) }
 func (l *Listener) noteDictAppendError() { l.dictAppendErrors.Add(1) }
 
 // Metric callbacks (№21): real counters registered by RegisterIngest.
-func (l *Listener) SentCommand(ctx context.Context, c model.Command) {}
 func (l *Listener) ReceivedCommand(ctx context.Context, c model.Command, latency time.Duration, err error) {
 	l.commandsReceived.Add(1)
 	if err != nil {
@@ -270,8 +269,6 @@ func (l *Listener) ReceivedCommand(ctx context.Context, c model.Command, latency
 }
 func (l *Listener) Read(ctx context.Context, bytes int, latency time.Duration, err error)  {}
 func (l *Listener) Write(ctx context.Context, bytes int, latency time.Duration, err error) {}
-func (l *Listener) IsAlive(ctx context.Context) (bool, error)                              { return true, nil }
-func (l *Listener) Error(err error)                                                        {}
 func (l *Listener) PrintDebug(ctx context.Context)                                         {}
 
 var _ server.Listener = (*Listener)(nil)

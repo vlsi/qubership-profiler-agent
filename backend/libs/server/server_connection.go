@@ -38,7 +38,6 @@ type (
 
 		socketReader *io.TcpReader
 		socketWriter *io.TcpWriter
-		pendingAcks  int
 
 		// writeMu serializes every socketWriter access. The read loop and the
 		// periodic ack flusher (periodicFlush) run in separate goroutines, and the
@@ -420,74 +419,6 @@ func (sc *ConnectionHandler) flushPendingAcks() error {
 	return sc.flushWriterLocked()
 }
 
-func (sc *ConnectionHandler) CommandRequestFlush(ctx context.Context) (err error) {
-	return sc.sendOperation(ctx, model.COMMAND_REQUEST_ACK_FLUSH, true, func(sc *ConnectionHandler) error {
-		// flush
-		sc.pendingAcks += 1
-		err = sc.socketWriter.Flush()
-		if err != nil {
-			return err
-		}
-		return err
-	})
-}
-func (sc *ConnectionHandler) CommandClose(ctx context.Context) (err error) {
-	return sc.sendOperation(ctx, model.COMMAND_CLOSE, true, func(sc *ConnectionHandler) error {
-		// flush
-		err = sc.socketWriter.Flush()
-		if err != nil {
-			return err
-		}
-		return err
-	})
-}
-
-func (sc *ConnectionHandler) WaitForAcks() (err error) {
-	return sc.waitForAcks() // for run.go
-}
-
-func (sc *ConnectionHandler) waitForAcks() (err error) {
-	for sc.pendingAcks > 0 {
-		byt, err := sc.socketReader.ReadFixedByte(sc.ctx)
-		if sc.check(err) != nil {
-			return errors.Wrap(err, "could not get ack of RC data")
-		}
-		if byt != 0x00 {
-			return errors.New("invalid acknowledgement for RCV data")
-		}
-		sc.pendingAcks--
-	}
-	return nil
-}
-
-func (sc *ConnectionHandler) sendOperation(ctx context.Context,
-	c model.Command, flush bool, worker func(sc *ConnectionHandler) error) (err error) {
-
-	if alive, err := sc.isAlive(); !alive {
-		return err
-	}
-	defer func() {
-		if sc.listener != nil {
-			sc.listener.SentCommand(ctx, c)
-		}
-	}()
-
-	err = sc.socketWriter.WriteFixedByte(sc.ctx, byte(c))
-	if err != nil {
-		return err
-	}
-	err = worker(sc)
-	if err != nil {
-		return err
-	}
-	// flush
-	if flush {
-		err = sc.socketWriter.Flush()
-		//sc.check(err)
-	}
-	return err
-}
-
 // Read wrapper around tcp connection (add metrics, etc.)
 func (sc *ConnectionHandler) Read(buf []byte) (n int, err error) {
 	startTime := time.Now()
@@ -528,29 +459,6 @@ func (sc *ConnectionHandler) Close() (err error) {
 	}
 	if sc.cancel != nil {
 		sc.cancel()
-	}
-	return err
-}
-
-func (sc *ConnectionHandler) isAlive() (bool, error) {
-	if sc == nil || sc.conn == nil {
-		return false, sc.check(ErrNotConnected)
-	}
-	if sc.ctx.Err() != nil {
-		return false, nil
-	}
-	if sc.listener != nil {
-		return sc.listener.IsAlive(sc.ctx)
-	}
-	return true, nil
-}
-
-func (sc *ConnectionHandler) check(err error) error {
-	if sc == nil || sc.conn == nil {
-		return ErrNotConnected
-	}
-	if sc.listener != nil {
-		sc.listener.Error(err)
 	}
 	return err
 }
