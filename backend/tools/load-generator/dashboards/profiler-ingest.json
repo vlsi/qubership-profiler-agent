@@ -1,7 +1,7 @@
 {
   "uid": "profiler-ingest",
   "title": "Profiler load / Ingest",
-  "description": "Agent-ingest side of the collector (load-testing-plan.md \u00a76.2: ingest).",
+  "description": "Agent-ingest side of the collector (load-testing-plan.md §6.2: ingest).",
   "tags": [
     "profiler-load-stand"
   ],
@@ -219,7 +219,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Non-zero only when the backpressure gate refuses agent data (plan \u00a78.3).",
+      "description": "Non-zero only when the backpressure gate refuses agent data (plan §8.3).",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -325,7 +325,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "No explicit active-connections gauge yet (plan \u00a76.4); goroutine count tracks it at a constant offset.",
+      "description": "Goroutine count kept next to the explicit gauge: goroutines per connection is the other half of the T3 per-connection cost.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -370,6 +370,77 @@
         "h": 8
       },
       "id": 6
+    },
+    {
+      "type": "timeseries",
+      "title": "Active agent connections",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Explicit registered-connection gauge (plan §6.4): the RAM-per-connection denominator of the T3 runs; connections dropped before the handshake never count.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "profiler_ingest_active_connections{namespace=\"$namespace\"}",
+          "legendFormat": "active {{pod}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "sum(rate(profiler_ingest_connects_total{namespace=\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "connects/s",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "sum(rate(profiler_ingest_disconnects_total{namespace=\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "disconnects/s",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "id": 7
     }
   ],
   "editable": true
