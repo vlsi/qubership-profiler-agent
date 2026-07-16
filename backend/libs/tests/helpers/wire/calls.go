@@ -8,15 +8,15 @@ package wire
 
 import (
 	"bytes"
-	"encoding/binary"
 	"sort"
-	"unicode/utf16"
+
+	emwire "github.com/Netcracker/qubership-profiler-backend/libs/emulator/wire"
 )
 
 // callsHeaderMagic marks a versioned calls file. The agent writes
 // (magic<<32 | version) as the first fixed long
 // (CompressedLocalAndRemoteOutputStream.rotate).
-const callsHeaderMagic = 0xFFFEFDFC
+const callsHeaderMagic = emwire.CallsHeaderMagic
 
 // CallRecord is one closed root call in a synthetic calls stream. Field order
 // and encoding follow the version-4 wire format the Go decoder reads
@@ -135,48 +135,19 @@ func CallsStreamRecords(baseMs int64, records []CallRecord) []byte {
 	return buf.Bytes()
 }
 
-func putFixedLong(buf *bytes.Buffer, v uint64) {
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], v)
-	buf.Write(b[:])
-}
+// The low-level encoders live in libs/emulator/wire so the virtual dumper
+// (production generator) and these test builders share one source of truth;
+// the aliases below keep this package's call sites unchanged.
 
-func putFixedInt(buf *bytes.Buffer, v uint32) {
-	var b [4]byte
-	binary.BigEndian.PutUint32(b[:], v)
-	buf.Write(b[:])
-}
+func putFixedLong(buf *bytes.Buffer, v uint64) { emwire.PutFixedLong(buf, v) }
 
-func putVarInt(buf *bytes.Buffer, v uint64) {
-	for v >= 0x80 {
-		buf.WriteByte(byte(v) | 0x80)
-		v >>= 7
-	}
-	buf.WriteByte(byte(v))
-}
+func putFixedInt(buf *bytes.Buffer, v uint32) { emwire.PutFixedInt(buf, v) }
 
-func putZigZag(buf *bytes.Buffer, v int64) {
-	putVarInt(buf, uint64((v<<1)^(v>>63)))
-}
+func putVarInt(buf *bytes.Buffer, v uint64) { emwire.PutVarInt(buf, v) }
 
-// putVarString mirrors the agent's DataOutputStreamEx.write(String)
-// (common/.../dump/DataOutputStreamEx.java): a varint length that is the UTF-16
-// code-unit count — Java's s.length(), not the code-point count — followed by
-// writeChars, two big-endian bytes per code unit.
-//
-// The distinction matters for non-BMP characters. An emoji is one Go rune but
-// two UTF-16 code units (a surrogate pair), so the length is 2 and both halves
-// go on the wire. Encoding by rune instead would write length 1 and truncate
-// the rune to a single 16-bit unit — a string the real agent never emits, which
-// is why the earlier rune-based encoder hid the readChar-signedness and
-// surrogate-pair decoder bugs. For BMP-only strings the two encodings are
-// byte-identical, so existing ASCII fixtures are unaffected.
-func putVarString(buf *bytes.Buffer, s string) {
-	units := utf16.Encode([]rune(s))
-	putVarInt(buf, uint64(len(units)))
-	for _, u := range units {
-		var b [2]byte
-		binary.BigEndian.PutUint16(b[:], u)
-		buf.Write(b[:])
-	}
-}
+func putZigZag(buf *bytes.Buffer, v int64) { emwire.PutZigZag(buf, v) }
+
+// putVarString writes the agent's var-string encoding; see
+// libs/emulator/wire.PutVarString for the UTF-16 code-unit semantics and why
+// they matter for non-BMP characters.
+func putVarString(buf *bytes.Buffer, s string) { emwire.PutVarString(buf, s) }

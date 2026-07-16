@@ -1,0 +1,293 @@
+// Package vdumper is the virtual dumper: a Go behavioral layer that
+// reproduces the Java agent's remote-dump pipeline — the DumperThread +
+// Dumper + DefaultCollectorClient state machine — for load generation. The
+// contract, traced rule by rule to the Java sources, lives in
+// backend/docs/design/virtual-dumper.md.
+package vdumper
+
+import (
+	"bytes"
+	"context"
+
+	"github.com/Netcracker/qubership-profiler-backend/libs/emulator"
+	"github.com/Netcracker/qubership-profiler-backend/libs/emulator/wire"
+	model "github.com/Netcracker/qubership-profiler-backend/libs/protocol"
+	"github.com/pkg/errors"
+)
+
+// ErrBlacklisted reports the collector's BLACK_LISTED_RESP handshake answer;
+// like the agent, the virtual dumper stops permanently instead of
+// reconnecting.
+var ErrBlacklisted = errors.New("collector blacklisted the namespace")
+
+// ErrServerVersion reports a handshake answer the virtual dumper cannot
+// drive. In particular PROTOCOL_VERSION_V3 selects the agent's posDictionary
+// branch, which never activates against this collector and is deliberately
+// not implemented (virtual-dumper.md §2.2).
+var ErrServerVersion = errors.New("collector answered an unsupported protocol version")
+
+// VirtualDumper emulates one profiled pod. Run drives the DumperThread
+// lifecycle: connect → open streams → pump → on any failure close, wait
+// RestartInterval, reconnect with a full dictionary resend.
+type VirtualDumper struct {
+	cfg     Config
+	clock   Clock
+	stats   StatsListener
+	dict    *dictionary
+	streams []*streamState
+
+	// startMs mirrors TimerCache.startTime: the process-start epoch written
+	// as the trace file header, stable across reconnects.
+	startMs int64
+	// lastSuspendMs is the suspend stream's header timestamp
+	// (Dumper.lastSuspendLogEntry).
+	lastSuspendMs int64
+}
+
+// New builds a virtual dumper for one pod; see Config for the knobs.
+func New(cfg Config) *VirtualDumper {
+	cfg = cfg.withDefaults()
+	d := &VirtualDumper{
+		cfg:   cfg,
+		clock: cfg.Clock,
+		stats: cfg.Stats,
+		dict:  newDictionary(cfg.DictionaryInitial),
+	}
+	// Stream order and rotation thresholds mirror Dumper.initStreams; the
+	// collector refuses anything outside this seven-stream set
+	// (virtual-dumper.md §2.2).
+	d.streams = []*streamState{
+		newStreamState(model.StreamTrace, false, traceRotateSize, false, d.stats),
+		newStreamState(model.StreamCalls, false, callsRotateSize, false, d.stats),
+		newStreamState(model.StreamXml, false, valueRotateSize, false, d.stats),
+		newStreamState(model.StreamSql, false, valueRotateSize, false, d.stats),
+		newStreamState(model.StreamDictionary, true, 0, false, d.stats),
+		newStreamState(model.StreamSuspend, true, 0, false, d.stats),
+		newStreamState(model.StreamParams, true, 0, true, d.stats),
+	}
+	return d
+}
+
+// Run drives the pod until ctx is cancelled (graceful close, nil) or a
+// permanent condition stops it (ErrBlacklisted / ErrServerVersion). Every
+// other failure enters the agent's reconnect loop: close, sleep
+// RestartInterval, re-open all streams, re-send the dictionary from word 0
+// with resetRequired=1.
+func (d *VirtualDumper) Run(ctx context.Context) error {
+	d.startMs = d.clock.Now().UnixMilli()
+	d.lastSuspendMs = d.startMs
+
+	for incarnation := 0; ; incarnation++ {
+		if incarnation > 0 {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-d.clock.After(d.cfg.RestartInterval):
+			}
+		}
+		err := d.runIncarnation(ctx, incarnation)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, ErrBlacklisted), errors.Is(err, ErrServerVersion):
+			return err
+		}
+		if errors.Is(err, emulator.ErrAckRefused) {
+			d.stats.AckError()
+		}
+		d.stats.Disconnected(incarnation, err)
+	}
+}
+
+func (d *VirtualDumper) runIncarnation(ctx context.Context, incarnation int) error {
+	// The connection must outlive ctx cancellation just long enough for the
+	// graceful close (flush + COMMAND_CLOSE); WithoutCancel keeps the context
+	// values (log level) while detaching the connection from the shutdown.
+	ac := emulator.PrepareAgent(context.WithoutCancel(ctx), nil, nil, d.cfg.PodName)
+	var t Transport = ac.Prepare(d.cfg.Connection)
+	defer func() { _ = t.Close() }()
+
+	if err := t.Connect(); err != nil {
+		return err
+	}
+	if err := t.InitializeConnection(model.PROTOCOL_VERSION_V3,
+		d.cfg.Namespace, d.cfg.Service, d.cfg.PodName); err != nil {
+		return err
+	}
+	switch v := t.ServerVersion(); v {
+	case model.PROTOCOL_VERSION_V2:
+	case model.BLACK_LISTED_RESP:
+		return ErrBlacklisted
+	default:
+		return errors.Wrapf(ErrServerVersion, "got %d", v)
+	}
+
+	// Dumper.initialize: the dictionary counter resets, so the dictionary
+	// stream opens with resetRequired=1 and the full word list is re-sent.
+	d.dict.sent = 0
+	for _, s := range d.streams {
+		s.resetForConnection()
+	}
+	for _, s := range d.streams {
+		if err := d.openStream(t, s); err != nil {
+			return err
+		}
+	}
+	d.stats.Connected(incarnation)
+
+	return d.pump(ctx, t)
+}
+
+// openStream opens (or rotates) one stream and re-emits its file header
+// (virtual-dumper.md §2.2 table).
+func (d *VirtualDumper) openStream(t Transport, s *streamState) error {
+	reset := s.name == model.StreamDictionary && d.dict.sent == 0
+	if _, err := s.open(t, d.clock.Now(), reset); err != nil {
+		return err
+	}
+	return d.writeStreamHeader(t, s)
+}
+
+func (d *VirtualDumper) writeStreamHeader(t Transport, s *streamState) error {
+	b := &bytes.Buffer{}
+	switch s.name {
+	case model.StreamTrace:
+		wire.PutFixedLong(b, uint64(d.startMs))
+		return s.write(b.Bytes())
+	case model.StreamCalls:
+		wire.PutFixedLong(b, uint64(wire.CallsHeaderMagic)<<32|wire.CallsFormatVersion)
+		wire.PutFixedLong(b, uint64(d.clock.Now().UnixMilli()))
+		return s.write(b.Bytes())
+	case model.StreamSuspend:
+		wire.PutFixedLong(b, uint64(d.lastSuspendMs))
+		return s.writePhrase(b.Bytes())
+	case model.StreamParams:
+		// One-shot: the payload goes out at open with its own flush + ack
+		// cycle, then the stream idles (Dumper's paramInfoOs.fileRotated).
+		b.WriteByte(1) // format version
+		for _, p := range d.cfg.Params {
+			wire.PutVarString(b, p.Name)
+			putBool(b, p.Index)
+			putBool(b, p.List)
+			wire.PutVarInt(b, uint64(p.Order))
+			wire.PutVarString(b, p.Signature)
+		}
+		if err := s.writePhrase(b.Bytes()); err != nil {
+			return err
+		}
+		if err := s.flushTail(); err != nil {
+			return err
+		}
+		if err := t.Flush(); err != nil {
+			return err
+		}
+		s.closed = true
+		return nil
+	default: // dictionary, xml, sql carry no file header
+		return nil
+	}
+}
+
+// pump is the dumpLoop mirror: on each wake-up rotate what needs rotation,
+// append the pending dictionary growth, and run the 5 s flush cycle. Trace
+// chunk intake joins in the trace-pipeline stage.
+func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
+	nextFlush := d.clock.Now().Add(d.cfg.FlushInterval)
+	for {
+		select {
+		case <-ctx.Done():
+			return d.gracefulClose(t)
+		case <-d.clock.After(nextFlush.Sub(d.clock.Now())):
+		}
+		if err := d.rotateStreams(t); err != nil {
+			return err
+		}
+		if err := d.writeDictionary(); err != nil {
+			return err
+		}
+		if err := d.flushCycle(t); err != nil {
+			return err
+		}
+		nextFlush = nextFlush.Add(d.cfg.FlushInterval)
+	}
+}
+
+// rotateStreams mirrors the rotateIfRequired pass: a rotation flushes the old
+// file's tail with a full ack cycle (closing the old rolling file does that in
+// the agent), then re-opens the stream and re-emits its header.
+func (d *VirtualDumper) rotateStreams(t Transport) error {
+	for _, s := range d.streams {
+		if !s.needsRotation(d.clock.Now()) {
+			continue
+		}
+		if err := s.flushTail(); err != nil {
+			return err
+		}
+		if err := t.Flush(); err != nil {
+			return err
+		}
+		if err := d.openStream(t, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeDictionary appends every not-yet-sent word (Dumper.dumpDictionary):
+// one phrase per word, ids implied by order.
+func (d *VirtualDumper) writeDictionary() error {
+	s := d.streamByName(model.StreamDictionary)
+	for ; d.dict.sent < len(d.dict.words); d.dict.sent++ {
+		b := &bytes.Buffer{}
+		wire.PutVarString(b, d.dict.words[d.dict.sent])
+		if err := s.writePhrase(b.Bytes()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// flushCycle mirrors Dumper.flushDumpFile: every open stream flushes its tail
+// and runs the client flush (REQUEST_ACK_FLUSH + synchronous ack drain) — one
+// ack cycle per stream, so an idle pod still produces the agent's keep-alive
+// shape.
+func (d *VirtualDumper) flushCycle(t Transport) error {
+	for _, s := range d.streams {
+		if s.closed {
+			continue // params after its one-shot payload
+		}
+		if err := s.flushTail(); err != nil {
+			return err
+		}
+		if err := t.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// gracefulClose mirrors the agent's shutdown hook: push out what is pending,
+// then announce the close. Errors are ignored — the run is over.
+func (d *VirtualDumper) gracefulClose(t Transport) error {
+	_ = d.writeDictionary()
+	_ = d.flushCycle(t)
+	_ = t.CommandClose()
+	return nil
+}
+
+func (d *VirtualDumper) streamByName(name string) *streamState {
+	for _, s := range d.streams {
+		if s.name == name {
+			return s
+		}
+	}
+	return nil
+}
+
+func putBool(b *bytes.Buffer, v bool) {
+	if v {
+		b.WriteByte(1)
+		return
+	}
+	b.WriteByte(0)
+}
