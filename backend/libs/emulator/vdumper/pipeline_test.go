@@ -40,6 +40,7 @@ func startLoadedDumper(t *testing.T, col *emutest.Collector, clk *fakeClock) {
 		ThreadsPerPod:        2,
 		CallsPerSecPerThread: 2,
 		ChunkMaxBytes:        60, // hand off after a few calls to force interleaving
+		Workload:             quietWorkload(),
 		Clock:                clk,
 		Stats:                &statsRec{},
 	}
@@ -139,7 +140,7 @@ func TestCallsRecordsLinkIntoTraceChunks(t *testing.T) {
 			i, call.BufferOffset, chunkThread)
 		assert.Equal(t, threadName[owner], call.ThreadName,
 			"record #%d must carry the thread of the chunk it points into", i)
-		assert.EqualValues(t, 30, call.Duration, "the fixed pipeline workload runs 30 ms calls")
-		assert.EqualValues(t, 3, call.Calls, "depth-3 stack: the enter counter includes the root")
+		assert.EqualValues(t, 30, call.Duration, "the quiet workload runs fixed 30 ms calls")
+		assert.EqualValues(t, 1, call.Calls, "depth-1 stack: the enter counter includes only the root")
 	}
 }

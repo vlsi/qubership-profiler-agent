@@ -8,7 +8,9 @@ package vdumper
 import (
 	"bytes"
 	"context"
+	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/emulator"
 	"github.com/Netcracker/qubership-profiler-backend/libs/emulator/wire"
@@ -40,18 +42,39 @@ type VirtualDumper struct {
 	// goroutines and the dumper loop; producers drop on overflow (§2.5).
 	chunks chan chunk
 
-	traceS, callsS *streamState
+	traceS, callsS, sqlS, xmlS, dictS, suspendS *streamState
 	// callsState is the per-file calls encoder state, reset with every calls
 	// file header.
 	callsState *wire.CallsFileState
+	// sqlCache is the agent's dedup cache (TLimitedLongLongHashMap, 10 000
+	// entries): value → (file index, offset) of its first write. Cleared on
+	// every initialize and on sql rotation.
+	sqlCache map[string]bigRef
+
+	// rnd drives the dumper-side shape (suspend pauses); producers carry
+	// their own generators.
+	rnd *rand.Rand
+	// suspendAt / suspendBacklog account the pause rate over elapsed time.
+	suspendAt      time.Time
+	suspendBacklog float64
 
 	// startMs mirrors TimerCache.startTime: the process-start epoch written
 	// as the trace file header, stable across reconnects.
 	startMs int64
-	// lastSuspendMs is the suspend stream's header timestamp
-	// (Dumper.lastSuspendLogEntry).
+	// lastSuspendMs is the suspend stream's header timestamp and the running
+	// delta base of its (end, duration) pairs (Dumper.lastSuspendLogEntry).
 	lastSuspendMs int64
 }
+
+// bigRef is one dedup-cache entry: where a value already lives in the sql
+// stream.
+type bigRef struct {
+	seq    int
+	offset int
+}
+
+// sqlCacheCap mirrors the agent's SQL_CACHE_SIZE default.
+const sqlCacheCap = 10000
 
 // New builds a virtual dumper for one pod; see Config for the knobs.
 func New(cfg Config) *VirtualDumper {
@@ -60,7 +83,8 @@ func New(cfg Config) *VirtualDumper {
 		cfg:   cfg,
 		clock: cfg.Clock,
 		stats: cfg.Stats,
-		dict:  newDictionary(cfg.DictionaryInitial),
+		dict:  newDictionary(cfg.DictionaryInitial, cfg.Workload.DictionaryGrowthPerMin),
+		rnd:   rand.New(rand.NewSource(cfg.Seed * 31)), //nolint:gosec // load shape, not crypto
 	}
 	// Stream order and rotation thresholds mirror Dumper.initStreams; the
 	// collector refuses anything outside this seven-stream set
@@ -76,6 +100,10 @@ func New(cfg Config) *VirtualDumper {
 	}
 	d.traceS = d.streams[0]
 	d.callsS = d.streams[1]
+	d.xmlS = d.streams[2]
+	d.sqlS = d.streams[3]
+	d.dictS = d.streams[4]
+	d.suspendS = d.streams[5]
 	d.chunks = make(chan chunk, cfg.ChunkQueueSize)
 	return d
 }
@@ -96,7 +124,7 @@ func (d *VirtualDumper) Run(ctx context.Context) error {
 	defer cancel()
 	var producers sync.WaitGroup
 	for i := 0; i < d.cfg.ThreadsPerPod; i++ {
-		p := newProducer(i, d.cfg, d.chunks)
+		p := newProducer(i, d.cfg, d.dict, d.chunks)
 		producers.Add(1)
 		go func() {
 			defer producers.Done()
@@ -151,8 +179,10 @@ func (d *VirtualDumper) runIncarnation(ctx context.Context, incarnation int) err
 	}
 
 	// Dumper.initialize: the dictionary counter resets, so the dictionary
-	// stream opens with resetRequired=1 and the full word list is re-sent.
-	d.dict.sent = 0
+	// stream opens with resetRequired=1 and the full word list is re-sent;
+	// the sql dedup cache starts empty (dedupParamCache.clear()).
+	d.dict.resetSent()
+	d.sqlCache = make(map[string]bigRef)
 	for _, s := range d.streams {
 		s.resetForConnection()
 	}
@@ -169,9 +199,14 @@ func (d *VirtualDumper) runIncarnation(ctx context.Context, incarnation int) err
 // openStream opens (or rotates) one stream and re-emits its file header
 // (virtual-dumper.md §2.2 table).
 func (d *VirtualDumper) openStream(t Transport, s *streamState) error {
-	reset := s.name == model.StreamDictionary && d.dict.sent == 0
+	reset := s.name == model.StreamDictionary && d.dict.sentNothing()
 	if _, err := s.open(t, d.clock.Now(), reset); err != nil {
 		return err
+	}
+	if s == d.sqlS {
+		// A rotated sql file invalidates nothing downstream, but the agent
+		// clears its dedup cache with the file (bigParamsDedupOs.fileRotated).
+		d.sqlCache = make(map[string]bigRef)
 	}
 	return d.writeStreamHeader(t, s)
 }
@@ -226,7 +261,13 @@ func (d *VirtualDumper) writeStreamHeader(t Transport, s *streamState) error {
 // interval elapsed — runs the flush cycle.
 func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
 	nextFlush := d.clock.Now().Add(d.cfg.FlushInterval)
+	// flushCh stays armed across chunk wake-ups: re-arming per iteration would
+	// allocate one timer per chunk and leak the abandoned ones.
+	var flushCh <-chan time.Time
 	for {
+		if flushCh == nil {
+			flushCh = d.clock.After(nextFlush.Sub(d.clock.Now()))
+		}
 		select {
 		case <-ctx.Done():
 			return d.gracefulClose(t)
@@ -234,12 +275,17 @@ func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
 			if err := d.writeChunk(t, c); err != nil {
 				return err
 			}
-		case <-d.clock.After(nextFlush.Sub(d.clock.Now())):
+		case <-flushCh:
+			flushCh = nil
 		}
 		if err := d.rotateStreams(t); err != nil {
 			return err
 		}
+		d.dict.grow(d.clock.Now())
 		if err := d.writeDictionary(); err != nil {
+			return err
+		}
+		if err := d.writeSuspend(); err != nil {
 			return err
 		}
 		if now := d.clock.Now(); !now.Before(nextFlush) {
@@ -249,8 +295,47 @@ func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
 			for !nextFlush.After(now) {
 				nextFlush = nextFlush.Add(d.cfg.FlushInterval)
 			}
+			// A still-armed timer for the old deadline fires one spurious
+			// wake-up at most; the re-arm above picks the new deadline.
 		}
 	}
+}
+
+// writeSuspend appends the stop-the-world pauses the SuspendPerSec rate owes
+// for the elapsed wall time: (delta-of-end, duration) varint pairs, one
+// phrase each (Dumper.dumpSuspendLog). Pause ends spread evenly over the
+// elapsed window, durations are log-uniform 1–200 ms.
+func (d *VirtualDumper) writeSuspend() error {
+	rate := d.cfg.Workload.SuspendPerSec
+	if rate <= 0 {
+		return nil
+	}
+	now := d.clock.Now()
+	if d.suspendAt.IsZero() {
+		d.suspendAt = now
+		return nil
+	}
+	elapsed := now.Sub(d.suspendAt)
+	d.suspendBacklog += elapsed.Seconds() * rate
+	d.suspendAt = now
+	n := int(d.suspendBacklog)
+	if n == 0 {
+		return nil
+	}
+	d.suspendBacklog -= float64(n)
+	step := elapsed.Milliseconds() / int64(n)
+	for i := 0; i < n; i++ {
+		endMs := d.lastSuspendMs + max(step, 1)
+		durMs := logUniform(d.rnd, 1, 200)
+		b := &bytes.Buffer{}
+		wire.PutVarInt(b, uint64(endMs-d.lastSuspendMs))
+		wire.PutVarInt(b, uint64(durMs))
+		if err := d.suspendS.writePhrase(b.Bytes()); err != nil {
+			return err
+		}
+		d.lastSuspendMs = endMs
+	}
+	return nil
 }
 
 // writeChunk serializes one producer buffer as a logical trace chunk —
@@ -263,7 +348,17 @@ func (d *VirtualDumper) writeChunk(_ Transport, c chunk) error {
 	b := &bytes.Buffer{}
 	wire.PutFixedLong(b, c.threadId)
 	wire.PutFixedLong(b, uint64(c.startMs))
-	b.Write(c.events)
+	for _, op := range c.ops {
+		if op.big == nil {
+			wire.PutTraceEvent(b, op.ev)
+			continue
+		}
+		ref, err := d.writeBigValue(op.big)
+		if err != nil {
+			return err
+		}
+		wire.PutTraceEvent(b, wire.BigTag(op.big.deltaMs, op.big.tagId, op.big.dedup, ref.seq, ref.offset))
+	}
 	b.WriteByte(wire.EventFinishRecord)
 	if err := d.traceS.write(b.Bytes()); err != nil {
 		return err
@@ -279,12 +374,47 @@ func (d *VirtualDumper) writeChunk(_ Transport, c chunk) error {
 			TraceFileIndex: d.traceS.fileIndex,
 			BufferOffset:   bufferOffset,
 			RecordIndex:    done.recordIndex,
+			Params:         done.params,
+			CpuTimeMs:      done.cpuMs,
+			WaitTimeMs:     done.waitMs,
+			MemoryUsed:     done.memory,
 		})
 		if err := d.callsS.write(rb.Bytes()); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writeBigValue places one big-param value the way Dumper.writeParam does:
+// an sql value already in the dedup cache yields its existing (seq, offset)
+// reference without a write; everything else is appended to its value stream
+// at the current offset.
+func (d *VirtualDumper) writeBigValue(op *bigOp) (bigRef, error) {
+	if op.dedup {
+		if ref, ok := d.sqlCache[op.value]; ok {
+			return ref, nil
+		}
+	}
+	s := d.xmlS
+	if op.dedup {
+		s = d.sqlS
+	}
+	ref := bigRef{seq: s.fileIndex, offset: s.fileOffset}
+	b := &bytes.Buffer{}
+	wire.PutVarString(b, op.value)
+	if err := s.write(b.Bytes()); err != nil {
+		return bigRef{}, err
+	}
+	if op.dedup {
+		if len(d.sqlCache) >= sqlCacheCap {
+			// The agent's limited map evicts; dropping the whole cache is the
+			// simplest bounded stand-in and only costs re-written values.
+			d.sqlCache = make(map[string]bigRef)
+		}
+		d.sqlCache[op.value] = ref
+	}
+	return ref, nil
 }
 
 // rotateStreams mirrors the rotateIfRequired pass: a rotation flushes the old
@@ -311,11 +441,10 @@ func (d *VirtualDumper) rotateStreams(t Transport) error {
 // writeDictionary appends every not-yet-sent word (Dumper.dumpDictionary):
 // one phrase per word, ids implied by order.
 func (d *VirtualDumper) writeDictionary() error {
-	s := d.streamByName(model.StreamDictionary)
-	for ; d.dict.sent < len(d.dict.words); d.dict.sent++ {
+	for _, w := range d.dict.takePending() {
 		b := &bytes.Buffer{}
-		wire.PutVarString(b, d.dict.words[d.dict.sent])
-		if err := s.writePhrase(b.Bytes()); err != nil {
+		wire.PutVarString(b, w)
+		if err := d.dictS.writePhrase(b.Bytes()); err != nil {
 			return err
 		}
 	}

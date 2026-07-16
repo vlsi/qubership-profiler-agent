@@ -60,6 +60,10 @@ type Config struct {
 	// Seed makes the synthetic workload reproducible (default 1).
 	Seed int64
 
+	// Workload is the load-shape parameter set (§4 knobs); a zero value takes
+	// DefaultWorkload().
+	Workload Workload
+
 	// Params is the params-stream payload, one-shot per connection; nil takes
 	// a minimal default set.
 	Params []ParamDef
@@ -98,7 +102,12 @@ func (c Config) withDefaults() Config {
 		c.Params = []ParamDef{
 			{Name: "request.id", Index: true},
 			{Name: "call.red", Index: true},
+			{Name: "sql"},
+			{Name: "xml"},
 		}
+	}
+	if c.Workload.isZero() {
+		c.Workload = DefaultWorkload()
 	}
 	if c.Connection.Timeout.ConnectTimeout == 0 {
 		c.Connection.Timeout.ConnectTimeout = 10 * time.Second

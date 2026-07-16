@@ -36,6 +36,7 @@ type statsRec struct {
 	connected    int
 	disconnected int
 	ackErrors    int
+	dropped      int
 	lastErr      error
 }
 
@@ -48,13 +49,36 @@ func (r *statsRec) Disconnected(_ int, err error) {
 }
 func (r *statsRec) StreamOpened(string, int, bool) {}
 func (r *statsRec) BytesSent(string, int)          {}
-func (r *statsRec) AckError()                      { r.mu.Lock(); defer r.mu.Unlock(); r.ackErrors++ }
-func (r *statsRec) Dropped(int)                    {}
+func (r *statsRec) AckError() { r.mu.Lock(); defer r.mu.Unlock(); r.ackErrors++ }
+func (r *statsRec) Dropped(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dropped += n
+}
+
+func (r *statsRec) droppedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dropped
+}
 
 func (r *statsRec) snapshot() (connected, disconnected, ackErrors int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.connected, r.disconnected, r.ackErrors
+}
+
+// quietWorkload pins every dumper-side shape source to zero (no dictionary
+// growth, no suspend pauses), so lifecycle tests observe only the protocol.
+func quietWorkload() vdumper.Workload {
+	return vdumper.Workload{
+		Duration: vdumper.DurationSpec{
+			Shares: []float64{1},
+			Floor:  30 * time.Millisecond,
+			Cap:    31 * time.Millisecond,
+		},
+		StackDepthMean: 1,
+	}
 }
 
 func startDumper(t *testing.T, col *emutest.Collector, clk *fakeClock, rec *statsRec) (context.CancelFunc, <-chan error) {
@@ -70,7 +94,8 @@ func startDumper(t *testing.T, col *emutest.Collector, clk *fakeClock, rec *stat
 				WriteTimeout:   2 * time.Second,
 			},
 		},
-		DictionaryInitial: 3,
+		DictionaryInitial: 6,
+		Workload:          quietWorkload(),
 		Clock:             clk,
 		Stats:             rec,
 	}
@@ -168,7 +193,7 @@ func TestLifecycleOpensSevenStreams(t *testing.T) {
 		eventually, tick, "the dictionary must go out with the first flush cycle")
 
 	words := decodePhrases(t, col.StreamData(0, model.StreamDictionary))
-	assert.Len(t, words, 3, "the full initial dictionary must be sent")
+	assert.Len(t, words, 6, "the full initial dictionary must be sent")
 
 	trace := col.StreamData(0, model.StreamTrace)
 	require.Len(t, trace, 8, "the trace file header is the 8-byte start epoch")
@@ -224,7 +249,7 @@ func TestAckErrorReconnectsAndResendsDictionary(t *testing.T) {
 	require.Eventually(t, func() bool { return len(col.StreamData(1, model.StreamDictionary)) > 0 },
 		eventually, tick)
 	words := decodePhrases(t, col.StreamData(1, model.StreamDictionary))
-	assert.Len(t, words, 3, "the dictionary must be re-sent from word 0")
+	assert.Len(t, words, 6, "the dictionary must be re-sent from word 0")
 }
 
 // TestFlushCadence: every FlushInterval adds one REQUEST_ACK_FLUSH per open
@@ -297,7 +322,7 @@ func TestGracefulClose(t *testing.T) {
 	require.Eventually(t, func() bool { return len(col.EventsOf(model.COMMAND_CLOSE)) > 0 },
 		eventually, tick, "the agent announces a graceful close")
 	words := decodePhrases(t, col.StreamData(0, model.StreamDictionary))
-	assert.Len(t, words, 3, "the shutdown flush pushes the pending dictionary out")
+	assert.Len(t, words, 6, "the shutdown flush pushes the pending dictionary out")
 }
 
 // TestBlacklistedStops: BLACK_LISTED_RESP stops the pod permanently — the
