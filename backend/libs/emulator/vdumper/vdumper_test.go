@@ -94,7 +94,7 @@ func startDumper(t *testing.T, col *emutest.Collector, clk *fakeClock, rec *stat
 				WriteTimeout:   2 * time.Second,
 			},
 		},
-		DictionaryInitial: 6,
+		DictionaryInitial: 12,
 		Workload:          quietWorkload(),
 		Clock:             clk,
 		Stats:             rec,
@@ -193,7 +193,7 @@ func TestLifecycleOpensSevenStreams(t *testing.T) {
 		eventually, tick, "the dictionary must go out with the first flush cycle")
 
 	words := decodePhrases(t, col.StreamData(0, model.StreamDictionary))
-	assert.Len(t, words, 6, "the full initial dictionary must be sent")
+	assert.Len(t, words, 12, "the full initial dictionary must be sent")
 
 	trace := col.StreamData(0, model.StreamTrace)
 	require.Len(t, trace, 8, "the trace file header is the 8-byte start epoch")
@@ -249,7 +249,7 @@ func TestAckErrorReconnectsAndResendsDictionary(t *testing.T) {
 	require.Eventually(t, func() bool { return len(col.StreamData(1, model.StreamDictionary)) > 0 },
 		eventually, tick)
 	words := decodePhrases(t, col.StreamData(1, model.StreamDictionary))
-	assert.Len(t, words, 6, "the dictionary must be re-sent from word 0")
+	assert.Len(t, words, 12, "the dictionary must be re-sent from word 0")
 }
 
 // TestFlushCadence: every FlushInterval adds one REQUEST_ACK_FLUSH per open
@@ -322,7 +322,7 @@ func TestGracefulClose(t *testing.T) {
 	require.Eventually(t, func() bool { return len(col.EventsOf(model.COMMAND_CLOSE)) > 0 },
 		eventually, tick, "the agent announces a graceful close")
 	words := decodePhrases(t, col.StreamData(0, model.StreamDictionary))
-	assert.Len(t, words, 6, "the shutdown flush pushes the pending dictionary out")
+	assert.Len(t, words, 12, "the shutdown flush pushes the pending dictionary out")
 }
 
 // TestBlacklistedStops: BLACK_LISTED_RESP stops the pod permanently — the

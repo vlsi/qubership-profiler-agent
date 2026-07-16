@@ -31,6 +31,15 @@ type Workload struct {
 	// ErrorShare is the fraction of calls tagged `call.red` — the collector's
 	// any_error retention class marker.
 	ErrorShare float64
+	// CpuFraction and WaitFraction derive the per-call cpu/wait counters from
+	// the call duration. The defaults are zero: the calibration reference is a
+	// sleep-shaped workload whose JMX counters stay flat, and a nonzero
+	// counter adds a time.cpu / time.wait tag to every call's trace.
+	CpuFraction  float64
+	WaitFraction float64
+	// MemoryMeanBytes is the mean of the per-call memory.allocated counter
+	// (default 4096, the reference workload's magnitude).
+	MemoryMeanBytes int
 	// DictionaryGrowthPerMin appends this many new dictionary words per
 	// minute, modeling new code paths (drives the dictionary stream and
 	// collector RAM).
@@ -82,6 +91,7 @@ func DefaultWorkload() Workload {
 		SuspendPerSec:          0.5,
 		ErrorShare:             0.01,
 		DictionaryGrowthPerMin: 10,
+		MemoryMeanBytes:        4096,
 	}
 }
 
@@ -89,7 +99,8 @@ func (w Workload) isZero() bool {
 	return w.Duration.Thresholds == nil && w.Duration.Shares == nil &&
 		w.StackDepthMean == 0 && w.RequestIdShare == 0 &&
 		w.Sql == (BigParamSpec{}) && w.Xml == (BigParamSpec{}) &&
-		w.SuspendPerSec == 0 && w.ErrorShare == 0 && w.DictionaryGrowthPerMin == 0
+		w.SuspendPerSec == 0 && w.ErrorShare == 0 && w.DictionaryGrowthPerMin == 0 &&
+		w.CpuFraction == 0 && w.WaitFraction == 0 && w.MemoryMeanBytes == 0
 }
 
 // sampleMs draws one call duration in milliseconds.

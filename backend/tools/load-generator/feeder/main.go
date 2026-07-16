@@ -56,6 +56,9 @@ func main() {
 		xmlBytes    = flag.Int("xml-bytes", 4096, "mean xml value size")
 		suspendRate = flag.Float64("suspend-rate", 0.5, "suspend pauses per second per pod")
 		errorShare  = flag.Float64("error-share", 0.01, "share of calls tagged call.red (any_error class)")
+		cpuFrac     = flag.Float64("cpu-fraction", 0, "per-call cpu counter as a fraction of duration")
+		waitFrac    = flag.Float64("wait-fraction", 0, "per-call wait counter as a fraction of duration")
+		memBytes    = flag.Int("memory-bytes", 4096, "mean per-call memory.allocated counter")
 	)
 	flag.Parse()
 
@@ -65,6 +68,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	workload.CpuFraction = *cpuFrac
+	workload.WaitFraction = *waitFrac
+	workload.MemoryMeanBytes = *memBytes
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

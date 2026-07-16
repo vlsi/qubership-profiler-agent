@@ -145,6 +145,17 @@ each handed-off buffer as one logical trace chunk in arrival order, so chunks fr
 the wire exactly the way `Dumper.dumpLoop` interleaves stolen buffers. Closed root calls emit `calls` records
 carrying the (`traceFileIndex`, `bufferOffset`, `recordIndex`) linkage into the trace bytes.
 
+Two rules the calibration run proved material:
+
+- **Dumper-injected tags.** On every recorded call the agent's dumper appends tag events right before the root exit:
+  `common.started`, `node.name`, `java.thread` unconditionally, plus `time.cpu` / `time.wait` /
+  `memory.allocated` for nonzero counter deltas (`Dumper.writeBufferToFS` + `writeCallParams`). They are a large
+  share of the per-call trace bytes, so the virtual dumper emits them too.
+- **Time compression.** A synthetic call completes now and started `duration` ago; the calls record keeps that true
+  retroactive start (zig-zag deltas may run backwards), while the trace events — whose in-chunk deltas are unsigned
+  and monotonic — compress onto the thread's event clock, capped at now. Retention classes and time buckets come
+  from the calls record, so the load shape stays exact; only a /tree of a synthetic long call looks compressed.
+
 ## 3. Go contract
 
 Package `backend/libs/emulator/vdumper`:
@@ -193,8 +204,14 @@ All knobs live in `vdumper.Config`; every run records its full parameter set (`l
 | `XmlShare`, `XmlSize` | calls carrying `PARAM_BIG` values | 0.05, log-normal ~4 KB |
 | `SuspendRate` | suspend events per second | 0.5 |
 | `ErrorShare` | calls tagged with `call.red` (any_error class) | 0.01 |
+| `CpuFraction`, `WaitFraction` | per-call cpu/wait counters as duration fractions | 0 (sleep-shaped reference) |
+| `MemoryMeanBytes` | per-call `memory.allocated` counter | 4 KB |
 | `ChunkMaxBytes` | producer buffer size (logical chunk) | 32 KB |
 | `FlushInterval`, `BufferStealInterval`, `RestartInterval` | dumper timers | 5 s, 5 s, 10 s |
+
+The generator does not model thread occupancy: producers emit at the configured rate even when
+rate × mean duration exceeds one. When mirroring a real workload whose threads block for the call duration, set
+`CallsPerSecPerThread` to the *observed* effective rate, not the nominal one.
 
 Duration classes: the distribution is parameterized to land configurable shares into the collector retention tiers
 (default thresholds 100 ms / 1 s / 10 s); the agent's local file classes (100 ms / 500 ms / 3 s / 60 m) remain

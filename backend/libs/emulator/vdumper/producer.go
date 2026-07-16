@@ -3,7 +3,9 @@ package vdumper
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/emulator/wire"
@@ -91,10 +93,13 @@ type producer struct {
 	stealAt     time.Time
 
 	callSeq int
+	podHash uint16
 	sqlPool []string
 }
 
 func newProducer(id int, cfg Config, dict *dictionary, out chan<- chunk) *producer {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(cfg.PodName))
 	return &producer{
 		threadId:   uint64(1000 + id),
 		threadName: fmt.Sprintf("exec-%d", id),
@@ -105,6 +110,7 @@ func newProducer(id int, cfg Config, dict *dictionary, out chan<- chunk) *produc
 		dict:       dict,
 		out:        out,
 		stats:      cfg.Stats,
+		podHash:    uint16(h.Sum32()),
 	}
 }
 
@@ -167,7 +173,10 @@ func (p *producer) addCall(now time.Time) {
 
 	params := map[int][]string{}
 	if p.rnd.Float64() < p.w.RequestIdShare {
-		value := fmt.Sprintf("req-%s-%s-%d", p.cfg.PodName, p.threadName, p.callSeq)
+		// Unique across the fleet via a short pod hash, but sized like a real
+		// request id — the value length feeds straight into the calls-stream
+		// bytes/s the calibration compares.
+		value := fmt.Sprintf("req-%04x-%d-%d", p.podHash, p.threadId%1000, p.callSeq)
 		p.putEvent(wire.Tag(0, dictRequestId, value))
 		params[dictRequestId] = []string{value}
 	}
@@ -186,10 +195,37 @@ func (p *producer) addCall(now time.Time) {
 	for i := 1; i < depth; i++ {
 		p.putEvent(wire.Enter(0, p.dict.methodId(p.rnd)))
 	}
-	p.putEvent(wire.Exit(int(exitMs - enterMs))) // the leaf carries the call's time
-	for i := 1; i < depth; i++ {
-		p.putEvent(wire.Exit(0))
+	durDelta := int(exitMs - enterMs)
+	if depth > 1 {
+		p.putEvent(wire.Exit(durDelta)) // the leaf carries the call's time
+		for i := 1; i < depth-1; i++ {
+			p.putEvent(wire.Exit(0))
+		}
+		durDelta = 0
 	}
+	cpuMs := int64(float64(durMs) * p.w.CpuFraction)
+	waitMs := int64(float64(durMs) * p.w.WaitFraction)
+	var memory int64
+	if p.w.MemoryMeanBytes > 0 {
+		memory = int64(sampleSize(p.rnd, p.w.MemoryMeanBytes))
+	}
+	// The dumper injects these tags into every recorded call right before its
+	// root exit (Dumper.writeBufferToFS: common.started / node.name /
+	// java.thread, then writeCallParams for the nonzero counters); they are a
+	// material share of the per-call trace bytes.
+	p.putEvent(wire.Tag(durDelta, dictCommonStarted, strconv.FormatInt(startMs, 10)))
+	p.putEvent(wire.Tag(0, dictNodeName, p.cfg.PodName))
+	p.putEvent(wire.Tag(0, dictJavaThread, p.threadName))
+	if cpuMs > 0 {
+		p.putEvent(wire.Tag(0, dictTimeCpu, strconv.FormatInt(cpuMs, 10)))
+	}
+	if waitMs > 0 {
+		p.putEvent(wire.Tag(0, dictTimeWait, strconv.FormatInt(waitMs, 10)))
+	}
+	if memory > 0 {
+		p.putEvent(wire.Tag(0, dictMemAllocated, strconv.FormatInt(memory, 10)))
+	}
+	p.putEvent(wire.Exit(0)) // the root exit follows the injected tags
 	p.lastEventMs = exitMs
 	p.calls = append(p.calls, completedCall{
 		recordIndex: rootIndex,
@@ -198,9 +234,9 @@ func (p *producer) addCall(now time.Time) {
 		durationMs:  durMs,
 		callCount:   depth,
 		params:      params,
-		cpuMs:       int64(durMs) * 6 / 10,
-		waitMs:      int64(durMs) / 5,
-		memory:      int64(sampleSize(p.rnd, 256*1024)),
+		cpuMs:       cpuMs,
+		waitMs:      waitMs,
+		memory:      memory,
 	})
 }
 

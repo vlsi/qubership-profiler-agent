@@ -19,7 +19,16 @@ const (
 	dictCallRed   = 1 // "call.red"
 	dictSql       = 2 // "sql"
 	dictXml       = 3 // "xml"
-	dictMethods   = 4 // first synthetic method word
+	// The dumper injects these tags into the trace on every recorded call
+	// (Dumper.writeBufferToFS + writeCallParams).
+	dictCommonStarted = 4 // "common.started"
+	dictNodeName      = 5 // "node.name"
+	dictJavaThread    = 6 // "java.thread"
+	dictTimeCpu       = 7 // "time.cpu"
+	dictTimeWait      = 8 // "time.wait"
+	dictMemAllocated  = 9 // "memory.allocated"
+
+	dictMethods = 10 // first synthetic method word
 )
 
 // dictionary models ProfilerData's tag list: an append-only word list whose
@@ -43,7 +52,8 @@ type dictionary struct {
 // prefix plus one method.
 func newDictionary(total int, growthPerMin float64) *dictionary {
 	d := &dictionary{growthPerMin: growthPerMin}
-	d.words = append(d.words, "request.id", "call.red", "sql", "xml")
+	d.words = append(d.words, "request.id", "call.red", "sql", "xml",
+		"common.started", "node.name", "java.thread", "time.cpu", "time.wait", "memory.allocated")
 	for len(d.words) < max(total, dictMethods+1) {
 		d.words = append(d.words, syntheticWord(len(d.words)))
 	}
