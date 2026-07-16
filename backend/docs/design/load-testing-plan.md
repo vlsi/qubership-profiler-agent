@@ -1,6 +1,7 @@
 # Load-testing plan: Go profiler backend
 
-Status: phase 1 (stand + observability) done 2026-07-16, see §11; phase 2 (generator fidelity) is next. Owner: @vlsi.
+Status: phases 1 (stand + observability) and 2 (generator fidelity) done 2026-07-16, see §11–§12; phase 3
+(ceiling campaign) is next. Owner: @vlsi.
 
 This plan defines the load tests for the Go backend (`backend/apps/profiler-backend` and `backend/libs`): what we
 measure, on which stands, with which generator, and what counts as a pass. The outcome is an engineering report
@@ -280,3 +281,39 @@ Carried into later phases:
   then.
 - No explicit active-connections gauge yet (§6.4); the ingest dashboard uses the goroutine count as a proxy.
 - Run orchestration (ramp steps, artifact collection) remains to be designed as the script layer of §5.3.
+
+## 12. Phase 2 status (done 2026-07-16)
+
+The feeder stub is replaced by the virtual dumper (`backend/libs/emulator/vdumper`), a behavioral layer mirroring
+the `DumperThread` + `Dumper` + `DefaultCollectorClient` state machine; the contract is `virtual-dumper.md`. All of
+G1–G9 are closed:
+
+- **G1–G2**: producer goroutines model app threads; logical trace chunks interleave on the wire and calls records
+  carry the (file index, buffer offset, record index) linkage, verified by decoding the wire through
+  `libs/parser/pipe` in the package tests.
+- **G3–G6**: the transport (`libs/emulator`) matches the agent ack protocol (+1 pending ack per `RCV_DATA`, no
+  per-payload flush, opportunistic drains via FIONREAD, typed `ACK_ERROR_MAGIC`); the lifecycle reconnects after
+  10 s with a full dictionary resend under `resetRequired=1`. Lifecycle tests run against the `emutest` scripted
+  collector on a fake clock.
+- **G7–G9**: `vdumper.Workload` parameterizes every §4 knob; shape tests pin the class shares, error share, dedup
+  ratio, dictionary growth, and suspend rate statistically.
+
+Calibration (§3 exit criterion) against the real agent (`test-app` `LoadMain` via the
+`tools/load-generator/calibrate` tap; runbook in `tools/load-generator/doc/calibration.md`):
+
+- bytes/s ratios A/B: calls 1.01×, dictionary 1.06×, trace 1.27× (tolerance 1.5×); params/sql/suspend sit under the
+  20 B/s noise floor;
+- flush cadence: 6.7 vs 6.1 `REQUEST_ACK_FLUSH` per 5 s;
+- injected `ACK_ERROR_MAGIC` mid-run: both sides reconnect and re-open all seven streams with the dictionary reset
+  (the virtual dumper after exactly 10.0 s; the real agent stalls on the half-dead socket first, then restarts).
+
+Calibration drove three emulator fixes rather than threshold tuning: the dumper-injected per-call tags
+(`common.started` / `node.name` / `java.thread` / counter tags), realistic request-id value sizes, and
+sleep-shaped default cpu/wait/memory counters (`virtual-dumper.md` §2.5, §4).
+
+Found along the way, tracked separately: the collector never flushes buffered acks on its own cadence (06 §5
+violation — every real-agent stream rotation stalls 30 s into a reconnect), and the suspend/params pipe readers
+mis-frame multi-phrase streams the real agent produces.
+
+Carried into phase 3: the k6 runner stays parked; wiring `pkg/cdt` onto the virtual dumper is the first step of the
+ceiling campaign.
