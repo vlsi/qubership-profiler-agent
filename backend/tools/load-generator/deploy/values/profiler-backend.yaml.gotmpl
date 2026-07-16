@@ -25,6 +25,9 @@ collector:
     storageClassName: {{ .Values.profiler.collector.storageClassName | quote }}
   env:
     PROFILER_PPROF_ENABLED: "true"
+{{- range $key, $value := .Values.profiler.collector.extraEnv }}
+    {{ $key }}: {{ $value | quote }}
+{{- end }}
 
 query:
   replicas: {{ .Values.profiler.query.replicas }}
