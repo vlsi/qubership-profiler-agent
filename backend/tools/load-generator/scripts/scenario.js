@@ -1,76 +1,68 @@
-import {scenario, vu} from "k6/execution";
-import { TestOpts, suite } from "./common.js";
+// Fleet scenario for the ceiling campaign (load-testing-plan.md §7).
+//
+// The externally-controlled executor starts at 0 VUs; the run orchestrator
+// (tools/load-generator/runner) scales VUs over the k6 REST API, so ramp
+// steps keep existing connections alive. Each VU holds one fleet of
+// PODS_PER_VU virtual dumpers until it is scaled away: 1 pod per VU for the
+// T2 throughput runs, ~100 idle pods per VU for the T3 connection runs.
+//
+// Every workload knob (§4) comes from env so the frozen run spec is the
+// single source of load-shape truth. Explicit zeros are honored — T3 sets
+// THREADS_PER_POD=0 for keep-alive-only pods.
+import cdt from 'k6/x/cdt';
 
-// use functions from other files
-export { tcp_communication } from "./scenario.tcp.js";
-export { tcp_long_communication } from "./scenario.tcp-long.js";
-export { dumps_sending } from "./scenario.dumps.js";
-
-// k6 options for test
-export const options = {
-    // run two different scenarios simultaneously
-    scenarios: {
-        // N pods send top+td dumps every minute
-        sending_dumps: {
-            executor: 'constant-vus',     // emulating N agent at start and keep in this way until end of test
-            exec: 'dumps_sending',        // use function from 'scenario.dumps.js'
-
-            vus: TestOpts.pods,           // VUs (virtual users) -- N parallel agents
-            duration: TestOpts.duration,
-
-            startTime: '15s',             // run this scenario not immediately at start, but after `15s` pause
-        },
-        tcp_communication: {
-            executor: 'constant-vus',
-
-            // We have two different versions of sending TCP data:
-            // 1. `tcp_long_communication` - A more realistic scenario is when each vu (agent) connects to the collector
-            //at the beginning of the test and sends calls repeatedly from within ONE connection
-            //throughout the entire duration of the test.
-            // 2. `tcp_communication` - Each vu (agent) connects to the collector, sends calls once,
-            // closes the connection, and so on in a loop until the test ends.
-            exec: 'tcp_long_communication',    // use function from 'scenario.tcp-long.js'
-
-            vus: TestOpts.pods,
-            duration: TestOpts.duration,
-
-            startTime: '2s',             // run this scenario not immediately at start, but after `2s` pause
-
-            gracefulStop: '10s',
-        }
-    },
-
-    // Do not use the system "name" and "url" tags because they overload the Prometheus database
-    systemTags: [
-        'proto', 
-        'subproto', 
-        'status', 
-        'method', 
-        'group', 
-        'check', 
-        'error', 
-        'error_code', 
-        'tls_version', 
-        'scenario', 
-        'service', 
-        'expected_response'
-    ],
-
-    tags: {
-        'namespace': __ENV.K8S_NAMESPACE || 'localhost',
-        'pod': __ENV.K8S_POD || 'localhost' 
-    }
-};
-
-// print config data in generator console at start
-export function setup() {
-    // configuration
-    console.log('vu: ' + vu.idInTest)
-    console.log(`Collector host:    ${TestOpts.host}`);
+function num(name, dflt) {
+    const v = __ENV[name];
+    return v === undefined || v === '' ? dflt : Number(v);
 }
 
-// Useful linux utilities to check performance in terminal:
-// CPU and memory: htop
-// Network:        iftop
-// See also:       nmon   ( https://nmon.sourceforge.net )
+function str(name, dflt) {
+    const v = __ENV[name];
+    return v === undefined || v === '' ? dflt : v;
+}
 
+export const options = {
+    scenarios: {
+        fleet: {
+            executor: 'externally-controlled',
+            vus: 0,
+            maxVUs: num('MAX_VUS', 600),
+            duration: str('DURATION', '2h'),
+        },
+    },
+    // The run label: keeps this run's series apart in VictoriaMetrics
+    // (doc/run-orchestration.md).
+    tags: { testid: str('TESTID', 'dev') },
+};
+
+export default function () {
+    const summary = cdt.runFleet({
+        addr: `${str('COLLECTOR_HOST', 'localhost')}:${num('COLLECTOR_PORT', 1715)}`,
+        pods: num('PODS_PER_VU', 1),
+        namespace: str('EMULATOR_NAMESPACE', 'load'),
+        service: str('EMULATOR_SERVICE', 'load-svc'),
+        podPrefix: str('EMULATOR_POD_PREFIX', ''),
+        seed: num('SEED', 1),
+        startSpread: str('START_SPREAD', '2s'),
+
+        threadsPerPod: num('THREADS_PER_POD', 8),
+        callsPerSec: num('CALLS_PER_SEC', 5),
+        dictInitial: num('DICT_INITIAL', 2000),
+        dictGrowthPerMin: num('DICT_GROWTH_PER_MIN', 10),
+        durationThresholds: str('DURATION_THRESHOLDS', '100ms,1s,10s'),
+        durationShares: str('DURATION_SHARES', '0.90,0.07,0.025,0.005'),
+        stackDepth: num('STACK_DEPTH', 10),
+        sqlShare: num('SQL_SHARE', 0.2),
+        sqlBytes: num('SQL_BYTES', 1024),
+        sqlDedup: num('SQL_DEDUP', 0.9),
+        xmlShare: num('XML_SHARE', 0.05),
+        xmlBytes: num('XML_BYTES', 4096),
+        suspendRate: num('SUSPEND_RATE', 0.5),
+        errorShare: num('ERROR_SHARE', 0.01),
+        requestIdShare: num('REQUEST_ID_SHARE', 1),
+        cpuFraction: num('CPU_FRACTION', 0),
+        waitFraction: num('WAIT_FRACTION', 0),
+        memoryBytes: num('MEMORY_BYTES', 4096),
+    });
+    console.log(`fleet done: ${JSON.stringify(summary)}`);
+}

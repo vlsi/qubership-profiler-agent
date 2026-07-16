@@ -18,9 +18,9 @@ does not live here.
 # The backend under test (the Makefile tags it latest; the chart pulls dev):
 make -C backend/apps/profiler-backend docker-build
 docker tag profiler-backend:latest profiler-backend:dev
-# The k6 runner — needs prepared data/ (doc/preparing_data.md); parked until
-# the phase-2 virtual dumper, see k6.installed in environments/:
-docker build -t cdt-load-generator:dev backend/tools/load-generator
+# The k6 runner — fully synthetic traffic (virtual dumper), built with buildx
+# for the stand's platform (../Makefile defaults to linux/arm64 for OrbStack):
+make -C backend/tools/load-generator image
 # kind only — OrbStack shares the host docker images:
 kind load docker-image profiler-backend:dev cdt-load-generator:dev
 ```
@@ -33,9 +33,10 @@ helmfile -e local apply      # local stand (also the default environment)
 helmfile -e cluster apply    # large cluster; set storage classes and image refs first
 ```
 
-The `k6` release starts sending load as soon as its pod is up. To bring the stand up without load, set
-`k6.installed: false` in the environment file (or `--state-values-set k6.installed=false`), and flip it back for the
-run.
+The `k6` release comes up idle: the externally-controlled scenario starts at 0 VUs, and the run orchestrator
+(`../runner`, contract in `../doc/run-orchestration.md`) scales it through the k6 REST API on port 6565 of the
+`cdt-loader-service`. To bring the stand up without the runner pod at all, set `k6.installed: false` in the
+environment file (or `--state-values-set k6.installed=false`).
 
 Reaching the UIs from the local stand:
 

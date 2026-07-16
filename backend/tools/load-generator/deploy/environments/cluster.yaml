@@ -40,14 +40,23 @@ profiler:
     replicas: 3
     storageSize: 50Gi
     storageClassName: ""
+    # Per-run collector env overrides (doc/ceiling-runs.md).
+    extraEnv: {}
   query:
     replicas: 2
 
 k6:
-  # Parked for the same reason as in local.yaml: waits for the phase-2
-  # virtual dumper (synthetic traffic without captured dumps).
-  installed: false
+  installed: true
+  # Push the image for the cluster's architecture (or a multi-arch manifest)
+  # and pin an immutable tag.
   image: cdt-load-generator:dev
-  # Contract-level shape (plan §7 T1); ramp/ceiling runs override per run.
-  pods: 500
-  duration: 2h
+  # Ceiling-run defaults (plan §7 T2/T3); the orchestrator scales VUs from 0
+  # over the k6 REST API and overrides the workload per run spec.
+  podsPerVU: 1
+  maxVUs: 2000
+  duration: 6h
+  testid: dev
+  extraEnv: {}
+  # Plan §10: pin the runner to dedicated nodes on the big cluster so the
+  # generator is never the bottleneck being measured (add a nodeSelector to
+  # the chart when the cluster materializes).

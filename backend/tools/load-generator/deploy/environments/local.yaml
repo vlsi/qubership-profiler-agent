@@ -32,15 +32,23 @@ profiler:
     replicas: 1
     storageSize: 20Gi
     storageClassName: ""
+    # Per-run collector env, e.g. a small PROFILER_PENDING_UPLOAD_MAX_BYTES
+    # to force backpressure at smoke-level load (doc/ceiling-runs.md).
+    extraEnv: {}
   query:
     replicas: 1
 
 k6:
-  # Parked until the phase-2 virtual dumper lands: the current image needs
-  # captured dumps under data/ (doc/preparing_data.md), which the repo does
-  # not carry. Flip to true once the generator produces synthetic traffic.
-  installed: false
-  # Build locally from backend/tools/load-generator/Dockerfile.
+  installed: true
+  # Build locally: make -C backend/tools/load-generator image (buildx,
+  # PLATFORM matches the stand).
   image: cdt-load-generator:dev
-  pods: 10
-  duration: 10m
+  # Fleet shape: pods per VU × VUs; the orchestrator scales VUs from 0 over
+  # the k6 REST API, so these only cap the run.
+  podsPerVU: 1
+  maxVUs: 200
+  duration: 4h
+  testid: dev
+  # Workload knobs for scripts/scenario.js beyond the defaults, e.g.
+  # THREADS_PER_POD: "0" for a T3 smoke.
+  extraEnv: {}

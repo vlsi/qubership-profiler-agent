@@ -1,6 +1,7 @@
-# k6 runner (../charts/cdt-load-generator): starts sending on pod start.
-# Scenario parameters beyond the pod count and duration stay with the run
-# orchestration layer (plan §5.3), not the stand.
+# k6 runner (../charts/cdt-load-generator): the externally-controlled fleet
+# scenario starts at 0 VUs; the run orchestrator scales it over the REST API
+# (:6565) and freezes the workload knobs in the run spec (plan §5.3), so the
+# stand only pins the fleet shape and the endpoints.
 
 global:
   name: cdt-loader
@@ -11,11 +12,16 @@ deployment:
 
   env:
     COLLECTOR_HOST: profiler-backend-collector-agent.{{ .Values.stand.namespace }}.svc
+    COLLECTOR_PORT: "1715"
     EMULATOR_NAMESPACE: load
-    EMULATOR_SERVICE_PREFIX: load-svc
-    EMULATOR_POD_PREFIX: load-pod
-    PODS: {{ .Values.k6.pods | quote }}
+    EMULATOR_SERVICE: load-svc
+    PODS_PER_VU: {{ .Values.k6.podsPerVU | quote }}
+    MAX_VUS: {{ .Values.k6.maxVUs | quote }}
     DURATION: {{ .Values.k6.duration | quote }}
+    TESTID: {{ .Values.k6.testid | quote }}
+{{- range $key, $value := .Values.k6.extraEnv }}
+    {{ $key }}: {{ $value | quote }}
+{{- end }}
 
   # k6 pushes its own series into the same VictoriaMetrics the backend is
   # scraped into, so generator-side and server-side series share a time axis

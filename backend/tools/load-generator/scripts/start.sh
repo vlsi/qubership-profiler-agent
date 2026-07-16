@@ -1,16 +1,12 @@
 #!/bin/sh
+set -eu
 
 cd /xk6
-pwd
-ls -la
-echo "Wait 10s before test"
 
-sleep 10
+echo "k6 REST API on :6565; the run orchestrator scales VUs from 0"
+echo "PODS_PER_VU=${PODS_PER_VU:-1} MAX_VUS=${MAX_VUS:-600} DURATION=${DURATION:-2h} TESTID=${TESTID:-dev}"
 
-echo "Run with $PODS virtual users"
-echo "Duration of test: $DURATION"
-
-./k6 run ${K6_PROMETHEUS_RW_SERVER_URL:+-o experimental-prometheus-rw} --summary-mode=full scripts/scenario.js
-
-echo "Stop executing, wait for 3m for scale down"
-sleep 180
+# shellcheck disable=SC2086 # the remote-write flag is intentionally word-split
+exec ./k6 run --address 0.0.0.0:6565 \
+    ${K6_PROMETHEUS_RW_SERVER_URL:+-o experimental-prometheus-rw} \
+    --summary-mode=full scripts/scenario.js

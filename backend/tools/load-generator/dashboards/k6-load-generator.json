@@ -1,7 +1,7 @@
 {
   "uid": "k6-load-generator",
   "title": "Profiler load / k6 generator",
-  "description": "k6 generator series pushed over Prometheus remote write (load-testing-plan.md \u00a76.2: k6).",
+  "description": "k6 fleet (k6/x/cdt over the virtual dumper) series pushed over Prometheus remote write (load-testing-plan.md §6.2: k6).",
   "tags": [
     "profiler-load-stand"
   ],
@@ -31,18 +31,28 @@
           "text": "profiler-load",
           "value": "profiler-load"
         }
+      },
+      {
+        "name": "testid",
+        "label": "testid (run label)",
+        "type": "textbox",
+        "query": ".*",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        }
       }
     ]
   },
   "panels": [
     {
       "type": "timeseries",
-      "title": "Sent bytes/s",
+      "title": "Sent bytes/s by stream",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Generator-side view of the ingest contract (~6 MB/s cluster total for T1).",
+      "description": "Generator-side view of the ingest load, per contract stream (~6 MB/s cluster total for T1).",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -71,8 +81,8 @@
       },
       "targets": [
         {
-          "expr": "rate(k6_data_sent_total[$__rate_interval])",
-          "legendFormat": "sent",
+          "expr": "sum by (stream) (rate(k6_vdumper_sent_bytes_total{testid=~\"$testid\"}[$__rate_interval]))",
+          "legendFormat": "{{stream}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -80,8 +90,8 @@
           }
         },
         {
-          "expr": "rate(k6_data_received_total[$__rate_interval])",
-          "legendFormat": "received (acks)",
+          "expr": "sum(rate(k6_vdumper_sent_bytes_total{testid=~\"$testid\"}[$__rate_interval]))",
+          "legendFormat": "total",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
@@ -99,12 +109,12 @@
     },
     {
       "type": "timeseries",
-      "title": "Virtual users",
+      "title": "Virtual users (fleets)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "One VU holds PODS_PER_VU virtual dumpers; the run orchestrator scales VUs over the k6 REST API.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -152,12 +162,12 @@
     },
     {
       "type": "timeseries",
-      "title": "CDT sends/s",
+      "title": "Fleet lifecycle/s",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Connects are completed session setups; reconnects are dead incarnations entering the agent's 10 s restart path.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -186,8 +196,8 @@
       },
       "targets": [
         {
-          "expr": "rate(k6_cdt_send_count_total[$__rate_interval])",
-          "legendFormat": "sends",
+          "expr": "rate(k6_vdumper_connects_total{testid=~\"$testid\"}[$__rate_interval])",
+          "legendFormat": "connects",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -195,8 +205,8 @@
           }
         },
         {
-          "expr": "rate(k6_cdt_read_count_total[$__rate_interval])",
-          "legendFormat": "reads (acks)",
+          "expr": "rate(k6_vdumper_reconnects_total{testid=~\"$testid\"}[$__rate_interval])",
+          "legendFormat": "reconnects",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
@@ -214,12 +224,12 @@
     },
     {
       "type": "timeseries",
-      "title": "CDT errors/s",
+      "title": "Backpressure and losses/s",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Ack errors surface here once the generator handles ACK_ERROR (plan \u00a73 G3).",
+      "description": "Ack errors are ACK_ERROR_MAGIC refusals (collector backpressure); dropped chunks are producer buffers lost in reconnect drop windows. Both are T2 saturation signals.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -248,8 +258,8 @@
       },
       "targets": [
         {
-          "expr": "rate(k6_cdt_send_error_count_total[$__rate_interval])",
-          "legendFormat": "send errors",
+          "expr": "rate(k6_vdumper_ack_errors_total{testid=~\"$testid\"}[$__rate_interval])",
+          "legendFormat": "ack errors",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -257,8 +267,8 @@
           }
         },
         {
-          "expr": "rate(k6_cdt_read_error_count_total[$__rate_interval])",
-          "legendFormat": "read errors",
+          "expr": "rate(k6_vdumper_dropped_chunks_total{testid=~\"$testid\"}[$__rate_interval])",
+          "legendFormat": "dropped chunks",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
@@ -276,12 +286,12 @@
     },
     {
       "type": "timeseries",
-      "title": "Send time",
+      "title": "Ack flush time (T2 signal)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Per-stream synchronous ack drain inside the regular 5 s flush cycle; a rising p95 against the first-step baseline is the ack-path degradation detector.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -293,7 +303,7 @@
               "mode": "none"
             }
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -310,7 +320,7 @@
       },
       "targets": [
         {
-          "expr": "k6_cdt_send_time_avg",
+          "expr": "k6_vdumper_ack_flush_time_avg{testid=~\"$testid\"}",
           "legendFormat": "avg",
           "refId": "A",
           "datasource": {
@@ -319,7 +329,7 @@
           }
         },
         {
-          "expr": "k6_cdt_send_time_p95",
+          "expr": "k6_vdumper_ack_flush_time_p95{testid=~\"$testid\"}",
           "legendFormat": "p95",
           "refId": "B",
           "datasource": {
@@ -338,12 +348,12 @@
     },
     {
       "type": "timeseries",
-      "title": "Read (ack) time",
+      "title": "Session ready / TCP connect (T3 signal)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Session ready spans dial start to all seven streams open; TCP connect is the dial alone. Divergence points at the handshake/stream-setup path, not the accept queue.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -355,7 +365,7 @@
               "mode": "none"
             }
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -372,8 +382,8 @@
       },
       "targets": [
         {
-          "expr": "k6_cdt_read_time_avg",
-          "legendFormat": "avg",
+          "expr": "k6_vdumper_session_ready_time_p95{testid=~\"$testid\"}",
+          "legendFormat": "session ready p95",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -381,9 +391,18 @@
           }
         },
         {
-          "expr": "k6_cdt_read_time_p95",
-          "legendFormat": "p95",
+          "expr": "k6_vdumper_session_ready_time_avg{testid=~\"$testid\"}",
+          "legendFormat": "session ready avg",
           "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "k6_vdumper_tcp_connect_time_p95{testid=~\"$testid\"}",
+          "legendFormat": "tcp connect p95",
+          "refId": "C",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -405,7 +424,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The generator must not become the bottleneck being measured (plan \u00a710).",
+      "description": "The generator must not become the bottleneck being measured (plan §10); the runner marks a step invalid when the k6 pod runs over 70% of its CPU limit.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -446,6 +465,15 @@
           "expr": "container_memory_working_set_bytes{namespace=\"$namespace\", pod=~\"cdt-loader.*\", container!=\"\"}",
           "legendFormat": "rss {{pod}}",
           "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "go_goroutines{namespace=\"$namespace\", pod=~\"cdt-loader.*\"}",
+          "legendFormat": "goroutines {{pod}}",
+          "refId": "C",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
