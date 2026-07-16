@@ -36,7 +36,10 @@ profiler:
     replicas: 1
 
 k6:
-  installed: true
+  # Parked until the phase-2 virtual dumper lands: the current image needs
+  # captured dumps under data/ (doc/preparing_data.md), which the repo does
+  # not carry. Flip to true once the generator produces synthetic traffic.
+  installed: false
   # Build locally from backend/tools/load-generator/Dockerfile.
   image: cdt-load-generator:dev
   pods: 10

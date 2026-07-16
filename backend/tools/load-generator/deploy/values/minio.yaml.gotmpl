@@ -22,13 +22,12 @@ buckets:
     purge: false
 
 # The stand scrapes MinIO for S3-side ops/latency (plan §6 "resources" row).
-# Public auth keeps the scrape config free of bearer-token plumbing — this is
-# a load stand, not production.
-environment:
-  MINIO_PROMETHEUS_AUTH_TYPE: public
+# public: true makes the chart set MINIO_PROMETHEUS_AUTH_TYPE=public itself —
+# no bearer-token plumbing on a load stand.
 metrics:
   serviceMonitor:
     enabled: true
+    public: true
     includeNode: false
 
 resources:

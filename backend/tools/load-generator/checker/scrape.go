@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 )
 
 // metrics is one target's scrape, flattened to "name" or "name{k=v,...}" with
@@ -53,7 +54,9 @@ func scrape(ctx context.Context, url string) (metrics, error) {
 		return nil, fmt.Errorf("status %s", resp.Status)
 	}
 
-	var parser expfmt.TextParser
+	// The zero-value TextParser panics on an unset validation scheme since
+	// prometheus/common v0.67; the constructor is mandatory.
+	parser := expfmt.NewTextParser(model.UTF8Validation)
 	families, err := parser.TextToMetricFamilies(resp.Body)
 	if err != nil {
 		return nil, err

@@ -44,7 +44,9 @@ profiler:
     replicas: 2
 
 k6:
-  installed: true
+  # Parked for the same reason as in local.yaml: waits for the phase-2
+  # virtual dumper (synthetic traffic without captured dumps).
+  installed: false
   image: cdt-load-generator:dev
   # Contract-level shape (plan §7 T1); ramp/ceiling runs override per run.
   pods: 500

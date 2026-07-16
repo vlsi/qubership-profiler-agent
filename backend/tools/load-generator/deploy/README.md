@@ -15,9 +15,11 @@ does not live here.
 - Images loadable by the cluster:
 
 ```bash
-# The backend under test (tag profiler-backend:dev):
-make -C backend docker-build
-# The k6 runner:
+# The backend under test (the Makefile tags it latest; the chart pulls dev):
+make -C backend/apps/profiler-backend docker-build
+docker tag profiler-backend:latest profiler-backend:dev
+# The k6 runner — needs prepared data/ (doc/preparing_data.md); parked until
+# the phase-2 virtual dumper, see k6.installed in environments/:
 docker build -t cdt-load-generator:dev backend/tools/load-generator
 # kind only — OrbStack shares the host docker images:
 kind load docker-image profiler-backend:dev cdt-load-generator:dev
