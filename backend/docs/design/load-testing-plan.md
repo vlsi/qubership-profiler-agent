@@ -1,0 +1,245 @@
+# Load-testing plan: Go profiler backend
+
+Status: agreed plan (interview 2026-07-15). Owner: @vlsi.
+
+This plan defines the load tests for the Go backend (`backend/apps/profiler-backend` and `backend/libs`): what we
+measure, on which stands, with which generator, and what counts as a pass. The outcome is an engineering report
+(CPU / RAM / disk I/O curves, discovered ceilings) plus a set of automated invariants for long runs, not a formal
+SLO gate.
+
+## 1. Goals
+
+1. Measure resource utilization under load:
+   - collector: CPU, RAM, disk I/O on the hot-store PV, S3 traffic;
+   - query: CPU, RAM under concurrent UI-style and cold-scan workloads.
+2. Confirm the contract-level load: ~6 MB/s of raw trace per cluster (`01-write-contract.md`), modeled as
+   ~500 pods at production-like per-pod rates on 3 collector replicas.
+3. Find the ceilings of a single collector replica:
+   - throughput ceiling (bytes/s and calls/s) — where backpressure engages and where seal/upload stop keeping up;
+   - connection-count ceiling — thousands of mostly idle agent connections (goroutine + pod-restart RAM cost).
+4. Verify long-run stability (soak): hot store does not grow monotonically, S3 does not accumulate unbounded small
+   files, the UI keeps serving old data.
+5. Characterize crashloop behavior (agent storms and collector restarts) and decide, from the numbers, whether extra
+   protection is needed.
+
+Non-goals: formal SLO certification, multi-region setups, profiling the Java agent itself.
+
+## 2. Key decisions (from the interview)
+
+| Topic | Decision |
+| --- | --- |
+| Load generator | Extend the existing k6 + xk6 generator (`backend/tools/load-generator`) and the Go emulator; no Java-classloader harness |
+| Payload | Synthetic, parameterized generation (not dump replay) |
+| Stands | Local k8s (OrbStack or kind) for development; a large k8s cluster for final numbers |
+| S3 | MinIO in-cluster on both stands |
+| Monitoring | Deployed as part of the harness via [qubership-monitoring-operator](https://github.com/Netcracker/qubership-monitoring-operator) |
+| Topology | 1 collector replica for ceiling runs; 3 replicas for contract and soak runs |
+| Production reference | ~200–500 profiled pods; contract run at 500, connection ceiling probed from 1000 up |
+| Soak | 24–48 h on real timers, plus a short run with accelerated timers |
+| Result format | Exploration report + automated invariants (no hard SLO thresholds) |
+| Artifacts | This doc + code under `backend/tools/load-generator/` (scenarios, stand manifests, checkers) |
+| First step | Stand + observability (pprof, dashboards, monitoring) before generator work |
+
+## 3. Load generator: close the fidelity gaps
+
+The current generator is faithful on the handshake (pod identity), 1 KB `RCV_DATA` framing, and ack reading, but it
+cannot exercise backpressure or crashloop paths. Gap analysis against the Java dumper
+(`dumper/src/main/java/com/netcracker/profiler/{Dumper,client/DefaultCollectorClient,dump/DumperThread}.java`):
+
+| # | Gap | Size | Needed for |
+| --- | --- | --- | --- |
+| G1 | No `trace` stream (the dominant-volume stream is commented out) | Large | throughput ceiling |
+| G2 | No cross-stream multiplexing: streams sent one at a time, no simulated app threads | Large | realistic ingest shape |
+| G3 | No `ACK_ERROR_MAGIC` handling: any non-OK ack is a generic failure | Large | backpressure tests |
+| G4 | No agent-style reconnect: no 10 s restart cadence, no `resetRequired=1` dictionary resend | Large | crashloop tests |
+| G5 | `resetRequired` hardwired to `false` in `CommandInitStream` | Small | crashloop tests |
+| G6 | Flush + ack after every `RCV_DATA` instead of the dumper's 5 s wall-clock flush | Medium | ack-path realism |
+| G7 | Single flat `calls` stream instead of four duration-class streams | Medium | seal / retention realism |
+| G8 | `sql`, `xml`, `suspend`, `callsDictionary`, `posDictionary` never sent | Medium | full-stream realism |
+| G9 | No load-shape knobs (bytes/s, calls/s, distributions); all pods send identical traffic | Medium | parameter sweeps |
+
+Implementation: a "virtual dumper" behavioral layer in Go (shared between `backend/tools/load-generator/pkg/cdt` and
+`backend/libs/emulator`) that mirrors the `DumperThread` + `DefaultCollectorClient` state machine:
+
+- N producer goroutines per pod model app threads; each fills a per-thread trace buffer with jittered delays, so
+  chunks from different threads interleave on the wire the way real `LocalBuffer` chunks do — this covers the
+  "real multiplexing of thread data" requirement directly, without classloaders;
+- a 5 s flush loop drains all streams round-robin and validates accumulated acks (G6);
+- `ACK_ERROR_MAGIC` triggers drop-window + reconnect with `resetRequired=1` and a configurable restart delay
+  (default 10 s, like `DUMPER_RESTART_INTERVAL`) (G3–G5);
+- duration-class binning for calls streams using the agent thresholds 100 ms / 500 ms / 3 s / 60 m (G7).
+
+Fidelity check: one calibration run compares the traffic profile (bytes/s per stream, ack cadence, reconnect
+behavior) of the virtual dumper against the real agent from `libs/tests/smoke_realagent`. If the profiles diverge
+materially, fix the emulator before trusting ceiling numbers.
+
+## 4. Workload model (synthetic)
+
+Generation is parameterized; every run records its parameter set so runs are comparable. Knobs:
+
+- pods, app threads per pod;
+- calls/s per thread; call duration distribution (log-normal, parameterized to hit the duration-class thresholds
+  with configurable shares);
+- stack depth distribution and dictionary cardinality (new dictionary entries per minute — drives dictionary stream
+  and collector RAM);
+- share and size of `sql` / `xml` payloads;
+- suspension events rate;
+- error-call share (feeds the any-error retention class).
+
+Dictionaries and stack shapes may borrow templates from captured dumps later if synthetic compressibility turns out
+unrealistic; timings and rates stay synthetic.
+
+## 5. Stands
+
+### 5.1 Local (OrbStack / kind)
+
+For scenario development, harness debugging, and rough profiling. Disk and S3 (MinIO on local SSD) are not
+representative; no final numbers from this stand.
+
+### 5.2 Large k8s cluster
+
+For final numbers: real network PVs, real node limits, kubelet crashloop backoff. MinIO in-cluster serves as S3 on
+both stands, so cold-read latency numbers carry a caveat: real object storage adds LIST/GET latency on top.
+
+### 5.3 Harness layout
+
+Everything reproducible from the repo, target directory `backend/tools/load-generator/`:
+
+- `deploy/` — a helmfile that composes the stand releases: profiler backend (the existing
+  `backend/charts/profiler-backend` chart), MinIO, qubership-monitoring-operator
+  (Prometheus/VictoriaMetrics + Grafana + node-exporter + cAdvisor) plus its CRs as a small local chart,
+  k6 runner, and (for T7) chaos tooling. Helmfile `environments:` carry the local-vs-large-cluster value
+  layers (storage class, PV sizes, limits, replicas); `needs:` orders operator → CRs. Helmfile covers only
+  the static stand; run orchestration (scenario parameters, ramp steps, fault injection, artifact
+  collection) is a separate script layer designed in phase 1;
+- `scenarios/` — k6 scripts per test below, parameterized via env;
+- `dashboards/` — Grafana dashboards as code (see §6);
+- `checker/` — the invariant checker (see §6);
+- `doc/` — runbooks: how to run each test on each stand, one or two commands per run.
+
+k6 writes its own metrics through Prometheus remote-write into the same monitoring stack, so generator-side and
+server-side series share a time axis.
+
+## 6. Observability additions (phase 1)
+
+1. **pprof endpoints** in `collect`, `query`, and `maintain`: `net/http/pprof` on the internal/metrics port, behind
+   an env flag (default off). Without it, CPU/RAM attribution is guesswork.
+2. **Grafana dashboard(s)** committed to the repo, covering:
+   - ingest: `profiler_ingest_bytes_total` rate, commands, refused bytes, decoder errors, active connections;
+   - backpressure: `backpressure_seal_paused`, `backpressure_ingest_paused`, `pending_parquet_bytes`;
+   - pipeline: `seal_queue_depth`, `upload_backlog`, `hot_window_lag_seconds`, janitor activity;
+   - resources: per-pod CPU, RSS, PV throughput/IOPS (cAdvisor/node-exporter), MinIO ops;
+   - query: request rates, latency percentiles, fan-out partial reasons, S3 LIST/GET counts;
+   - k6: sent bytes/s, VU count, reconnects, ack errors.
+3. **Invariant checker**: a Go tool polling `/metrics`, S3 (object count/size histogram per prefix), and a few
+   `/api/v1` queries during soak. It fails the run with a report when an invariant breaks (see §8).
+4. Gap to fill along the way: an explicit gauge for active agent connections and tracked pod-restarts if the current
+   `store_pods_size` proves insufficient to attribute RAM growth.
+
+## 7. Test program
+
+Order within each test: start small, scale in steps, hold each step until metrics flatten, record the step where a
+saturation signal fires.
+
+### T1. Contract-level run (green-path confirmation)
+
+- 3 collector replicas, 500 pods, per-pod rate sized so the cluster total is ~6 MB/s raw trace; 2–4 h.
+- Expect: no `ingest_paused`, `upload_backlog` bounded, `hot_window_lag_seconds` stable, CPU/RAM well under limits.
+- Output: baseline utilization table (goal (a) of the effort) and headroom estimate.
+
+### T2. Single-replica throughput ceiling
+
+- 1 replica; ramp bytes/s (more pods, then more calls/s per pod) until either `ingest_paused` fires, seal/upload
+  stop keeping up (`upload_backlog` grows without bound), or ack latency degrades.
+- Sweep along one axis at a time: total bytes/s, calls/s (small calls vs large), dictionary churn.
+- Output: ceiling in MB/s and calls/s, the limiting stage (ingest decode, SQLite index, seal, upload), CPU/heap
+  profiles at 70% and 100% of ceiling.
+
+### T3. Connection-count ceiling
+
+- 1 replica; thousands of nearly idle connections (keep-alive traffic only), ramp from 1000 upward.
+- Measure RAM and goroutine cost per connection and per tracked pod-restart; find where accept latency, RAM
+  (`PROFILER_MEM_BUDGET` pressure), or file-descriptor limits bite.
+- Note: there is no accept-side connection cap today (`libs/server/services.go`); record what failure looks like.
+
+### T4. Soak
+
+- 3 replicas, contract-level load, 24–48 h on real timers, plus background query load (see T6).
+- A separate short soak (2–4 h) with accelerated timers (retention, TTL, compaction, WAL purge grace scaled to
+  minutes) to exercise several full data-lifecycle cycles: seal → upload → janitor eviction → maintain compaction →
+  TTL deletion.
+- Invariant checker runs throughout (§8).
+
+### T5. Crashloop and restarts
+
+1. **Agent reconnect storm**: N pods in a tight connect → dictionary → little data → disconnect loop (simulating
+   CrashLoopBackOff of profiled apps). Measure growth of `store_pods_size`, RAM, pod-restart directories and WAL
+   sets on the PV, small-file production in S3; verify the 1 h `WAL_PURGE_GRACE` backlog stays bounded.
+2. **Collector restart under load**: kill one of 3 replicas mid-ingest. Measure WAL recovery time vs accumulated
+   data volume, time to READY, agent failover behavior, data loss (must stay within the documented unacked-window
+   loss), query `partial_reasons` during the outage.
+3. **Collector crashloop**: repeated kills (every 1–2 min, 10+ cycles). Verify recovery time does not grow cycle
+   over cycle, no orphan parquet/WAL accumulation, startup gate holds the TCP listener down until READY.
+4. Based on the results, decide whether protections are warranted (per-pod-key reconnect rate limit, cap on tracked
+   pod-restarts, aggressive purge of near-empty pod-restarts) — design them as a separate follow-up, not in this
+   campaign.
+
+### T6. Query load
+
+- **UI profile** (during soak and contract runs): background 2–5 virtual users — `/api/v1/calls` over the last
+  hour, open a call (`/calls/{pk}`, `/calls/{pk}/trace`), `/tree`; plus an "incident" burst of 20 users on wide
+  ranges. (Defaults chosen by us; adjust when real usage data appears.)
+- **Cold-heavy profile**: wide ranges up to the 6 h guard, deep pagination (every page re-scans S3), against a
+  bucket state with many small pre-compaction files.
+- Measure query CPU/RAM (goal (b)), fan-out tail latency vs replica count, S3 LIST/GET volume, guard behavior
+  (`MAX_SCAN_FILES` / `MAX_SCAN_BYTES` / wide-range limit), and the reverse effect: does hot-read traffic on a
+  loaded replica push ingest into backpressure.
+
+### T7. Fault injection
+
+- **S3 unavailable / slow**: stop or throttle MinIO for 5–30 min under contract load. Expected chain:
+  `pending_parquet_bytes` grows → `SealPaused` at half budget → `IngestPaused` at `PENDING_UPLOAD_MAX_BYTES` →
+  agents get `ACK_ERROR` and reconnect-loop; after recovery the backlog drains and losses stay within the counted
+  `ingest_refused_bytes_total`. Requires generator gaps G3–G4 closed.
+- **Slow / small PV**: throttle IOPS or shrink the PV below the 10 GB segment budget; verify janitor class-aware
+  eviction and behavior at real disk pressure (ENOSPC path).
+- **Agent↔collector network faults**: latency, loss, and connection resets (tc or chaos-mesh); verify socket
+  deadlines (read 40 s, write 2 s) and the reconnect storm after a network blip.
+
+## 8. Soak invariants (automated)
+
+The checker fails the run when any of these break:
+
+1. Hot-store PV usage oscillates but does not grow monotonically over any 2 h window (after warm-up).
+2. `backpressure_ingest_paused` never sticks: total paused time < 1% of the run at contract load.
+3. `ingest_refused_bytes_total` stays 0 at contract load (nonzero only in T2/T7 by design).
+4. `hot_window_lag_seconds` stays below the seal interval + grace budget.
+5. S3 object count per hour prefix stays bounded after compaction; small-file (< 1 MB) share trends down once
+   maintain has run.
+6. Collector RSS stays below the pod limit with no monotonic growth (leak signal); goroutine count flat at constant
+   connection count.
+7. Sampled UI queries keep answering: fresh data visible within the hot window, old data (pre-soak marker calls)
+   still retrievable from cold until its TTL.
+8. No pod restarts of backend components other than those injected by the scenario.
+
+## 9. Phasing
+
+1. **Stand + observability** (first, per interview): harness manifests, monitoring-operator deployment, pprof
+   endpoints, dashboards, checker skeleton. Exit: a contract-shaped run on the local stand is fully observable.
+2. **Generator fidelity**: virtual-dumper layer (G1–G6), duration classes and shape knobs (G7–G9), calibration
+   against the real agent.
+3. **Ceiling campaign**: T2, T3 on the large cluster; first report draft.
+4. **Contract + soak**: T1, T4, T6 background load; invariant checker hardened.
+5. **Crashloop + faults**: T5, T7; protection-mechanism decision.
+6. **Report**: consolidated numbers for goals (a) and (b), headroom statements, follow-up list (including the
+   deferred read-side items from `02-read-contract.md` §5.4/§7.1 if cold-scan numbers demand them).
+
+## 10. Risks and open questions
+
+- MinIO understates real object-storage latency; cold-read conclusions need a caveat or a later spot-check against
+  a real S3 endpoint.
+- Synthetic payloads may compress differently from production traffic; the dictionary/stack template fallback (§4)
+  is the mitigation.
+- k6 runner resources on the large cluster: at 1000+ virtual pods with trace streams the generator itself needs
+  sizing (several CPUs, pinned nodes) so it does not become the bottleneck being measured.
+- Accelerated-timer soak can mask slow leaks; that is why the real-timer 24–48 h run stays mandatory.
