@@ -88,6 +88,12 @@ type (
 
 		ShutdownDrainGrace time.Duration `envconfig:"PROFILER_SHUTDOWN_DRAIN_GRACE" default:"30s"`
 
+		// PprofEnabled mounts net/http/pprof on the internal API port for
+		// load tests and incident debugging (load-testing-plan.md §6).
+		// Default off: profiles cost CPU when taken and have no place in
+		// routine operation. The env name is an implementation choice.
+		PprofEnabled bool `envconfig:"PROFILER_PPROF_ENABLED"`
+
 		S3 S3
 	}
 
@@ -114,6 +120,12 @@ type (
 
 		ShutdownDrainGrace time.Duration `envconfig:"PROFILER_SHUTDOWN_DRAIN_GRACE" default:"30s"`
 
+		// PprofEnabled mounts net/http/pprof on the external API port —
+		// query has no internal port (04 §12), so the profiles ride the
+		// same listener as /api/v1. The ingress publishes /api/v1 only, so
+		// /debug/pprof stays cluster-internal; still, default off.
+		PprofEnabled bool `envconfig:"PROFILER_PPROF_ENABLED"`
+
 		// DumpsCollectorURL is the dumps-collector base URL, e.g.
 		// "https://dumps-collector-<namespace>.<cloud-public-host>" — a
 		// separate deployment with its own ingress, so there is no in-cluster
@@ -139,6 +151,10 @@ type (
 		// TimeBucket must mirror the collector's value: the settled check
 		// needs the bucket end and the object key carries only the start.
 		TimeBucket time.Duration `envconfig:"PROFILER_TIME_BUCKET" default:"5m"`
+
+		// PprofEnabled mounts net/http/pprof on the metrics port in loop
+		// mode; the one-shot --run-now mode binds nothing. Default off.
+		PprofEnabled bool `envconfig:"PROFILER_PPROF_ENABLED"`
 
 		CompactionMinAge      time.Duration `envconfig:"PROFILER_COMPACTION_MIN_AGE" default:"30m"`
 		CompactionMinFiles    int           `envconfig:"PROFILER_COMPACTION_MIN_FILES" default:"4"`
