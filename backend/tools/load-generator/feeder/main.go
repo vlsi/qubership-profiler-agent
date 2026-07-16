@@ -1,17 +1,13 @@
-// Command feeder drives a synthetic, contract-shaped trickle of agent traffic
-// into a collector: N emulated pods connect over the real wire protocol and
-// keep sending dictionary, trace, calls, and suspend streams on an interval.
-//
-// It exists to light up the load-stand observability (load-testing-plan.md
-// §9 phase 1) — dashboards, /metrics, pprof — before the phase-2 virtual
-// dumper delivers the real parameterized generator. It makes no attempt at
-// dumper fidelity: one stream at a time, no backpressure handling, no
-// reconnect cadence (§3 G1–G9 stay open).
+// Command feeder drives N virtual dumpers into a collector: every pod is one
+// emulated agent running the full DumperThread state machine
+// (backend/docs/design/virtual-dumper.md) — seven streams, 5 s flush cycles,
+// reconnects with dictionary resend — with the load shape parameterized per
+// load-testing-plan.md §4.
 //
 // Usage against the local stand:
 //
 //	kubectl -n profiler-load port-forward svc/profiler-backend-collector-agent 1715:1715 &
-//	go run ./tools/load-generator/feeder -addr localhost:1715 -pods 20 -interval 5s -duration 15m
+//	go run ./tools/load-generator/feeder -addr localhost:1715 -pods 20 -threads 4 -calls-per-sec 5 -duration 15m
 package main
 
 import (
@@ -21,36 +17,54 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/emulator"
+	"github.com/Netcracker/qubership-profiler-backend/libs/emulator/vdumper"
 	profio "github.com/Netcracker/qubership-profiler-backend/libs/io"
 	"github.com/Netcracker/qubership-profiler-backend/libs/log"
-	model "github.com/Netcracker/qubership-profiler-backend/libs/protocol"
-	"github.com/Netcracker/qubership-profiler-backend/libs/tests/helpers/wire"
 )
-
-const (
-	methodHandle = 0 // "com.example.Api.handle"
-	methodQuery  = 1 // "com.example.Db.query"
-	tagRequestID = 2 // "request.id"
-)
-
-var dictWords = []string{"com.example.Api.handle", "com.example.Db.query", "request.id"}
 
 func main() {
 	var (
 		addr      = flag.String("addr", "localhost:1715", "collector agent address")
 		pods      = flag.Int("pods", 20, "emulated pods (one TCP connection each)")
-		interval  = flag.Duration("interval", 5*time.Second, "per-pod send cadence")
 		duration  = flag.Duration("duration", 15*time.Minute, "total run time; 0 runs until SIGINT")
 		namespace = flag.String("namespace", "load", "emulated k8s namespace")
 		service   = flag.String("service", "load-svc", "emulated service name")
 		logLevel  = flag.String("log-level", "info", "trace|debug|info|warning|error")
+		report    = flag.Duration("report", 30*time.Second, "stats report cadence; 0 disables")
+		seed      = flag.Int64("seed", 1, "workload reproducibility seed")
+
+		threads     = flag.Int("threads", 8, "producer goroutines per pod (app threads); 0 keeps pods idle")
+		callsPerSec = flag.Float64("calls-per-sec", 5, "root calls per second per thread, jittered")
+		dictInitial = flag.Int("dict-initial", 2000, "dictionary words known at startup")
+		dictGrowth  = flag.Float64("dict-growth-per-min", 10, "new dictionary words per minute")
+
+		durThresholds = flag.String("duration-thresholds", "100ms,1s,10s", "duration-class thresholds")
+		durShares     = flag.String("duration-shares", "0.90,0.07,0.025,0.005",
+			"duration-class shares; one more than thresholds")
+		stackDepth  = flag.Int("stack-depth", 10, "mean stack depth (geometric)")
+		sqlShare    = flag.Float64("sql-share", 0.2, "share of calls carrying an sql value")
+		sqlBytes    = flag.Int("sql-bytes", 1024, "mean sql value size")
+		sqlDedup    = flag.Float64("sql-dedup", 0.9, "sql value reuse probability (dedup hit rate)")
+		xmlShare    = flag.Float64("xml-share", 0.05, "share of calls carrying an xml value")
+		xmlBytes    = flag.Int("xml-bytes", 4096, "mean xml value size")
+		suspendRate = flag.Float64("suspend-rate", 0.5, "suspend pauses per second per pod")
+		errorShare  = flag.Float64("error-share", 0.01, "share of calls tagged call.red (any_error class)")
 	)
 	flag.Parse()
+
+	workload, err := buildWorkload(*durThresholds, *durShares, *stackDepth,
+		*sqlShare, *sqlBytes, *sqlDedup, *xmlShare, *xmlBytes, *suspendRate, *errorShare, *dictGrowth)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -59,122 +73,165 @@ func main() {
 		ctx, cancel = context.WithTimeout(ctx, *duration)
 		defer cancel()
 	}
-	ctx, err := log.SetLevelString(ctx, *logLevel)
+	ctx, err = log.SetLevelString(ctx, *logLevel)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
-	fmt.Printf("feeder: %d pods -> %s every %s for %s\n", *pods, *addr, *interval, *duration)
+	stats := newAggStats()
+	if *report > 0 {
+		go stats.reportLoop(ctx, *report)
+	}
+
+	fmt.Printf("feeder: %d pods × %d threads × %.1f calls/s -> %s for %s\n",
+		*pods, *threads, *callsPerSec, *addr, *duration)
 	var wg sync.WaitGroup
 	for i := 0; i < *pods; i++ {
+		cfg := vdumper.Config{
+			Namespace: *namespace,
+			Service:   *service,
+			PodName:   fmt.Sprintf("%s-%d", *service, i),
+			Connection: emulator.ConnectionOpts{
+				ProtocolAddress: *addr,
+				Timeout: profio.TcpTimeout{
+					ConnectTimeout: 10 * time.Second,
+					SessionTimeout: 24 * time.Hour,
+					ReadTimeout:    30 * time.Second,
+					WriteTimeout:   5 * time.Second,
+				},
+			},
+			DictionaryInitial:    *dictInitial,
+			ThreadsPerPod:        *threads,
+			CallsPerSecPerThread: *callsPerSec,
+			Seed:                 *seed + int64(i)*1000,
+			Workload:             workload,
+			Stats:                stats,
+		}
 		wg.Add(1)
-		go func(i int) {
+		go func(i int, cfg vdumper.Config) {
 			defer wg.Done()
-			pod := fmt.Sprintf("%s-%d", *service, i)
-			// Stagger the starts so sends spread across the interval.
-			jitter := time.Duration(rand.Int63n(int64(*interval)))
+			// Stagger the connects so a big fleet does not storm the listener.
+			jitter := time.Duration(rand.Int63n(int64(2 * time.Second))) //nolint:gosec // startup spread, not crypto
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(jitter):
 			}
-			if err := feedPod(ctx, *addr, *namespace, *service, pod, *interval); err != nil && ctx.Err() == nil {
-				fmt.Printf("feeder: pod %s: %v\n", pod, err)
+			if err := vdumper.New(cfg).Run(ctx); err != nil && ctx.Err() == nil {
+				fmt.Printf("feeder: pod %s stopped: %v\n", cfg.PodName, err)
 			}
-		}(i)
+		}(i, cfg)
 	}
 	wg.Wait()
+	stats.report("final")
 	fmt.Println("feeder: done")
 }
 
-// feedPod holds one agent connection and sends a small burst every interval.
-// Any send error ends the pod — phase 1 observes the green path; reconnect
-// behavior belongs to the phase-2 generator.
-func feedPod(ctx context.Context, addr, namespace, service, pod string, interval time.Duration) error {
-	ac := emulator.PrepareAgent(ctx, nil, nil, pod)
-	err := ac.Prepare(emulator.ConnectionOpts{
-		ProtocolAddress: addr,
-		Timeout: profio.TcpTimeout{
-			ConnectTimeout: 10 * time.Second,
-			SessionTimeout: 24 * time.Hour,
-			ReadTimeout:    30 * time.Second,
-			WriteTimeout:   5 * time.Second,
-		},
-	}).Connect()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ac.Close() }()
-	if err := ac.InitializeConnection(model.PROTOCOL_VERSION_V3, namespace, service, pod); err != nil {
-		return err
-	}
+func buildWorkload(thresholds, shares string, stackDepth int,
+	sqlShare float64, sqlBytes int, sqlDedup, xmlShare float64, xmlBytes int,
+	suspendRate, errorShare, dictGrowth float64) (vdumper.Workload, error) {
 
-	seq := map[string]int{}
-	send := func(stream string, data []byte) error {
-		handle, err := ac.CommandInitStream(stream, seq[stream], false)
+	var spec vdumper.DurationSpec
+	for _, s := range strings.Split(thresholds, ",") {
+		d, err := time.ParseDuration(strings.TrimSpace(s))
 		if err != nil {
-			return err
+			return vdumper.Workload{}, fmt.Errorf("bad -duration-thresholds %q: %w", s, err)
 		}
-		seq[stream]++
-		for pos := 0; pos < len(data); pos += emulator.MaxBufSize {
-			end := min(pos+emulator.MaxBufSize, len(data))
-			if err := ac.CommandRcvData(stream, handle, data[pos:end]); err != nil {
-				return err
-			}
-		}
-		if err := ac.Flush(); err != nil {
-			return err
-		}
-		return ac.WaitForAcks()
+		spec.Thresholds = append(spec.Thresholds, d)
 	}
-
-	if err := send(model.StreamDictionary, wire.DictionaryStream(dictWords)); err != nil {
-		return err
+	total := 0.0
+	for _, s := range strings.Split(shares, ",") {
+		var v float64
+		if _, err := fmt.Sscanf(strings.TrimSpace(s), "%g", &v); err != nil {
+			return vdumper.Workload{}, fmt.Errorf("bad -duration-shares %q: %w", s, err)
+		}
+		spec.Shares = append(spec.Shares, v)
+		total += v
 	}
+	if len(spec.Shares) != len(spec.Thresholds)+1 {
+		return vdumper.Workload{}, fmt.Errorf("-duration-shares needs %d values for %d thresholds",
+			len(spec.Thresholds)+1, len(spec.Thresholds))
+	}
+	if total < 0.99 || total > 1.01 {
+		return vdumper.Workload{}, fmt.Errorf("-duration-shares must sum to 1, got %g", total)
+	}
+	return vdumper.Workload{
+		Duration:               spec,
+		StackDepthMean:         stackDepth,
+		RequestIdShare:         1.0,
+		Sql:                    vdumper.BigParamSpec{Share: sqlShare, MeanBytes: sqlBytes, DedupHitRate: sqlDedup},
+		Xml:                    vdumper.BigParamSpec{Share: xmlShare, MeanBytes: xmlBytes},
+		SuspendPerSec:          suspendRate,
+		ErrorShare:             errorShare,
+		DictionaryGrowthPerMin: dictGrowth,
+	}, nil
+}
 
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
+// aggStats aggregates the per-pod StatsListener events across the fleet and
+// prints periodic totals — enough to eyeball a run without Prometheus.
+type aggStats struct {
+	mu          sync.Mutex
+	bytes       map[string]uint64
+	connects    int
+	disconnects int
+	ackErrors   int
+	dropped     int
+	started     time.Time
+}
+
+func newAggStats() *aggStats {
+	return &aggStats{bytes: map[string]uint64{}, started: time.Now()}
+}
+
+func (a *aggStats) Connected(int) { a.mu.Lock(); defer a.mu.Unlock(); a.connects++ }
+func (a *aggStats) Disconnected(_ int, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.disconnects++
+}
+func (a *aggStats) StreamOpened(string, int, bool) {}
+func (a *aggStats) BytesSent(stream string, n int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.bytes[stream] += uint64(n)
+}
+func (a *aggStats) AckError() { a.mu.Lock(); defer a.mu.Unlock(); a.ackErrors++ }
+func (a *aggStats) Dropped(n int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.dropped += n
+}
+
+func (a *aggStats) reportLoop(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-tick.C:
-		}
-		base := time.Now().Add(-2 * time.Second).UnixMilli()
-		// Durations spread across the clean-tier thresholds (100ms / 1s / 10s)
-		// so every retention class sees rows.
-		durShort := int64(20 + rand.Intn(70))
-		durNormal := int64(150 + rand.Intn(700))
-		durLong := int64(1_100 + rand.Intn(2_000))
-		trace, offs := wire.TraceStream(base-1_000, []wire.TraceChunk{
-			{ThreadId: 11, StartMs: base + 5, Events: []wire.TraceEvent{
-				wire.Enter(0, methodHandle),
-				wire.Tag(1, tagRequestID, fmt.Sprintf("req-%s-%d", pod, seq[model.StreamTrace])),
-				wire.Enter(2, methodQuery), wire.Exit(int(durShort)),
-				wire.Exit(int(durNormal)),
-			}},
-			{ThreadId: 22, StartMs: base + 40, Events: []wire.TraceEvent{
-				wire.Enter(0, methodQuery), wire.Exit(int(durLong)),
-			}},
-		})
-		calls := []wire.CallRecord{
-			{DeltaMs: 5, Method: methodHandle, DurationMs: int(durNormal), ChildCalls: 1, ThreadName: "http-1",
-				TraceFileIndex: 1, BufferOffset: int(offs[0]), RecordIndex: 0,
-				Params: map[int][]string{tagRequestID: {fmt.Sprintf("req-%s-%d", pod, seq[model.StreamTrace])}}},
-			{DeltaMs: 40, Method: methodQuery, DurationMs: int(durLong), ThreadName: "http-2",
-				TraceFileIndex: 1, BufferOffset: int(offs[1]), RecordIndex: 0},
-		}
-		if err := send(model.StreamTrace, trace); err != nil {
-			return err
-		}
-		if err := send(model.StreamCalls, wire.CallsStreamRecords(base, calls)); err != nil {
-			return err
-		}
-		if err := send(model.StreamSuspend, wire.SuspendStream(base, []wire.SuspendEvent{
-			{DeltaMs: 10, AmountMs: 2},
-		})); err != nil {
-			return err
+			return
+		case <-t.C:
+			a.report("stats")
 		}
 	}
+}
+
+func (a *aggStats) report(prefix string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	elapsed := time.Since(a.started).Seconds()
+	var total uint64
+	streams := make([]string, 0, len(a.bytes))
+	for s, n := range a.bytes {
+		streams = append(streams, s)
+		total += n
+	}
+	sort.Strings(streams)
+	var b strings.Builder
+	fmt.Fprintf(&b, "feeder %s: %.0fs, %.1f KB/s total, connects %d, reconnect-losses %d, ack-errors %d, dropped chunks %d\n",
+		prefix, elapsed, float64(total)/elapsed/1024, a.connects, a.disconnects, a.ackErrors, a.dropped)
+	for _, s := range streams {
+		fmt.Fprintf(&b, "  %-12s %10.1f KB (%.2f KB/s)\n", s, float64(a.bytes[s])/1024, float64(a.bytes[s])/elapsed/1024)
+	}
+	fmt.Print(b.String())
 }
