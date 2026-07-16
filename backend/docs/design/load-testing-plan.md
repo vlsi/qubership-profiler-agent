@@ -54,12 +54,13 @@ cannot exercise backpressure or crashloop paths. Gap analysis against the Java d
 | G4 | No agent-style reconnect: no 10 s restart cadence, no `resetRequired=1` dictionary resend | Large | crashloop tests |
 | G5 | `resetRequired` hardwired to `false` in `CommandInitStream` | Small | crashloop tests |
 | G6 | Flush + ack after every `RCV_DATA` instead of the dumper's 5 s wall-clock flush | Medium | ack-path realism |
-| G7 | Single flat `calls` stream instead of four duration-class streams | Medium | seal / retention realism |
-| G8 | `sql`, `xml`, `suspend`, `callsDictionary`, `posDictionary` never sent | Medium | full-stream realism |
+| G7 | No duration-class shaping: near-identical durations every burst (the `calls[...]` range files are local-dump-only and never cross the wire; the collector bins the flat `calls` stream itself) | Medium | seal / retention realism |
+| G8 | `sql`, `xml`, `params` never sent (`callsDictionary` is local-dump-only; `posDictionary` is V3-only and the collector answers V2 — a faithful agent sends neither) | Medium | full-stream realism |
 | G9 | No load-shape knobs (bytes/s, calls/s, distributions); all pods send identical traffic | Medium | parameter sweeps |
 
 Implementation: a "virtual dumper" behavioral layer in Go (shared between `backend/tools/load-generator/pkg/cdt` and
-`backend/libs/emulator`) that mirrors the `DumperThread` + `DefaultCollectorClient` state machine:
+`backend/libs/emulator`) that mirrors the `DumperThread` + `DefaultCollectorClient` state machine. The behavioral
+contract — wire rules, state machine, knobs, calibration method — lives in `virtual-dumper.md`:
 
 - N producer goroutines per pod model app threads; each fills a per-thread trace buffer with jittered delays, so
   chunks from different threads interleave on the wire the way real `LocalBuffer` chunks do — this covers the
@@ -67,7 +68,9 @@ Implementation: a "virtual dumper" behavioral layer in Go (shared between `backe
 - a 5 s flush loop drains all streams round-robin and validates accumulated acks (G6);
 - `ACK_ERROR_MAGIC` triggers drop-window + reconnect with `resetRequired=1` and a configurable restart delay
   (default 10 s, like `DUMPER_RESTART_INTERVAL`) (G3–G5);
-- duration-class binning for calls streams using the agent thresholds 100 ms / 500 ms / 3 s / 60 m (G7).
+- duration-distribution shaping over configurable class thresholds (G7): the collector bins the flat `calls` stream
+  itself via `model.ClassifyDuration` (default tiers 100 ms / 1 s / 10 s) plus the `call.red` error marker; the
+  agent-side thresholds 100 ms / 500 ms / 3 s / 60 m stay available as a distribution preset.
 
 Fidelity check: one calibration run compares the traffic profile (bytes/s per stream, ack cadence, reconnect
 behavior) of the virtual dumper against the real agent from `libs/tests/smoke_realagent`. If the profiles diverge
