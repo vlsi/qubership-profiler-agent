@@ -1,7 +1,7 @@
 # Load-testing plan: Go profiler backend
 
-Status: phases 1 (stand + observability) and 2 (generator fidelity) done 2026-07-16, see §11–§12; phase 3
-(ceiling campaign) is next. Owner: @vlsi.
+Status: phases 1–2 done 2026-07-16 (§11–§12); the phase-3 harness is done and smoke-validated on the local stand
+2026-07-16 (§13) — the ceiling numbers themselves wait for the large cluster. Owner: @vlsi.
 
 This plan defines the load tests for the Go backend (`backend/apps/profiler-backend` and `backend/libs`): what we
 measure, on which stands, with which generator, and what counts as a pass. The outcome is an engineering report
@@ -317,3 +317,39 @@ mis-frame multi-phrase streams the real agent produces.
 
 Carried into phase 3: the k6 runner stays parked; wiring `pkg/cdt` onto the virtual dumper is the first step of the
 ceiling campaign.
+
+## 13. Phase 3 status (harness done 2026-07-16; numbers pending)
+
+The large cluster (§5.2) was not available, so this phase delivered the complete ceiling harness, validated it with
+smoke runs on OrbStack, and stopped before taking numbers. Nothing measured locally counts as a ceiling; the report
+draft (`load-testing-report.md`) carries the placeholders and cites every smoke run.
+
+Shipped:
+
+- **k6 on the virtual dumper**: `pkg/cdt` rewritten as the fleet module — `runFleet` drives N vdumpers per VU
+  (1 for T2, ~100 for T3), StatsListener maps to `k6_vdumper_*` series with three latency trends of fixed semantics
+  (`tcp_connect_time`, `session_ready_time` — dial to all seven streams open, `ack_flush_time` — flush-cycle drains
+  only). The dump-replay path is gone (`libs/generator`, captured-dump scenarios, docs, wireshark.lua); the image
+  builds from synthetic traffic only, via a plain-`go build` custom k6 binary (`k6runner/`, no xk6 CLI), with
+  `go-metrics` folded into the root Go module. The k6 dashboard was reworked for the new series and checked against
+  live series (carried item from §11); k6 exports Time trends in seconds over remote write.
+- **Run orchestration** (§5.3 script layer): contract in `tools/load-generator/doc/run-orchestration.md`, engine in
+  `tools/load-generator/runner`. Externally-controlled k6 scaled over the REST API (connections survive steps),
+  level confirmation before every hold (`k6_vus`, and the connection gauge for T3), plateau detection by relative
+  slope, detectors with the `pending_parquet_bytes`-primary seal/upload rule, the §10 generator-CPU guard, pprof at
+  70%/100% of the ceiling, and frozen-spec artifacts (`spec.yaml`, `steps.jsonl`, series exports, `result.json`)
+  under gitignored `runs/`. Spec templates: `specs/t2-bytes.yaml`, `specs/t3-connections.yaml`; runbook:
+  `doc/ceiling-runs.md`.
+- **Connection gauge** (§6.4): decided the goroutine proxy is not enough for T3 RAM attribution. Added
+  `profiler_ingest_active_connections` plus `connects_total` / `disconnects_total` with locked-together semantics
+  (connects on successful RegisterPod; disconnects only for registered connections, shutdown included), tests for
+  normal close / failed handshake / collector stop, and an ingest-dashboard panel next to the goroutine proxy.
+
+Smoke-validated on OrbStack (details and run ids in the report draft): a 3-step T2 ramp with plateaus, linear
+ingest, and all six pprof artifacts; a forced-backpressure run (8 MiB pending budget) firing `ingest-paused` +
+`refused-bytes` + generator-side `ack-errors` on one step; a T3 ramp of idle fleets confirming through the gauge
+(300/600 connections, ~12 goroutines and ~8 fds per connection locally).
+
+Waiting on the large cluster: the actual T2 sweeps (bytes/s, calls/s small/large, dictionary churn), the T3 ramp
+from 1000 connections up with the failure-shape record, runner node pinning + sizing (§10), and the report numbers.
+§8.5–§8.8 checker stubs stay untouched (none of the smoke runs hit S3/PV limits).
