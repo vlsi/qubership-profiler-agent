@@ -163,9 +163,11 @@ func (d *VirtualDumper) runIncarnation(ctx context.Context, incarnation int) err
 	var t Transport = ac.Prepare(d.cfg.Connection)
 	defer func() { _ = t.Close() }()
 
+	dialStart := d.clock.Now()
 	if err := t.Connect(); err != nil {
 		return err
 	}
+	d.stats.TcpConnected(d.clock.Now().Sub(dialStart))
 	if err := t.InitializeConnection(model.PROTOCOL_VERSION_V3,
 		d.cfg.Namespace, d.cfg.Service, d.cfg.PodName); err != nil {
 		return err
@@ -191,6 +193,7 @@ func (d *VirtualDumper) runIncarnation(ctx context.Context, incarnation int) err
 			return err
 		}
 	}
+	d.stats.SessionReady(d.clock.Now().Sub(dialStart))
 	d.stats.Connected(incarnation)
 
 	return d.pump(ctx, t)
@@ -463,9 +466,11 @@ func (d *VirtualDumper) flushCycle(t Transport) error {
 		if err := s.flushTail(); err != nil {
 			return err
 		}
+		drainStart := d.clock.Now()
 		if err := t.Flush(); err != nil {
 			return err
 		}
+		d.stats.AckFlushed(s.name, d.clock.Now().Sub(drainStart))
 	}
 	return nil
 }

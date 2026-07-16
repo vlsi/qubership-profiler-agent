@@ -180,8 +180,11 @@ func (d *VirtualDumper) Run(ctx context.Context) error
 ```
 
 - `Clock` abstracts `Now`/timers so lifecycle tests and the accelerated-timer soak (§7 T4) run on a fake clock.
-- `StatsListener` receives bytes per stream, `RCV_DATA`/ack counts, ack errors, reconnects, and drop counts; the
-  feeder exposes them as logs/metrics now, the k6 module maps them to k6 samples in phase 3.
+- `StatsListener` receives bytes per stream, `RCV_DATA`/ack counts, ack errors, reconnects, drop counts, and three
+  latency series with fixed semantics: `TcpConnected` (dial only), `SessionReady` (dial start → handshake answered and
+  all seven streams open — the T3 accept-latency signal), and `AckFlushed` (per-stream synchronous ack drain inside the
+  regular flush cycle only, excluding rotations and the params one-shot — the T2 ack-degradation signal). The feeder
+  exposes them as logs/metrics; the k6 module maps them to k6 samples in phase 3.
 - Producers → bounded chunk queue → dumper loop. Queue overflow during a drop window increments a drop counter;
   producers never block on a down dumper.
 - Encoding primitives (`putVarString` with UTF-16 code-unit lengths, varints, zig-zag, fixed ints) move from

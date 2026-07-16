@@ -138,29 +138,9 @@ func buildWorkload(thresholds, shares string, stackDepth int,
 	sqlShare float64, sqlBytes int, sqlDedup, xmlShare float64, xmlBytes int,
 	suspendRate, errorShare, dictGrowth float64) (vdumper.Workload, error) {
 
-	var spec vdumper.DurationSpec
-	for _, s := range strings.Split(thresholds, ",") {
-		d, err := time.ParseDuration(strings.TrimSpace(s))
-		if err != nil {
-			return vdumper.Workload{}, fmt.Errorf("bad -duration-thresholds %q: %w", s, err)
-		}
-		spec.Thresholds = append(spec.Thresholds, d)
-	}
-	total := 0.0
-	for _, s := range strings.Split(shares, ",") {
-		var v float64
-		if _, err := fmt.Sscanf(strings.TrimSpace(s), "%g", &v); err != nil {
-			return vdumper.Workload{}, fmt.Errorf("bad -duration-shares %q: %w", s, err)
-		}
-		spec.Shares = append(spec.Shares, v)
-		total += v
-	}
-	if len(spec.Shares) != len(spec.Thresholds)+1 {
-		return vdumper.Workload{}, fmt.Errorf("-duration-shares needs %d values for %d thresholds",
-			len(spec.Thresholds)+1, len(spec.Thresholds))
-	}
-	if total < 0.99 || total > 1.01 {
-		return vdumper.Workload{}, fmt.Errorf("-duration-shares must sum to 1, got %g", total)
+	spec, err := vdumper.ParseDurationSpec(thresholds, shares)
+	if err != nil {
+		return vdumper.Workload{}, err
 	}
 	return vdumper.Workload{
 		Duration:               spec,
@@ -177,13 +157,37 @@ func buildWorkload(thresholds, shares string, stackDepth int,
 // aggStats aggregates the per-pod StatsListener events across the fleet and
 // prints periodic totals — enough to eyeball a run without Prometheus.
 type aggStats struct {
-	mu          sync.Mutex
-	bytes       map[string]uint64
-	connects    int
-	disconnects int
-	ackErrors   int
-	dropped     int
-	started     time.Time
+	mu           sync.Mutex
+	bytes        map[string]uint64
+	connects     int
+	disconnects  int
+	ackErrors    int
+	dropped      int
+	sessionReady durAgg
+	ackFlush     durAgg
+	started      time.Time
+}
+
+// durAgg keeps enough of a duration series for an average and a maximum.
+type durAgg struct {
+	n     int
+	total time.Duration
+	max   time.Duration
+}
+
+func (a *durAgg) add(d time.Duration) {
+	a.n++
+	a.total += d
+	if d > a.max {
+		a.max = d
+	}
+}
+
+func (a durAgg) String() string {
+	if a.n == 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("avg %s, max %s", a.total/time.Duration(a.n), a.max)
 }
 
 func newAggStats() *aggStats {
@@ -207,6 +211,17 @@ func (a *aggStats) Dropped(n int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.dropped += n
+}
+func (a *aggStats) TcpConnected(time.Duration) {}
+func (a *aggStats) SessionReady(d time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sessionReady.add(d)
+}
+func (a *aggStats) AckFlushed(_ string, d time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.ackFlush.add(d)
 }
 
 func (a *aggStats) reportLoop(ctx context.Context, every time.Duration) {
@@ -236,6 +251,7 @@ func (a *aggStats) report(prefix string) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "feeder %s: %.0fs, %.1f KB/s total, connects %d, reconnect-losses %d, ack-errors %d, dropped chunks %d\n",
 		prefix, elapsed, float64(total)/elapsed/1024, a.connects, a.disconnects, a.ackErrors, a.dropped)
+	fmt.Fprintf(&b, "  session-ready %s; ack-flush %s\n", a.sessionReady, a.ackFlush)
 	for _, s := range streams {
 		fmt.Fprintf(&b, "  %-12s %10.1f KB (%.2f KB/s)\n", s, float64(a.bytes[s])/1024, float64(a.bytes[s])/elapsed/1024)
 	}

@@ -1,6 +1,7 @@
 package vdumper
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"strconv"
@@ -93,6 +94,38 @@ func DefaultWorkload() Workload {
 		DictionaryGrowthPerMin: 10,
 		MemoryMeanBytes:        4096,
 	}
+}
+
+// ParseDurationSpec builds a DurationSpec from the comma-separated CLI/env
+// form: thresholds like "100ms,1s,10s" and shares like "0.90,0.07,0.025,0.005".
+// Shares must count one more than thresholds (the open top class) and sum
+// to 1 within 1%.
+func ParseDurationSpec(thresholds, shares string) (DurationSpec, error) {
+	var spec DurationSpec
+	for _, s := range strings.Split(thresholds, ",") {
+		d, err := time.ParseDuration(strings.TrimSpace(s))
+		if err != nil {
+			return DurationSpec{}, fmt.Errorf("bad duration threshold %q: %w", s, err)
+		}
+		spec.Thresholds = append(spec.Thresholds, d)
+	}
+	total := 0.0
+	for _, s := range strings.Split(shares, ",") {
+		v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return DurationSpec{}, fmt.Errorf("bad duration share %q: %w", s, err)
+		}
+		spec.Shares = append(spec.Shares, v)
+		total += v
+	}
+	if len(spec.Shares) != len(spec.Thresholds)+1 {
+		return DurationSpec{}, fmt.Errorf("duration shares need %d values for %d thresholds, got %d",
+			len(spec.Thresholds)+1, len(spec.Thresholds), len(spec.Shares))
+	}
+	if total < 0.99 || total > 1.01 {
+		return DurationSpec{}, fmt.Errorf("duration shares must sum to 1, got %g", total)
+	}
+	return spec, nil
 }
 
 func (w Workload) isZero() bool {

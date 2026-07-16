@@ -37,6 +37,9 @@ type statsRec struct {
 	disconnected int
 	ackErrors    int
 	dropped      int
+	tcpConnects  int
+	sessionReady int
+	ackFlushes   int
 	lastErr      error
 }
 
@@ -54,6 +57,19 @@ func (r *statsRec) Dropped(n int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dropped += n
+}
+func (r *statsRec) TcpConnected(time.Duration) { r.mu.Lock(); defer r.mu.Unlock(); r.tcpConnects++ }
+func (r *statsRec) SessionReady(time.Duration) { r.mu.Lock(); defer r.mu.Unlock(); r.sessionReady++ }
+func (r *statsRec) AckFlushed(string, time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ackFlushes++
+}
+
+func (r *statsRec) latencyCounts() (tcpConnects, sessionReady, ackFlushes int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.tcpConnects, r.sessionReady, r.ackFlushes
 }
 
 func (r *statsRec) droppedCount() int {
@@ -209,6 +225,11 @@ func TestLifecycleOpensSevenStreams(t *testing.T) {
 	connected, disconnected, _ := rec.snapshot()
 	assert.Equal(t, 1, connected)
 	assert.Equal(t, 0, disconnected)
+	tcpConnects, sessionReady, ackFlushes := rec.latencyCounts()
+	assert.Equal(t, 1, tcpConnects, "one dial, one TcpConnected sample")
+	assert.Equal(t, 1, sessionReady, "SessionReady fires once per incarnation")
+	assert.Equal(t, 6, ackFlushes,
+		"the flush cycle drains acks once per open stream (params is done)")
 }
 
 // TestAckErrorReconnectsAndResendsDictionary: ACK_ERROR_MAGIC tears the
