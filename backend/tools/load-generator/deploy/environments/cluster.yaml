@@ -1,0 +1,51 @@
+# Large-cluster stand: real network PVs and node limits, the source of the
+# final numbers (plan §5.2). Storage classes and image references are
+# cluster-specific — set them before the first apply.
+
+monitoring:
+  namespace: monitoring
+  vmSingle:
+    retention: 14d
+    storageSize: 50Gi
+    # Set the cluster's network storage class.
+    storageClassName: ""
+
+stand:
+  namespace: profiler-load
+
+minio:
+  storageSize: 200Gi
+  storageClassName: ""
+  # Override for anything shared; these defaults are for a throwaway stand.
+  rootUser: minioadmin
+  rootPassword: minioadmin
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+profiler:
+  image:
+    # Point at the registry the cluster pulls from, and pin an immutable tag.
+    registry: ""
+    repository: profiler-backend
+    tag: dev
+  collector:
+    # 3 replicas for contract and soak runs; drop to 1 for ceiling runs (T2,
+    # T3) with `helmfile -e cluster apply --set profiler.collector.replicas=1`
+    # or a run-layer override.
+    replicas: 3
+    storageSize: 50Gi
+    storageClassName: ""
+  query:
+    replicas: 2
+
+k6:
+  installed: true
+  image: cdt-load-generator:dev
+  # Contract-level shape (plan §7 T1); ramp/ceiling runs override per run.
+  pods: 500
+  duration: 2h

@@ -1,0 +1,43 @@
+# Local stand (OrbStack / kind): scenario development and harness debugging.
+# Disk and S3 sit on the local SSD — no final numbers from here (plan §5.1).
+
+monitoring:
+  namespace: monitoring
+  vmSingle:
+    retention: 3d
+    storageSize: 5Gi
+    # Empty selects the cluster's default StorageClass.
+    storageClassName: ""
+
+stand:
+  namespace: profiler-load
+
+minio:
+  storageSize: 20Gi
+  storageClassName: ""
+  # Dev-only credentials; the profiler-backend values reuse the same pair.
+  rootUser: minioadmin
+  rootPassword: minioadmin
+  resources:
+    requests:
+      memory: 512Mi
+
+profiler:
+  image:
+    # Build locally: make -C backend docker-build (see ../README.md).
+    registry: ""
+    repository: profiler-backend
+    tag: dev
+  collector:
+    replicas: 1
+    storageSize: 20Gi
+    storageClassName: ""
+  query:
+    replicas: 1
+
+k6:
+  installed: true
+  # Build locally from backend/tools/load-generator/Dockerfile.
+  image: cdt-load-generator:dev
+  pods: 10
+  duration: 10m

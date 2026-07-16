@@ -1,0 +1,43 @@
+# The system under test: the production chart with the load-stand switches —
+# in-cluster MinIO as S3, pprof on (plan §6.1), ServiceMonitors on, maintain
+# as a deployment so its /metrics surface exists for the pipeline dashboards.
+
+image:
+  registry: {{ .Values.profiler.image.registry | quote }}
+  repository: {{ .Values.profiler.image.repository }}
+  tag: {{ .Values.profiler.image.tag }}
+
+minio:
+  enabled: false
+
+s3:
+  endpoint: http://minio.{{ .Values.stand.namespace }}.svc:9000
+  bucket: profiler-data
+  auth:
+    # Mirrors the minio release's root pair — dev/stand only.
+    accessKey: {{ .Values.minio.rootUser | quote }}
+    secretKey: {{ .Values.minio.rootPassword | quote }}
+
+collector:
+  replicas: {{ .Values.profiler.collector.replicas }}
+  storage:
+    size: {{ .Values.profiler.collector.storageSize }}
+    storageClassName: {{ .Values.profiler.collector.storageClassName | quote }}
+  env:
+    PROFILER_PPROF_ENABLED: "true"
+
+query:
+  replicas: {{ .Values.profiler.query.replicas }}
+  env:
+    PROFILER_PPROF_ENABLED: "true"
+
+maintain:
+  # Deployment mode is the only maintain mode with a scrape surface; the
+  # soak invariants (plan §8.5) watch its compaction counters.
+  mode: deployment
+  env:
+    PROFILER_PPROF_ENABLED: "true"
+
+metrics:
+  serviceMonitor:
+    enabled: true

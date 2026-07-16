@@ -1,0 +1,35 @@
+# k6 runner (../charts/cdt-load-generator): starts sending on pod start.
+# Scenario parameters beyond the pod count and duration stay with the run
+# orchestration layer (plan §5.3), not the stand.
+
+global:
+  name: cdt-loader
+  prometheusRW: true
+
+deployment:
+  image: {{ .Values.k6.image | quote }}
+
+  env:
+    COLLECTOR_HOST: profiler-backend-collector-agent.{{ .Values.stand.namespace }}.svc
+    EMULATOR_NAMESPACE: load
+    EMULATOR_SERVICE_PREFIX: load-svc
+    EMULATOR_POD_PREFIX: load-pod
+    PODS: {{ .Values.k6.pods | quote }}
+    DURATION: {{ .Values.k6.duration | quote }}
+
+  # k6 pushes its own series into the same VictoriaMetrics the backend is
+  # scraped into, so generator-side and server-side series share a time axis
+  # (plan §5.3). vmsingle-k8s is the service the operator creates for the
+  # default VMSingle named "k8s".
+  envRW:
+    K6_PROMETHEUS_RW_SERVER_URL: http://vmsingle-k8s.{{ .Values.monitoring.namespace }}.svc:8429/api/v1/write
+    K6_PROMETHEUS_RW_PUSH_INTERVAL: 10s
+    K6_PROMETHEUS_RW_TREND_STATS: min,max,avg,p(90),p(95)
+
+ingress:
+  enabled: false
+
+# The chart's bundled dashboard expects a JSON file the chart does not ship;
+# the k6 dashboard comes from ../dashboards/ via the monitoring-crs release.
+grafanaDashboard:
+  enabled: false
