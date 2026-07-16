@@ -8,7 +8,6 @@ package wire
 
 import (
 	"bytes"
-	"sort"
 
 	emwire "github.com/Netcracker/qubership-profiler-backend/libs/emulator/wire"
 )
@@ -78,59 +77,40 @@ func CallsStream(baseMs int64, deltasMs []int64) []byte {
 }
 
 // CallsStreamRecords encodes a version-4 calls stream from explicit records.
-// The thread-name table mirrors the agent's: a thread name is written inline on
-// first use and referenced by index afterwards, so records are NOT decodable in
-// isolation from the file.
+// The record encoding — the per-file thread-name table, the zig-zag time
+// deltas — lives in libs/emulator/wire.CallsFileState; this builder maps its
+// delta-based records onto that encoder's absolute start times.
 func CallsStreamRecords(baseMs int64, records []CallRecord) []byte {
 	buf := &bytes.Buffer{}
 	putFixedLong(buf, uint64(callsHeaderMagic)<<32|4) // format marker + version 4
 	putFixedLong(buf, uint64(baseMs))                 // base_ms
 
-	threadIndex := map[string]int{}
+	st := emwire.NewCallsFileState(baseMs)
+	abs := baseMs
 	for _, r := range records {
-		putZigZag(buf, r.DeltaMs) // start time: delta from the previous record
-		putVarInt(buf, uint64(r.Method))
-		putVarInt(buf, uint64(r.DurationMs))
-		putVarInt(buf, uint64(r.ChildCalls))
-		idx, known := threadIndex[r.ThreadName]
-		if !known {
-			idx = len(threadIndex)
-			threadIndex[r.ThreadName] = idx
-		}
-		putVarInt(buf, uint64(idx))
-		if !known {
-			putVarString(buf, r.ThreadName) // first use of a thread carries its name
-		}
-		putVarInt(buf, uint64(r.LogsWritten))
-		putVarInt(buf, uint64(r.LogsGenerated-r.LogsWritten)) // wire carries the difference
-		putVarInt(buf, uint64(r.TraceFileIndex))
-		putVarInt(buf, uint64(r.BufferOffset))
-		putVarInt(buf, uint64(r.RecordIndex))
-		putVarInt(buf, uint64(r.CpuTimeMs)) // format >= 2
-		putVarInt(buf, uint64(r.WaitTimeMs))
-		putVarInt(buf, uint64(r.MemoryUsed))
-		putVarInt(buf, uint64(r.FileRead)) // format >= 3
-		putVarInt(buf, uint64(r.FileWritten))
-		putVarInt(buf, uint64(r.NetRead))
-		putVarInt(buf, uint64(r.NetWritten))
-		putVarInt(buf, uint64(r.Transactions)) // format >= 4
-		putVarInt(buf, uint64(r.QueueWaitMs))
-		putVarInt(buf, uint64(len(r.Params)))
-		paramIds := make([]int, 0, len(r.Params))
-		for id := range r.Params {
-			paramIds = append(paramIds, id)
-		}
-		sort.Ints(paramIds) // deterministic bytes for a versioned generator
-		for _, id := range paramIds {
-			values := r.Params[id]
-			putVarInt(buf, uint64(id))
-			putVarInt(buf, uint64(len(values)))
-			// The decoder fills the result slice from the highest index down,
-			// so multi-value params are written in reverse.
-			for i := len(values) - 1; i >= 0; i-- {
-				putVarString(buf, values[i])
-			}
-		}
+		abs += r.DeltaMs
+		st.PutRecord(buf, emwire.CallRecord{
+			StartMs:        abs,
+			Method:         r.Method,
+			DurationMs:     r.DurationMs,
+			ChildCalls:     r.ChildCalls,
+			ThreadName:     r.ThreadName,
+			TraceFileIndex: r.TraceFileIndex,
+			BufferOffset:   r.BufferOffset,
+			RecordIndex:    r.RecordIndex,
+			Params:         r.Params,
+			LogsGenerated:  r.LogsGenerated,
+			LogsWritten:    r.LogsWritten,
+			CpuTimeMs:      r.CpuTimeMs,
+			WaitTimeMs:     r.WaitTimeMs,
+			MemoryUsed:     r.MemoryUsed,
+			FileRead:       r.FileRead,
+			FileWritten:    r.FileWritten,
+			NetRead:        r.NetRead,
+			NetWritten:     r.NetWritten,
+			Transactions:   r.Transactions,
+			QueueWaitMs:    r.QueueWaitMs,
+		})
 	}
 	return buf.Bytes()
 }

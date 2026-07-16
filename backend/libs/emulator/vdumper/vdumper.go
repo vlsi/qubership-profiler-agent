@@ -8,6 +8,7 @@ package vdumper
 import (
 	"bytes"
 	"context"
+	"sync"
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/emulator"
 	"github.com/Netcracker/qubership-profiler-backend/libs/emulator/wire"
@@ -35,6 +36,14 @@ type VirtualDumper struct {
 	stats   StatsListener
 	dict    *dictionary
 	streams []*streamState
+	// chunks is the bounded dirty-buffer queue between the producer
+	// goroutines and the dumper loop; producers drop on overflow (§2.5).
+	chunks chan chunk
+
+	traceS, callsS *streamState
+	// callsState is the per-file calls encoder state, reset with every calls
+	// file header.
+	callsState *wire.CallsFileState
 
 	// startMs mirrors TimerCache.startTime: the process-start epoch written
 	// as the trace file header, stable across reconnects.
@@ -65,6 +74,9 @@ func New(cfg Config) *VirtualDumper {
 		newStreamState(model.StreamSuspend, true, 0, false, d.stats),
 		newStreamState(model.StreamParams, true, 0, true, d.stats),
 	}
+	d.traceS = d.streams[0]
+	d.callsS = d.streams[1]
+	d.chunks = make(chan chunk, cfg.ChunkQueueSize)
 	return d
 }
 
@@ -76,6 +88,22 @@ func New(cfg Config) *VirtualDumper {
 func (d *VirtualDumper) Run(ctx context.Context) error {
 	d.startMs = d.clock.Now().UnixMilli()
 	d.lastSuspendMs = d.startMs
+
+	// Producers model the application threads: they live for the pod's whole
+	// life and keep generating across dumper reconnects (the drop window).
+	// The derived cancel stops them when Run exits on a permanent error.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var producers sync.WaitGroup
+	for i := 0; i < d.cfg.ThreadsPerPod; i++ {
+		p := newProducer(i, d.cfg, d.chunks)
+		producers.Add(1)
+		go func() {
+			defer producers.Done()
+			p.run(ctx)
+		}()
+	}
+	defer producers.Wait()
 
 	for incarnation := 0; ; incarnation++ {
 		if incarnation > 0 {
@@ -155,8 +183,12 @@ func (d *VirtualDumper) writeStreamHeader(t Transport, s *streamState) error {
 		wire.PutFixedLong(b, uint64(d.startMs))
 		return s.write(b.Bytes())
 	case model.StreamCalls:
+		baseMs := d.clock.Now().UnixMilli()
 		wire.PutFixedLong(b, uint64(wire.CallsHeaderMagic)<<32|wire.CallsFormatVersion)
-		wire.PutFixedLong(b, uint64(d.clock.Now().UnixMilli()))
+		wire.PutFixedLong(b, uint64(baseMs))
+		// A fresh file resets the thread table and the time-delta base
+		// (CallsCompressedLocalAndRemoteOutputStream.fileRotated).
+		d.callsState = wire.NewCallsFileState(baseMs)
 		return s.write(b.Bytes())
 	case model.StreamSuspend:
 		wire.PutFixedLong(b, uint64(d.lastSuspendMs))
@@ -188,15 +220,20 @@ func (d *VirtualDumper) writeStreamHeader(t Transport, s *streamState) error {
 	}
 }
 
-// pump is the dumpLoop mirror: on each wake-up rotate what needs rotation,
-// append the pending dictionary growth, and run the 5 s flush cycle. Trace
-// chunk intake joins in the trace-pipeline stage.
+// pump is the dumpLoop mirror: it wakes on incoming producer chunks or the
+// flush timer, and on every wake-up serializes what arrived, rotates what
+// needs rotation, appends the pending dictionary growth, and — when the 5 s
+// interval elapsed — runs the flush cycle.
 func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
 	nextFlush := d.clock.Now().Add(d.cfg.FlushInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			return d.gracefulClose(t)
+		case c := <-d.chunks:
+			if err := d.writeChunk(t, c); err != nil {
+				return err
+			}
 		case <-d.clock.After(nextFlush.Sub(d.clock.Now())):
 		}
 		if err := d.rotateStreams(t); err != nil {
@@ -205,11 +242,49 @@ func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
 		if err := d.writeDictionary(); err != nil {
 			return err
 		}
-		if err := d.flushCycle(t); err != nil {
+		if now := d.clock.Now(); !now.Before(nextFlush) {
+			if err := d.flushCycle(t); err != nil {
+				return err
+			}
+			for !nextFlush.After(now) {
+				nextFlush = nextFlush.Add(d.cfg.FlushInterval)
+			}
+		}
+	}
+}
+
+// writeChunk serializes one producer buffer as a logical trace chunk —
+// [threadId, startTime] header, events, EVENT_FINISH_RECORD — and emits one
+// calls record per root call completed inside it, carrying the
+// (file index, buffer offset, record index) linkage into the trace bytes
+// (Dumper.writeBufferToFS + writeCall).
+func (d *VirtualDumper) writeChunk(_ Transport, c chunk) error {
+	bufferOffset := d.traceS.fileOffset
+	b := &bytes.Buffer{}
+	wire.PutFixedLong(b, c.threadId)
+	wire.PutFixedLong(b, uint64(c.startMs))
+	b.Write(c.events)
+	b.WriteByte(wire.EventFinishRecord)
+	if err := d.traceS.write(b.Bytes()); err != nil {
+		return err
+	}
+	for _, done := range c.calls {
+		rb := &bytes.Buffer{}
+		d.callsState.PutRecord(rb, wire.CallRecord{
+			StartMs:        done.startMs,
+			Method:         done.method,
+			DurationMs:     done.durationMs,
+			ChildCalls:     done.callCount,
+			ThreadName:     c.threadName,
+			TraceFileIndex: d.traceS.fileIndex,
+			BufferOffset:   bufferOffset,
+			RecordIndex:    done.recordIndex,
+		})
+		if err := d.callsS.write(rb.Bytes()); err != nil {
 			return err
 		}
-		nextFlush = nextFlush.Add(d.cfg.FlushInterval)
 	}
+	return nil
 }
 
 // rotateStreams mirrors the rotateIfRequired pass: a rotation flushes the old
@@ -266,9 +341,19 @@ func (d *VirtualDumper) flushCycle(t Transport) error {
 	return nil
 }
 
-// gracefulClose mirrors the agent's shutdown hook: push out what is pending,
-// then announce the close. Errors are ignored — the run is over.
+// gracefulClose mirrors the agent's shutdown hook: steal what the producers
+// already handed off, push out everything pending, then announce the close.
+// Errors are ignored — the run is over.
 func (d *VirtualDumper) gracefulClose(t Transport) error {
+	for {
+		select {
+		case c := <-d.chunks:
+			_ = d.writeChunk(t, c)
+			continue
+		default:
+		}
+		break
+	}
 	_ = d.writeDictionary()
 	_ = d.flushCycle(t)
 	_ = t.CommandClose()
