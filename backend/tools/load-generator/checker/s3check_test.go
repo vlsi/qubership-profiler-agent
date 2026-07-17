@@ -112,7 +112,7 @@ func TestSmallFileShareSlidingWindow(t *testing.T) {
 			out = append(out, s3Object{Key: sealKey("short_clean", lastBucket, "collector-0", i), Size: 1 << 10})
 		}
 		for i := 0; i < large; i++ {
-			out = append(out, s3Object{Key: sealKey("short_clean", lastBucket, "collector-0", 100 + i), Size: 4 << 20})
+			out = append(out, s3Object{Key: sealKey("short_clean", lastBucket, "collector-0", 100+i), Size: 4 << 20})
 		}
 		return out
 	}
