@@ -191,8 +191,8 @@ saturation signal fires.
 ### T6. Query load
 
 - **UI profile** (during soak and contract runs): background 2–5 virtual users — `/api/v1/calls` over the last
-  hour, open a call (`/calls/{pk}`, `/calls/{pk}/trace`), `/tree`; plus an "incident" burst of 20 users on wide
-  ranges. (Defaults chosen by us; adjust when real usage data appears.)
+  hour, open a call (`/calls/{pk}/trace` + `/calls/{pk}/tree`; there is no bare `/calls/{pk}` endpoint); plus an
+  "incident" burst of 20 users on wide ranges. (Defaults chosen by us; adjust when real usage data appears.)
 - **Cold-heavy profile**: wide ranges up to the 6 h guard, deep pagination (every page re-scans S3), against a
   bucket state with many small pre-compaction files.
 - Measure query CPU/RAM (goal (b)), fan-out tail latency vs replica count, S3 LIST/GET volume, guard behavior
@@ -217,7 +217,10 @@ The checker fails the run when any of these break:
 1. Hot-store PV usage oscillates but does not grow monotonically over any 2 h window (after warm-up).
 2. `backpressure_ingest_paused` never sticks: total paused time < 1% of the run at contract load.
 3. `ingest_refused_bytes_total` stays 0 at contract load (nonzero only in T2/T7 by design).
-4. `hot_window_lag_seconds` stays below the seal interval + grace budget.
+4. `hot_window_lag_seconds` stays below the hot-retention + seal/upload-chain budget. (The gauge is the age of the
+   oldest row still in the hot index, so its healthy level is hot retention + eviction cadence; sustained growth
+   past the budget means the hot→cold handoff is stuck — found in phase 4 when the original "seal interval +
+   grace" reading of this clause fired on every healthy stand.)
 5. S3 object count per hour prefix stays bounded after compaction; small-file (< 1 MB) share trends down once
    maintain has run.
 6. Collector RSS stays below the pod limit with no monotonic growth (leak signal); goroutine count flat at constant
@@ -352,4 +355,58 @@ ingest, and all six pprof artifacts; a forced-backpressure run (8 MiB pending bu
 
 Waiting on the large cluster: the actual T2 sweeps (bytes/s, calls/s small/large, dictionary churn), the T3 ramp
 from 1000 connections up with the failure-shape record, runner node pinning + sizing (§10), and the report numbers.
-§8.5–§8.8 checker stubs stay untouched (none of the smoke runs hit S3/PV limits).
+§8.5–§8.8 checker stubs stayed untouched (none of the smoke runs hit S3/PV limits) — closed in phase 4 (§14).
+
+## 14. Phase 4 status (contract + soak; done 2026-07-16, cluster runs pending)
+
+The large cluster is still unavailable, so this phase closed everything locally validatable and froze the
+cluster-only work as ready-to-run specs. Local numbers are never quoted as contract or soak results; the one local
+*result* is functional — the accelerated-timer soak's lifecycle verdict.
+
+Shipped:
+
+- **Checker hardened (§8.5–§8.8)**, contract in `tools/load-generator/doc/checker.md`:
+  - violations now **latch**: a failure after warm-up fails the run even when the final tick looks healthy
+    (previously the exit code came from a final re-evaluation, so transient breaches could end in PASS);
+  - **§8.5**: S3 listing per hour prefix through a new read-only client (`libs/s3.NewReadOnlyClient` — `NewClient`
+    creates buckets and is unusable for an observer). Compaction-keeps-up judges only (bucket, class) groups past a
+    deadline derived from the stand's own timers (seal → upload visibility chain, `COMPACTION_MIN_AGE`, maintain
+    cadence, delete grace, slack); the small-file share is judged over a sliding window so an early drop cannot
+    mask later growth;
+  - **§8.6**: RSS under the pod limit (`-rss-limit-bytes`; the limit is not on `/metrics`) with no monotonic
+    growth, and goroutine flatness at a constant connection count, both series taken from the same scrapes.
+    A target silent for more than `-max-scrape-gap` polls latches `target-unavailable` — absence no longer passes;
+  - **§8.7**: freshness (`/api/v1/calls` windows sent as integer Unix ms) plus marker calls sampled after warm-up
+    and re-fetched until their class TTL (`corrupted` excluded: reserved, writer-less); optional
+    `-expect-ttl-deletion` demands a 404 after TTL + settle;
+  - **§8.8**: pod-restart watch over the k8s API (client-go, kubeconfig-or-in-cluster) with a total restart-event
+    budget (`-allowed-restarts`, default 0), replacement pods counted as one event plus their own restarts,
+    disappearance-without-replacement flagged separately.
+  Unit tests cover every threshold boundary; an `integration`-tagged test exercises the S3 lister against a
+  testcontainers MinIO.
+- **Accelerated-timer soak layer (§7.4)**: the `local-soak` helmfile environment
+  (`deploy/environments/local-soak.yaml`) shrinks every lifecycle timer to minutes (1 m buckets, 3 m hot retention,
+  15–45 m class TTLs, 1 m maintain cadence, 3 m compaction min-age); the values templates gained maintain/query
+  env and retention passthroughs the stand previously dropped. Spec: `specs/t4-soak-accelerated.yaml`.
+- **T6 query generator (§7.6)**: `scripts/query-scenario.js` on the stock `k6/http` module of the same custom
+  binary — `ui` (calls list → trace + tree of a random row), `incident` (phase-based wide-range bursts), `cold`
+  (guard-edge ranges paged to the end; each page re-lists S3 by design; guard 400s are counted, not failed).
+  A profile with 0 VUs is omitted, so one env knob gates each profile. Deployed as the `k6-query` release with its
+  own `global.name` (`cdt-query`) and `TESTID` — two releases of the chart must not share resource names.
+- **Fixed-hold specs**: `hold.min == hold.max` holds one level for the whole duration (documented in
+  `doc/run-orchestration.md`); detectors gained an optional per-hold `grace` after the first soak attempt read the
+  cold-start fill of `pending_parquet_bytes` (0 → first uploads) as saturation. `specs/t1-contract.yaml` (500 pods,
+  ~6 MB/s, 2 h) and `specs/t4-soak.yaml` (24–48 h, checker + `k6-query` mandatory) are frozen pending the cluster.
+- **Runbook**: `doc/soak-runs.md` (T1/T4/T6 + the accelerated overlay and checker flag sets).
+
+Validated locally (run ids and details in the report): the accelerated soak ran under the full §8 checker with the
+T6 UI profile beside it, plus a dedicated cold-heavy probe and a reduced-scale T1 spec-mechanics smoke. The soak's
+verdict is FAIL by design of the invariants, and the failure is the phase's main finding: after 52 healthy minutes
+(every lifecycle stage cycling cleanly), a collector died on a `CallsPipeReader` panic and the checker latched the
+whole cascade (§8.8 restart, §8.5 compaction backlog, pending-parquet growth, query degradation). Two more findings
+came from T6: concurrent guard-passing wide queries OOM the query pod (the scan guard is per-request; no global
+read-path memory budget) and deep pagination costs a full re-scan per page, as the read contract predicts.
+
+Waiting on the large cluster: `t1-contract` finale (baseline utilization + headroom), the 24–48 h real-timer
+`t4-soak` (slow leaks — the accelerated run cannot see them, §10; **blocked on the `CallsPipeReader` fix**), T6
+numbers worth quoting, and the T2/T3 ceiling campaign of §13.
