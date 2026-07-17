@@ -41,6 +41,21 @@ func relativeSlope(points []Point) float64 {
 	return slope * span / mean
 }
 
+// afterGrace drops samples taken within grace of the hold start — the
+// cold-start fill a growth-shaped detector must not read as saturation.
+func afterGrace(points []Point, holdStart time.Time, grace time.Duration) []Point {
+	if grace <= 0 {
+		return points
+	}
+	cut := holdStart.Add(grace)
+	for i, p := range points {
+		if !p.At.Before(cut) {
+			return points[i:]
+		}
+	}
+	return nil
+}
+
 // window trims the series to samples within d of the last sample.
 func window(points []Point, d time.Duration) []Point {
 	if len(points) == 0 {
@@ -101,6 +116,9 @@ func detectorFires(d Detector, points []Point, plateauWindow time.Duration,
 		return float64(nonzero)/float64(len(points)) > d.Share
 	case "monotonic-growth":
 		first, last := points[0].Value, points[len(points)-1].Value
+		if last < d.MinValue {
+			return false // below the absolute floor nothing counts as backlog
+		}
 		grown := false
 		switch {
 		case first == 0:

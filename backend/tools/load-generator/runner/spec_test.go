@@ -52,6 +52,20 @@ func TestLoadSpecDefaults(t *testing.T) {
 	assert.Equal(t, "runs", s.Outputs)
 }
 
+// TestSpecTemplatesLoad keeps every committed template in ../specs loadable:
+// a template that stops parsing is a broken runbook.
+func TestSpecTemplatesLoad(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "specs", "*.yaml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "no spec templates found next to the runner")
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			_, err := LoadSpec(path)
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestLoadSpecRejects(t *testing.T) {
 	for name, mutate := range map[string]string{
 		"missing testid": `

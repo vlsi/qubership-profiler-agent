@@ -207,7 +207,7 @@ func (r *runner) holdStep(ctx context.Context, level int) (stepRecord, error) {
 		}
 
 		for _, d := range spec.Detectors {
-			if detectorFires(d, points[d.Name], plateauW, tol, r.baselines[d.Name]) {
+			if detectorFires(d, afterGrace(points[d.Name], holdStart, d.Grace.std()), plateauW, tol, r.baselines[d.Name]) {
 				rec.Verdict = "saturated"
 				rec.Reasons = append(rec.Reasons, d.Name)
 			}
@@ -277,11 +277,17 @@ func (r *runner) capturePoint(ctx context.Context, ceiling int, point float64) (
 	now := time.Now()
 	rec.ConfirmedAt = &now
 
-	// Let the level settle for the minimum hold before profiling.
+	// Let the level settle before profiling — but cap the wait: a fixed-hold
+	// soak sets hold.min to hours, and the capture level was just held for
+	// that long anyway (doc/run-orchestration.md).
+	settle := r.spec.Ramp.Hold.Min.std()
+	if settle > 5*time.Minute {
+		settle = 5 * time.Minute
+	}
 	select {
 	case <-ctx.Done():
 		return rec, ctx.Err()
-	case <-time.After(r.spec.Ramp.Hold.Min.std()):
+	case <-time.After(settle):
 	}
 	for _, profile := range r.spec.Pprof.Profiles {
 		path, err := capturePprof(ctx, r.spec.Endpoints.Collector, r.art.pprofDir(),

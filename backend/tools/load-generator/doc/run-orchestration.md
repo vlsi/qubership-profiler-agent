@@ -25,7 +25,14 @@ Each **step** goes through four stages:
    ceiling candidate), or `invalid` (confirmation timeout, generator guard, query failures).
 
 After a `saturated` verdict the runner re-holds at the pprof points (by default 70% and 100% of the last `ok` level,
-rounded to whole VUs) and captures CPU, heap, and goroutine profiles at each.
+rounded to whole VUs) and captures CPU, heap, and goroutine profiles at each. The pre-capture settle is
+`min(hold.min, 5m)`: a fixed-hold soak sets `hold.min` to hours, and its capture level was just held that long.
+
+**Fixed hold (contract and soak runs).** A single-level spec with `hold.min == hold.max` holds that level for exactly
+that duration: the plateau check can only end a hold after `hold.min`, so with the two equal the hold runs to the
+full length with detectors live throughout, and ends `ok` with `plateau` recorded as informational. T1/T4 specs
+(`doc/soak-runs.md`) use this shape — `ramp.levels: [500]`, a 2–48 h hold, §8-shaped detectors — and set
+`pprof.points: [1.0]` so the profile capture re-holds at the run level instead of dropping to 70% after the soak.
 
 ## Run spec
 
@@ -127,11 +134,17 @@ trigger; `upload_lag_seconds` and `upload_backlog` are archived as confirming co
 
 ## Detector kinds
 
-All detectors evaluate over the samples of the current hold only.
+All detectors evaluate over the samples of the current hold only. An optional per-detector `grace: 5m` additionally
+drops the first samples of every hold, covering two cold-start artifacts: a hold against an empty store fills it
+(pending-parquet bytes grow from zero until the first uploads drain), and a stand idle before the hold reports
+stale-data hot-window lag until the first new bucket seals. Growth-shaped and absolute-bound detectors would read
+either as saturation.
 
 - `sticky-share`: the instant value is nonzero in more than `share` of the samples so far.
 - `monotonic-growth`: the series grew by more than `minGrowth` (relative) over the hold *and* the last plateau window
-  shows no flattening (its relative slope stays above `slopeTolerance`).
+  shows no flattening (its relative slope stays above `slopeTolerance`). An optional absolute `minValue` keeps the
+  detector silent while the last sample is below it — a gauge that oscillates down to zero (pending-parquet bytes
+  between upload cycles) otherwise reads every rising sawtooth edge as growth from zero.
 - `nonzero`: any sample above zero.
 - `baseline-ratio`: the mean over the last plateau window exceeds `ratio ×` the baseline; the baseline is the mean of
   the same query over the first `ok` step's hold. Until a baseline exists the detector stays silent.

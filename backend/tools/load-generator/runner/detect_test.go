@@ -79,3 +79,32 @@ func TestBaselineRatio(t *testing.T) {
 	assert.False(t, detectorFires(d, series(10, 11, 12, 11, 10, 12, 11, 12), w, 0.05, 10),
 		"staying near the baseline does not fire")
 }
+
+func TestAfterGrace(t *testing.T) {
+	ps := series(0, 0, 300, 500, 480, 510, 495, 505)
+	assert.Equal(t, ps, afterGrace(ps, t0, 0), "zero grace keeps everything")
+	// A 1 m grace at a 15 s cadence drops the first four samples — the
+	// cold-start fill a growth detector must not read as saturation.
+	trimmed := afterGrace(ps, t0, time.Minute)
+	assert.Equal(t, ps[4:], trimmed)
+	assert.Empty(t, afterGrace(ps, t0, time.Hour), "grace beyond the hold keeps nothing")
+
+	d := Detector{Name: "pending-parquet-growth", Kind: "monotonic-growth", MinGrowth: 0.10}
+	assert.True(t, detectorFires(d, ps, w, 0.05, 0),
+		"without grace the cold-start fill from zero fires")
+	assert.False(t, detectorFires(d, afterGrace(ps, t0, time.Minute), w, 0.05, 0),
+		"after the grace the series is an oscillating level, not growth")
+}
+
+func TestMonotonicGrowthMinValue(t *testing.T) {
+	// A sawtooth's rising edge from zero: without a floor it fires.
+	edge := series(0, 0, 0, 100, 300, 600)
+	d := Detector{Name: "pending", Kind: "monotonic-growth", MinGrowth: 0.10}
+	assert.True(t, detectorFires(d, edge, w, 0.05, 0))
+	d.MinValue = 8 << 20
+	assert.False(t, detectorFires(d, edge, w, 0.05, 0),
+		"below the absolute floor a rising edge is not backlog")
+	big := series(0, 10<<20, 20<<20, 40<<20, 80<<20, 160<<20)
+	assert.True(t, detectorFires(d, big, w, 0.05, 0),
+		"growth past the floor still fires")
+}

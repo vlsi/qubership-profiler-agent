@@ -78,8 +78,17 @@ type Detector struct {
 	Share float64 `yaml:"share"`
 	// MinGrowth is the monotonic-growth relative trigger.
 	MinGrowth float64 `yaml:"minGrowth"`
+	// MinValue is an absolute floor for monotonic-growth: the detector stays
+	// silent while the last sample is below it. A gauge that oscillates down
+	// to zero (pending-parquet bytes between upload cycles) otherwise reads
+	// every rising sawtooth edge as growth from zero.
+	MinValue float64 `yaml:"minValue"`
 	// Ratio is the baseline-ratio trigger multiple.
 	Ratio float64 `yaml:"ratio"`
+	// Grace excludes the first samples of every hold from this detector: a
+	// cold start fills empty stores, and growth-shaped detectors would read
+	// that fill as saturation (doc/run-orchestration.md).
+	Grace duration `yaml:"grace"`
 }
 
 // duration wraps time.Duration for YAML ("3m", "15s").
