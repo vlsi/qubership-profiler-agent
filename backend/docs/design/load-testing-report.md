@@ -117,11 +117,37 @@ settled hour prefixes drained to single-digit object counts. The functional conc
 the lifecycle machinery works, the invariants catch real failures, and **the real-timer soak is blocked on the
 `CallsPipeReader` panic** — under this traffic shape a collector dies in under two hours.
 
-### Real-timer soak (pending cluster, blocked on the parser fix)
+### Re-run at the declared rate (phase 5, step 0) *(local — a functional result)*
+
+The phase-4 verification run above carried a wiring defect: the stand never received `CALLS_PER_SEC=3` — the
+helmfile left the knob unset, `scenario.js` silently defaulted to 5, and the soak ran at ~761 KB/s while every
+artifact claimed 393 KB/s (measured from `runs/20260716T205434Z-t4-soak-accelerated`, whose values snapshot shows
+no override). The workload wiring now fails loudly instead (no scenario defaults, the `k6_workload_info`
+fingerprint check, `confirm.ingest`; `doc/run-orchestration.md`, "Workload wiring"), and the per-VU rate was
+re-measured at 19,798 B/s for the 8 × 3 calls/s shape (`runs/20260717T085030Z-t4-cal-3cps`).
+
+`runs/20260717T091106Z-t4-soak-accelerated` (OrbStack, 2026-07-17) is the same 2.5 h accelerated soak at the
+honestly delivered 3 calls/s (~460 KB/s ingest, ingest-confirm within tolerance): runner verdict **completed**
+with every detector silent, and the full §8 checker latched **zero violations across the whole hold** — §8.5
+included, under the same 1 m maintain cadence and 3 m compaction min-age that latched continuously in the
+mis-wired run. That closes the §8.5 question: the compaction lateness of the verification run was pressure from
+the undeclared 1.9× overload, not a throughput ceiling of the single maintain replica. The overload observation
+itself remains useful context — at ~2× the declared rate, one maintain replica no longer meets the accelerated
+3 m deadline — but it is an artifact of an artificial deadline, not a cluster-portable ceiling. The reworked
+§8.6 trend rule stayed silent through legal goroutine oscillation (115–130 at constant connections) that the old
+range rule had latched.
+
+Two violations did latch **after** the hold, in the 13 minutes the checker outlived the runner: §8.7 freshness
+("no calls in the last 7m" — the generator had scaled to 0) and a §8.5 small-file share rising as TTL deletion
+drained large objects out of a closing hour prefix. Both are post-run artifacts of a checker judging a stand with
+no feed; the runbook now says to stop the checker when the runner exits (`doc/soak-runs.md`).
+
+### Real-timer soak (pending cluster)
 
 > Placeholder — the mandatory 24–48 h run on real timers (`specs/t4-soak.yaml`): checker verdict over the full §8
 > set, RSS/goroutine trends, S3 object-count trends, and the slow-leak check the accelerated run cannot see
-> (plan §10). Runs with the T6 UI profile in the background (`k6-query`).
+> (plan §10). Runs with the T6 UI profile in the background (`k6-query`). The `CallsPipeReader` panic that
+> blocked it is fixed and survived the phase-5 accelerated re-run cleanly.
 
 ## 6. T1: contract-level run (pending cluster)
 
@@ -214,9 +240,9 @@ Every step records the k6 pod's CPU share against its limit (`steps.jsonl`, `gen
 
 ## 10. Follow-ups
 
-- **Fix the `CallsPipeReader` panic** (`libs/parser/pipe/calls.go:70`: negative thread index, ignored mid-record
-  read errors; §5) — it blocks the real-timer soak. Audit the other pipe readers for the same pattern; phase 2
-  already flagged mis-framing in the suspend/params readers.
+- ~~Fix the `CallsPipeReader` panic~~ — fixed (`608ce6a9`) and verified by the phase-5 accelerated re-run (§5):
+  no crash across 2.5 h under the shape that killed a collector in under an hour. The suspend/params reader
+  mis-framing flagged in phase 2 remains open.
 - **Global read-path memory budget** for the query service (§7): the per-request scan guard multiplies under
   concurrency; a global budget or admission semaphore is needed before T6 runs at cluster scale.
 - Re-run the ceilings on the large cluster; only then replace the placeholders above.

@@ -90,6 +90,11 @@ go run ./checker \
 `PROFILER_RETENTION_*` must be exported to the checker's environment with the same values the overlay sets — the
 marker TTLs (§8.7) read them.
 
+Stop the checker (SIGINT) as soon as the runner exits. Two invariants presuppose a live feed — §8.7 freshness and
+the §8.5 small-file trend — and turn meaningless once the generator scales to 0: a checker left running past the
+hold latches "no calls in the last N minutes" and drain-shaped share growth that are post-run artifacts, not
+findings. The phase-5 step-0 re-run demonstrated exactly that tail.
+
 The accelerated run cannot see slow leaks (plan §10); the real-timer 24–48 h soak stays mandatory on the cluster.
 
 ## T6: background query load
