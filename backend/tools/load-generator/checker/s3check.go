@@ -260,6 +260,13 @@ func (s *s3state) checkCompaction(now time.Time, faults *faultState) []finding {
 		if now.Before(due) {
 			continue
 		}
+		// The evidence must postdate the deadline: judging at due+ε with a
+		// listing from due−75s reads a group maintain compacted seconds ago
+		// as a miss. Every recurring one-shot §8.5 latch of the phase-5
+		// fault runs was this race — count 1, gone by the next listing.
+		if last.at.Before(due) {
+			continue
+		}
 		if count >= s.timers.compactionMinFiles {
 			out = append(out, finding{
 				subject:    fmt.Sprintf("%s@%s", gk.class, time.UnixMilli(gk.bucketStartMs).UTC().Format(time.RFC3339)),

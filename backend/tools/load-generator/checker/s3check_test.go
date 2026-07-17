@@ -99,6 +99,31 @@ func TestCompactionKeepsUp(t *testing.T) {
 	assert.Empty(t, s3StateWith(now, objects).checkCompaction(now, nil))
 }
 
+func TestCompactionNeedsAPostDeadlineListing(t *testing.T) {
+	// The phase-5 race: a bucket crosses its deadline at due, the checker
+	// evaluates at due+ε, but the newest listing is from due−75s — maintain
+	// may have compacted the group in between. Stale evidence must not
+	// judge; a listing taken after the deadline may.
+	timers := fastTimers()
+	now := time.Now()
+	oldBucket := now.Add(-timers.compactionDueAt(time.Time{}).Sub(time.Time{})).Add(-timers.timeBucket)
+	oldBucket = oldBucket.Truncate(time.Minute)
+	due := timers.compactionDueAt(oldBucket.Add(timers.timeBucket))
+
+	var objects []s3Object
+	for seq := 0; seq < 5; seq++ {
+		objects = append(objects, s3Object{Key: sealKey("normal_clean", oldBucket, "collector-0", seq), Size: 4 << 20})
+	}
+
+	stale := s3StateWith(due.Add(-75*time.Second), objects)
+	assert.Empty(t, stale.checkCompaction(due.Add(time.Second), nil),
+		"a pre-deadline listing is stale evidence and must not judge")
+
+	fresh := s3StateWith(due.Add(30*time.Second), objects)
+	assert.NotEmpty(t, fresh.checkCompaction(due.Add(time.Minute), nil),
+		"a post-deadline listing showing the backlog still latches")
+}
+
 func TestSmallFileShareSlidingWindow(t *testing.T) {
 	timers := fastTimers()
 	now := time.Now()

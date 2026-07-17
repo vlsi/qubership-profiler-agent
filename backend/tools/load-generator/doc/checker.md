@@ -89,7 +89,10 @@ Two sub-invariants:
 
 1. **Compaction keeps up.** For every `(bucket, class)` group with `now ≥ compactionDueAt(bucket)`, the object count
    in the group must be ≤ `compactionMinFiles` (compaction residue below the trigger is legal by design). Groups
-   before their deadline are never judged.
+   before their deadline are never judged — and neither are groups whose newest LISTING predates the deadline: the
+   evidence must postdate the deadline, or a group maintain compacted seconds ago reads as a miss. Every recurring
+   one-shot §8.5 latch of the phase-5 fault runs (latched at `due+ε` from a listing at `due−75s`, count 1, gone by
+   the next listing) was that race, not a compaction failure.
 2. **Small-file share trends down.** Per hour prefix, the share of objects smaller than `-s3-small-file-bytes`
    (default 1 MB) is sampled on every listing. Once every bucket of the hour is past `compactionDueAt`, a share that
    grows monotonically across the sliding `-window` latches a violation. The window slides: one early drop cannot
