@@ -26,6 +26,10 @@ type faultLogEvent struct {
 	} `json:"target"`
 	Expects   []string `json:"expects"`
 	SettleSec float64  `json:"settleSec"`
+	// RestartBudget is how many §8.8 restart-or-replacement units this
+	// injection legitimately produces (doc/checker.md); 0 in old logs
+	// means 1.
+	RestartBudget int `json:"restartBudget"`
 }
 
 // allowWindow is one injection's expected-effects interval for one signal.
@@ -34,6 +38,8 @@ type allowWindow struct {
 	pod     string    // the target pod, for restart / scrape-gap scoping
 	from    time.Time // the injection's started event
 	to      time.Time // close event + settle; zero while the fault is active
+	// budget is the injection's §8.8 unit allowance (restarts signal only).
+	budget int
 }
 
 func (w allowWindow) contains(t time.Time) bool {
@@ -73,6 +79,7 @@ func (f *faultState) reload() error {
 		settle  time.Duration
 		expects []string
 		pod     string
+		budget  int
 	}
 	order := []string{}
 	byID := map[string]*injection{}
@@ -94,6 +101,7 @@ func (f *faultState) reload() error {
 		inj.settle = time.Duration(ev.SettleSec * float64(time.Second))
 		inj.expects = ev.Expects
 		inj.pod = ev.Target.Pod
+		inj.budget = ev.RestartBudget
 		switch ev.Event {
 		case "started":
 			inj.started = ev.At
@@ -115,7 +123,11 @@ func (f *faultState) reload() error {
 		if inj.started.IsZero() {
 			continue // scheduled but not executed yet
 		}
-		w := allowWindow{faultID: id, pod: inj.pod, from: inj.started}
+		budget := inj.budget
+		if budget < 1 {
+			budget = 1 // logs from before the field existed
+		}
+		w := allowWindow{faultID: id, pod: inj.pod, from: inj.started, budget: budget}
 		if !inj.closed.IsZero() {
 			w.to = inj.closed.Add(inj.settle)
 		}

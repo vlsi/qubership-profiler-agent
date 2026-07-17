@@ -76,6 +76,9 @@ faults:
     target: {namespace: profiler-load, pod: profiler-backend-collector-1}
     expects: [restarts, scrape-gap, freshness, markers, hot-window-lag,
               compaction-lag, small-file-share, ack-errors, pending-parquet-growth]
+    # Measured in T5.2: a grace-0 kill produces the replacement plus one
+    # collector.lock-collision container restart.
+    restartBudget: 2
     settle: 10m                  # WAL recovery + backlog drain on the accelerated timers
 
 detectors:                       # §8-shaped; in-window samples of expected signals are excluded

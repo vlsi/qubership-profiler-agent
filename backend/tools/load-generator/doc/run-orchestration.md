@@ -212,6 +212,8 @@ faults:
     target: {namespace: profiler-load, pod: profiler-backend-collector-1}
     repeat: {every: 90s, count: 10, readyTimeout: 5m}   # instant actions only
     expects: [restarts, scrape-gap, freshness, ack-errors]
+    restartBudget: 2                 # §8.8 units one injection legitimately produces (default 1); a grace-0
+                                     # collector kill measures at 2 — replacement + collector.lock collision
     settle: 5m                       # expected-effects tail after the fault / its revert
   - name: s3-outage
     at: 60m

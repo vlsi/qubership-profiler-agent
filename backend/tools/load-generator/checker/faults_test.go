@@ -153,6 +153,37 @@ func TestRestartAllowanceScopedToPod(t *testing.T) {
 	assert.Contains(t, expected[0].msg, "collector-1")
 }
 
+func TestRestartAllowanceHonorsDeclaredBudget(t *testing.T) {
+	// The T5.2 measurement: a grace-0 collector kill produces a replacement
+	// AND one collector.lock-collision container restart. A fault declaring
+	// restartBudget 2 absorbs both; a third event still latches.
+	p := newPodState(0)
+	base := time.Now()
+	p.observe([]podInfo{{Name: "collector-1", UID: "a", Restarts: 0}}, base)
+
+	line := eventLine("kill-001", "started", base, "collector-1", []string{"restarts"}, 600)
+	line = line[:len(line)-1] + `,"restartBudget":2}`
+	closeLine := eventLine("kill-001", "ended", base, "collector-1", []string{"restarts"}, 600)
+	closeLine = closeLine[:len(closeLine)-1] + `,"restartBudget":2}`
+	faults := writeFaultLog(t, line, closeLine)
+
+	// Replacement + one lock-collision restart: both expected.
+	p.observe([]podInfo{{Name: "collector-1", UID: "b", Restarts: 1}}, base.Add(time.Minute))
+	for _, f := range p.findings(faults) {
+		assert.True(t, f.expected, "both units fit the declared budget: %s", f.msg)
+	}
+
+	// A second container restart exceeds the budget.
+	p.observe([]podInfo{{Name: "collector-1", UID: "b", Restarts: 2}}, base.Add(2*time.Minute))
+	var unexpected int
+	for _, f := range p.findings(faults) {
+		if !f.expected && f.subject == "restart-budget" {
+			unexpected++
+		}
+	}
+	assert.Equal(t, 1, unexpected, "the third unit latches")
+}
+
 func TestRestartAllowanceBudgetIsPerInjection(t *testing.T) {
 	p := newPodState(0)
 	base := time.Now()

@@ -28,6 +28,8 @@ type faultEvent struct {
 	Target      FaultTarget `json:"target"`
 	Expects     []string    `json:"expects,omitempty"`
 	SettleSec   float64     `json:"settleSec"`
+	// RestartBudget is the injection's §8.8 unit budget (doc/checker.md).
+	RestartBudget int `json:"restartBudget"`
 	Detail      string      `json:"detail,omitempty"`
 }
 
@@ -286,7 +288,7 @@ func (fr *faultRunner) event(f FaultSpec, faultID, event string, scheduledAt tim
 		FaultID: faultID, Name: f.Name, Event: event,
 		At: fr.clock.Now(), ScheduledAt: scheduledAt,
 		Action: f.Action, Target: f.Target, Expects: f.Expects,
-		SettleSec: f.Settle.std().Seconds(), Detail: detail,
+		SettleSec: f.Settle.std().Seconds(), RestartBudget: f.RestartBudget, Detail: detail,
 	}
 	if err := fr.log.append(ev); err != nil {
 		fr.fail(fmt.Errorf("fault %s: event log: %w", faultID, err))

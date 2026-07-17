@@ -123,6 +123,12 @@ type FaultSpec struct {
 	// inside its window; the checker scopes allowances from it and the
 	// runner mutes same-named detectors.
 	Expects []string `yaml:"expects"`
+	// RestartBudget is how many §8.8 restart-or-replacement units one
+	// injection legitimately produces (default 1). A grace-0 kill of a
+	// collector measures at 2: the replacement pod plus one container
+	// restart when its first start collides with the dying process's
+	// collector.lock on the PV (T5.2 finding). Excess still latches.
+	RestartBudget int `yaml:"restartBudget"`
 	// Settle extends the expected-effects window past the fault / its revert.
 	Settle duration `yaml:"settle"`
 }
@@ -181,6 +187,12 @@ func (f *FaultSpec) validate(hasToxiproxy bool) error {
 	}
 	if f.Settle == 0 {
 		f.Settle = duration(5 * time.Minute)
+	}
+	if f.RestartBudget == 0 {
+		f.RestartBudget = 1
+	}
+	if f.RestartBudget < 1 {
+		return fmt.Errorf("fault %q: restartBudget must be >= 1", f.Name)
 	}
 	switch f.Action {
 	case "pod-delete":

@@ -191,7 +191,7 @@ global budget or a muted invariant.
 
   | `expects` entry | Invariant | Allowance semantics |
   | --- | --- | --- |
-  | `restarts` | §8.8 | +1 restart-or-replacement event for the TARGET pod per injection, observed in the window; other pods, later events, and per-injection excess stay violations |
+  | `restarts` | §8.8 | restart-or-replacement events for the TARGET pod, up to the injection's `restartBudget` (default 1), observed in the window; other pods, later events, and per-injection excess stay violations. A grace-0 collector kill measures at 2: the replacement plus one container restart when the fresh pod's first start collides with the dying process's `collector.lock` (T5.2) |
   | `scrape-gap` | target-available | gaps of the metrics target mapped to the target pod (`-target-pods`), in the window; unmapped targets never get this allowance |
   | `refused-bytes` | §8.3 | counter increments observed in the window are expected (and logged with their volume); increments outside stay violations |
   | `ingest-paused` | §8.2 | in-window samples leave the paused-ratio entirely (numerator and denominator) |

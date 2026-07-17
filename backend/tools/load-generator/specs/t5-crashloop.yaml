@@ -76,6 +76,9 @@ faults:
     repeat: {every: 90s, count: 10, readyTimeout: 5m}
     expects: [restarts, scrape-gap, freshness, markers, hot-window-lag,
               compaction-lag, small-file-share, ack-errors, pending-parquet-growth]
+    # Measured in T5.2: a grace-0 kill produces the replacement plus one
+    # collector.lock-collision container restart.
+    restartBudget: 2
     settle: 10m
 
 detectors:

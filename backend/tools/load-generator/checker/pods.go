@@ -152,10 +152,11 @@ func (p *podState) observe(pods []podInfo, at time.Time) {
 func (p *podState) evaluate(faults *faultState) []finding {
 	var out []finding
 
-	// consumed tracks per-injection budgets: ONE restart-or-replacement unit
-	// per injection — a multi-restart increment spends one allowance and the
-	// excess stays a violation.
-	consumed := map[string]bool{}
+	// consumed tracks per-injection budgets: each injection grants its
+	// declared restartBudget of restart-or-replacement units (default 1;
+	// a grace-0 collector kill measures at 2 — replacement plus one
+	// collector.lock-collision container restart). Excess stays a violation.
+	consumed := map[string]int{}
 	unexpectedTotal := 0
 	var unexpected []string
 	expectedByFault := map[string][]string{}
@@ -166,10 +167,10 @@ func (p *podState) evaluate(faults *faultState) []finding {
 				if remaining == 0 {
 					break
 				}
-				if consumed[w.faultID] || !w.contains(ev.observedAt) {
+				if consumed[w.faultID] >= w.budget || !w.contains(ev.observedAt) {
 					continue
 				}
-				consumed[w.faultID] = true
+				consumed[w.faultID]++
 				remaining--
 				expectedByFault[w.faultID] = append(expectedByFault[w.faultID],
 					fmt.Sprintf("%s %s", ev.pod, ev.kind))
