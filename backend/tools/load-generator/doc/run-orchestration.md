@@ -42,9 +42,10 @@ with everything needed to compare two runs:
 - the **run label** (`run.testid`): a unique string, also set as the k6 deployment's `TESTID` env, so k6 series of
   different runs never mix in VictoriaMetrics. Collector series carry no run label; they are separated by the step
   time windows recorded in `steps.jsonl`.
-- the **full workload** (`workload:`): every `scripts/scenario.js` env knob, mirroring `load-testing-plan.md` §4. The
-  runner does not push these to the k6 pod; it records them and refuses to run when `TESTID` visible in `k6_vus`
-  labels does not match `run.testid` (a stale deployment guard).
+- the **full workload** (`workload:`): every `scripts/scenario.js` workload knob, mirroring `load-testing-plan.md` §4.
+  The block is a complete freeze, not a diff from defaults — the scenario has no workload defaults to diff against
+  (see *Workload wiring* below). The runner does not push these to the k6 pod; it verifies them against the
+  deployment's exported fingerprint and refuses to run on any mismatch.
 - the **images** (`images:`): backend and runner references with digests.
 - the **Helm values snapshot** (`helmValues:`): path to the rendered values (resource limits included); copied into
   the artifacts.
@@ -66,17 +67,21 @@ images:
   runner: cdt-load-generator@sha256:...
 helmValues: ./values-snapshot.yaml
 
-workload:                   # frozen copy of the k6 deployment env (scenario knobs)
+workload:                   # complete freeze: every scenario workload knob, verbatim
   PODS_PER_VU: "1"
   THREADS_PER_POD: "8"
   CALLS_PER_SEC: "5"
-  # ... every knob that differs from the scenario defaults
+  # ... all remaining knobs; the runner refuses to start when this set
+  # differs from the deployment's k6_workload_info fingerprint
 
 ramp:
   levels: [10, 20, 40, 80, 160]     # VUs per step, one axis at a time
   confirm:
     timeout: 3m
     connectionsPerVU: 0             # T3: pods per VU; 0 disables the connection check
+    ingest:                         # actual-vs-declared ingest check; omit to disable (T3 idle fleets)
+      bytesPerVU: 19650             # steady ingest bytes/s each VU is expected to add
+      tolerance: 0.25               # relative deviation that still confirms
   hold:
     min: 3m
     max: 15m
@@ -126,6 +131,36 @@ pprof:
   seconds: 30
   profiles: [profile, heap, goroutine]
 ```
+
+## Workload wiring: no silent defaults
+
+The methodology's core promise — the run spec freezes the workload — failed once in phase 4: the stand left a knob
+unset, the scenario fell back to a built-in default, and a soak ran at 1.9× its declared rate with every artifact
+claiming otherwise. Three rules now make that impossible:
+
+1. **The scenario has no workload defaults.** Every workload knob of `scripts/scenario.js` (and every profile knob of
+   `scripts/query-scenario.js`) must be set in the k6 deployment's environment — the `k6.workload` map in the helm
+   values. A missing knob makes the scenario throw during init: k6 exits nonzero and the pod crash-loops, so a
+   misconfigured stand fails loudly instead of sending a silently different load. Plumbing (endpoints, `TESTID`,
+   `MAX_VUS`, `DURATION`) keeps defaults — it caps or labels the run but does not shape the traffic.
+2. **The deployment exports its fingerprint.** On test start the scenario emits one `workload_info` sample per knob
+   (`k6_workload_info{knob, value}` in VictoriaMetrics, under the run's `testid`), with the raw env string as the
+   value.
+3. **The runner verifies the fingerprint in preflight.** Within `confirm.timeout` it waits for every spec knob to
+   appear under `run.testid`, then requires exact string equality in both directions: a spec knob missing from the
+   deployment, a deployment knob missing from the spec, or any value difference refuses the run and names the knobs.
+   Two different values for one knob under the same `testid` mean a reused test id — also a refusal. Comparison is
+   env-level string equality (`"3"` ≠ `"3.0"`); write spec values exactly as the deployment env carries them.
+
+**Ingest confirm.** `ramp.confirm.ingest` closes the remaining gap: the fingerprint proves the knobs, this proves the
+load. The runner samples the ingest query (default: the `ingest-bytes` plateau series — collector-side
+`sum(rate(profiler_ingest_bytes_total{...}[1m]))` in bytes/s; collector series carry no run label, so the stand must
+run one k6 deployment at a time; `rate()` absorbs counter resets) over the first plateau window after the level
+confirms, and compares the window mean against `level × bytesPerVU`. A deviation beyond `tolerance` marks the step and
+the run `invalid`: the numbers would describe a load the spec does not. Omit the block for fleets with no meaningful
+ingest (T3 idle connections) and for ramp-to-saturation sweeps (T2) — past the ceiling the measured ingest
+legitimately diverges from `level × bytesPerVU`, and that divergence is the detectors' verdict to make, not a
+validity failure. The fingerprint check protects the knobs on every run shape.
 
 **Why `pending_parquet_bytes` is the seal/upload primary.** `profiler_upload_backlog` counts *files* and parquet files
 vary in size, so the count alone misreads mixed workloads; a hard AND across three series would miss saturation when

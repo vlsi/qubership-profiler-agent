@@ -59,6 +59,9 @@ func (r *runner) namedQueries() map[string]string {
 	for name, q := range r.spec.Ramp.Hold.Plateau.Series {
 		qs[name] = q
 	}
+	if ing := r.spec.Ramp.Confirm.Ingest; ing.BytesPerVU > 0 {
+		qs["ingest-confirm"] = ing.Query
+	}
 	for _, d := range r.spec.Detectors {
 		qs[d.Name] = d.Query
 	}
@@ -82,24 +85,46 @@ func (r *runner) connectionsQuery() string {
 	return "sum(profiler_ingest_active_connections)"
 }
 
-// preflight verifies the endpoints and the stale-deployment guard: the k6
-// deployment must already emit k6_vus under this run's testid.
+// preflight verifies the endpoints and the stale-deployment guards: the k6
+// deployment must already emit k6_vus under this run's testid, and its
+// workload fingerprint must equal the spec's frozen workload block
+// (doc/run-orchestration.md, "Workload wiring").
 func (r *runner) preflight(ctx context.Context) error {
 	if _, err := r.k6.Status(ctx); err != nil {
 		return fmt.Errorf("k6 REST API: %w", err)
 	}
 	deadline := time.Now().Add(r.spec.Ramp.Confirm.Timeout.std())
+	vusSeen := false
+	var lastErr error
 	for {
-		_, seen, err := r.vm.Instant(ctx, r.vusQuery())
-		if err != nil {
-			return fmt.Errorf("VictoriaMetrics: %w", err)
+		if !vusSeen {
+			_, seen, err := r.vm.Instant(ctx, r.vusQuery())
+			if err != nil {
+				return fmt.Errorf("VictoriaMetrics: %w", err)
+			}
+			vusSeen = seen
+			lastErr = fmt.Errorf("no k6_vus series with testid=%q — the k6 deployment's TESTID does not match the spec (stale deployment?)",
+				r.spec.Run.TestID)
 		}
-		if seen {
-			return nil
+		if vusSeen {
+			if len(r.spec.Workload) == 0 {
+				return fmt.Errorf("spec.workload is empty — the workload block is a complete freeze and is required")
+			}
+			fp, err := r.fetchFingerprint(ctx)
+			if err != nil {
+				return fmt.Errorf("VictoriaMetrics: %w", err)
+			}
+			incomplete, err := verifyWorkload(r.spec.Workload, fp)
+			if err == nil {
+				return nil
+			}
+			if !incomplete {
+				return err // hard mismatch: waiting will not fix it
+			}
+			lastErr = err // knobs not exported yet: remote write lags
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("no k6_vus series with testid=%q — the k6 deployment's TESTID does not match the spec (stale deployment?)",
-				r.spec.Run.TestID)
+			return lastErr
 		}
 		select {
 		case <-ctx.Done():
@@ -169,6 +194,7 @@ func (r *runner) holdStep(ctx context.Context, level int) (stepRecord, error) {
 	holdStart := time.Now()
 	plateauW := spec.Ramp.Hold.Plateau.Window.std()
 	tol := spec.Ramp.Hold.Plateau.SlopeTolerance
+	ingestChecked := false
 
 	for {
 		select {
@@ -187,6 +213,23 @@ func (r *runner) holdStep(ctx context.Context, level int) (stepRecord, error) {
 			}
 			if seen {
 				points[name] = append(points[name], Point{At: at, Value: v})
+			}
+		}
+
+		// Actual-vs-declared load check, once per hold, over the first full
+		// plateau window after confirm: a run whose measured ingest does not
+		// match the spec would describe a load the spec does not
+		// (doc/run-orchestration.md, "Workload wiring").
+		if ing := spec.Ramp.Confirm.Ingest; ing.BytesPerVU > 0 && !ingestChecked &&
+			at.Sub(*rec.ConfirmedAt) >= plateauW {
+			ingestChecked = true
+			if err := checkIngest(level, ing.BytesPerVU, ing.Tolerance,
+				meanOf(points["ingest-confirm"], plateauW)); err != nil {
+				rec.EndedAt = time.Now()
+				rec.Verdict = "invalid"
+				rec.Reasons = append(rec.Reasons, err.Error())
+				r.finishMeasurements(&rec, points, plateauW)
+				return rec, nil
 			}
 		}
 

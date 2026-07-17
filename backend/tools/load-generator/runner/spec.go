@@ -37,6 +37,16 @@ type Spec struct {
 			// ConnectionsQuery overrides the default active-connections
 			// query when connectionsPerVU > 0.
 			ConnectionsQuery string `yaml:"connectionsQuery"`
+			// Ingest is the actual-vs-declared load check: the measured
+			// ingest rate over the first plateau window of every hold must
+			// stay within Tolerance of level × BytesPerVU, or the run is
+			// invalid (doc/run-orchestration.md, "Workload wiring"). Zero
+			// BytesPerVU disables the check (T3 idle fleets).
+			Ingest struct {
+				Query      string  `yaml:"query"`
+				BytesPerVU float64 `yaml:"bytesPerVU"`
+				Tolerance  float64 `yaml:"tolerance"`
+			} `yaml:"ingest"`
 		} `yaml:"confirm"`
 		Hold struct {
 			Min     duration `yaml:"min"`
@@ -176,6 +186,17 @@ func (s *Spec) validate() error {
 	}
 	if s.Ramp.Hold.Plateau.SlopeTolerance == 0 {
 		s.Ramp.Hold.Plateau.SlopeTolerance = 0.05
+	}
+	if ing := &s.Ramp.Confirm.Ingest; ing.BytesPerVU > 0 {
+		if ing.Tolerance == 0 {
+			ing.Tolerance = 0.25
+		}
+		if ing.Query == "" {
+			ing.Query = s.Ramp.Hold.Plateau.Series["ingest-bytes"]
+			if ing.Query == "" {
+				return fmt.Errorf("confirm.ingest needs a query: set confirm.ingest.query or name a plateau series ingest-bytes")
+			}
+		}
 	}
 	if len(s.Pprof.Points) == 0 {
 		s.Pprof.Points = []float64{0.7, 1.0}

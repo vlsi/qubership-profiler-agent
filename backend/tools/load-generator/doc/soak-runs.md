@@ -95,15 +95,17 @@ The accelerated run cannot see slow leaks (plan §10); the real-timer 24–48 h 
 ## T6: background query load
 
 `scripts/query-scenario.js` (plain `k6/http` in the same custom k6 image) drives the read side. Windows are computed
-in JS and sent as integer Unix milliseconds. Profiles, per plan §7.6 (defaults chosen by us, to be revisited with
+in JS and sent as integer Unix milliseconds. Every profile knob must be pinned in `k6query.workload` — the scenario
+has no workload defaults and refuses to start on a missing knob (doc/run-orchestration.md, "Workload wiring"); the
+values below are the stand baselines from the environment files, per plan §7.6 (chosen by us, to be revisited with
 real usage data):
 
-- **`ui`** — `UI_VUS` (default 3) virtual users looping the UI journey: `GET /api/v1/calls` over the last hour →
+- **`ui`** — `UI_VUS` (baseline 3) virtual users looping the UI journey: `GET /api/v1/calls` over the last hour →
   pick a random row → `GET /calls/{pk}/trace?ts_ms=…` → `GET /calls/{pk}/tree` → think-time. The plan's
   "open a call" step maps to trace + tree: there is no bare `/calls/{pk}` endpoint.
 - **`incident`** — phase-based bursts: `INCIDENT_VUS` (20) users hammer wide ranges for
   `INCIDENT_DURATION_MINUTES` (5) out of every `INCIDENT_PERIOD_MINUTES` (30); idle between phases.
-- **`cold`** — `COLD_VUS` (default 0: this is a dedicated probe, not a soak companion) users issue ranges just
+- **`cold`** — `COLD_VUS` (baseline 0: this is a dedicated probe, not a soak companion) users issue ranges just
   under the 6 h wide-range guard and page through every `next_cursor` to the end; every page re-lists S3 by
   design. Guard rejections (HTTP 400 with a problem body) are counted in the `query_guard_rejected` custom
   metric, not treated as request failures — probing the guard is the point.

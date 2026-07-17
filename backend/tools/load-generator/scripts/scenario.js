@@ -6,10 +6,62 @@
 // PODS_PER_VU virtual dumpers until it is scaled away: 1 pod per VU for the
 // T2 throughput runs, ~100 idle pods per VU for the T3 connection runs.
 //
-// Every workload knob (§4) comes from env so the frozen run spec is the
-// single source of load-shape truth. Explicit zeros are honored — T3 sets
-// THREADS_PER_POD=0 for keep-alive-only pods.
+// Workload knobs have NO defaults: every knob must be set in the deployment
+// env (the k6.workload map in the helm values), and an unset knob fails the
+// scenario at init — a misconfigured stand crash-loops instead of sending a
+// silently different load (doc/run-orchestration.md, "Workload wiring").
+// setup() exports the resolved knobs as workload_info{knob,value} samples so
+// the runner can verify the frozen spec against the running deployment.
+// Plumbing (endpoints, TESTID, MAX_VUS, DURATION) keeps defaults — it caps or
+// labels the run but does not shape the traffic. Explicit zeros are honored —
+// T3 sets THREADS_PER_POD=0 for keep-alive-only pods.
 import cdt from 'k6/x/cdt';
+import { Gauge } from 'k6/metrics';
+
+// Every traffic-shaping knob (load-testing-plan.md §4). Order matters only
+// for readability; the runner compares the set, not the order.
+const WORKLOAD_KNOBS = [
+    'PODS_PER_VU',
+    'THREADS_PER_POD',
+    'CALLS_PER_SEC',
+    'DICT_INITIAL',
+    'DICT_GROWTH_PER_MIN',
+    'DURATION_THRESHOLDS',
+    'DURATION_SHARES',
+    'STACK_DEPTH',
+    'SQL_SHARE',
+    'SQL_BYTES',
+    'SQL_DEDUP',
+    'XML_SHARE',
+    'XML_BYTES',
+    'SUSPEND_RATE',
+    'ERROR_SHARE',
+    'REQUEST_ID_SHARE',
+    'CPU_FRACTION',
+    'WAIT_FRACTION',
+    'MEMORY_BYTES',
+    'SEED',
+    'START_SPREAD',
+];
+
+function knob(name) {
+    const v = __ENV[name];
+    if (v === undefined || v === '') {
+        throw new Error(
+            `workload knob ${name} is not set; the stand must pin every knob ` +
+            `via k6.workload in the helm values — silent defaults are forbidden ` +
+            `(doc/run-orchestration.md)`);
+    }
+    return v;
+}
+
+function knobNum(name) {
+    const v = Number(knob(name));
+    if (Number.isNaN(v)) {
+        throw new Error(`workload knob ${name}=${knob(name)} is not a number`);
+    }
+    return v;
+}
 
 function num(name, dflt) {
     const v = __ENV[name];
@@ -20,6 +72,15 @@ function str(name, dflt) {
     const v = __ENV[name];
     return v === undefined || v === '' ? dflt : v;
 }
+
+// Validate at init: a missing knob must abort the k6 process, not the first
+// iteration.
+const workload = {};
+for (const name of WORKLOAD_KNOBS) {
+    workload[name] = knob(name);
+}
+
+const workloadInfo = new Gauge('workload_info');
 
 export const options = {
     scenarios: {
@@ -35,34 +96,43 @@ export const options = {
     tags: { testid: str('TESTID', 'dev') },
 };
 
+// The fingerprint the runner verifies against the frozen spec: one sample per
+// knob, the raw env string as the value label. setup() runs once per test,
+// including at 0 VUs under the externally-controlled executor.
+export function setup() {
+    for (const name of WORKLOAD_KNOBS) {
+        workloadInfo.add(1, { knob: name, value: workload[name] });
+    }
+}
+
 export default function () {
     const summary = cdt.runFleet({
         addr: `${str('COLLECTOR_HOST', 'localhost')}:${num('COLLECTOR_PORT', 1715)}`,
-        pods: num('PODS_PER_VU', 1),
+        pods: knobNum('PODS_PER_VU'),
         namespace: str('EMULATOR_NAMESPACE', 'load'),
         service: str('EMULATOR_SERVICE', 'load-svc'),
         podPrefix: str('EMULATOR_POD_PREFIX', ''),
-        seed: num('SEED', 1),
-        startSpread: str('START_SPREAD', '2s'),
+        seed: knobNum('SEED'),
+        startSpread: knob('START_SPREAD'),
 
-        threadsPerPod: num('THREADS_PER_POD', 8),
-        callsPerSec: num('CALLS_PER_SEC', 5),
-        dictInitial: num('DICT_INITIAL', 2000),
-        dictGrowthPerMin: num('DICT_GROWTH_PER_MIN', 10),
-        durationThresholds: str('DURATION_THRESHOLDS', '100ms,1s,10s'),
-        durationShares: str('DURATION_SHARES', '0.90,0.07,0.025,0.005'),
-        stackDepth: num('STACK_DEPTH', 10),
-        sqlShare: num('SQL_SHARE', 0.2),
-        sqlBytes: num('SQL_BYTES', 1024),
-        sqlDedup: num('SQL_DEDUP', 0.9),
-        xmlShare: num('XML_SHARE', 0.05),
-        xmlBytes: num('XML_BYTES', 4096),
-        suspendRate: num('SUSPEND_RATE', 0.5),
-        errorShare: num('ERROR_SHARE', 0.01),
-        requestIdShare: num('REQUEST_ID_SHARE', 1),
-        cpuFraction: num('CPU_FRACTION', 0),
-        waitFraction: num('WAIT_FRACTION', 0),
-        memoryBytes: num('MEMORY_BYTES', 4096),
+        threadsPerPod: knobNum('THREADS_PER_POD'),
+        callsPerSec: knobNum('CALLS_PER_SEC'),
+        dictInitial: knobNum('DICT_INITIAL'),
+        dictGrowthPerMin: knobNum('DICT_GROWTH_PER_MIN'),
+        durationThresholds: knob('DURATION_THRESHOLDS'),
+        durationShares: knob('DURATION_SHARES'),
+        stackDepth: knobNum('STACK_DEPTH'),
+        sqlShare: knobNum('SQL_SHARE'),
+        sqlBytes: knobNum('SQL_BYTES'),
+        sqlDedup: knobNum('SQL_DEDUP'),
+        xmlShare: knobNum('XML_SHARE'),
+        xmlBytes: knobNum('XML_BYTES'),
+        suspendRate: knobNum('SUSPEND_RATE'),
+        errorShare: knobNum('ERROR_SHARE'),
+        requestIdShare: knobNum('REQUEST_ID_SHARE'),
+        cpuFraction: knobNum('CPU_FRACTION'),
+        waitFraction: knobNum('WAIT_FRACTION'),
+        memoryBytes: knobNum('MEMORY_BYTES'),
     });
     console.log(`fleet done: ${JSON.stringify(summary)}`);
 }

@@ -61,10 +61,16 @@ profiler:
     corruptedTTL: 25m
     podsTTL: 2h
 
+# The soak's declared write rate (specs/t4-soak-accelerated.yaml). Helmfile
+# deep-merges environment values, so only the differing knobs appear here.
+k6:
+  workload:
+    CALLS_PER_SEC: "3"
+
 # The soak's T6 companion: the UI profile only (incident bursts OOM the
 # single local query replica — a recorded finding, see doc/soak-runs.md),
 # with the UI window shrunk to match the accelerated data density.
 k6query:
-  extraEnv:
+  workload:
     INCIDENT_VUS: "0"
     UI_RANGE_MINUTES: "10"

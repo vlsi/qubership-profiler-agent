@@ -15,13 +15,47 @@
 // accepts nothing else. Guard rejections (HTTP 400) are the point of probing
 // wide ranges: they land in the query_guard_rejected counter, not in
 // http_req_failed.
+//
+// Profile knobs have NO defaults, same as scenario.js: every knob must be set
+// in the deployment env (the k6query.workload map in the helm values), an
+// unset knob fails the scenario at init, and setup() exports the resolved
+// knobs as workload_info{knob,value} samples
+// (doc/run-orchestration.md, "Workload wiring"). QUERY_URL, TESTID, and
+// DURATION are plumbing and keep defaults.
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { Counter } from 'k6/metrics';
+import { Counter, Gauge } from 'k6/metrics';
 
-function num(name, dflt) {
+const WORKLOAD_KNOBS = [
+    'UI_VUS',
+    'INCIDENT_VUS',
+    'COLD_VUS',
+    'UI_RANGE_MINUTES',
+    'INCIDENT_PERIOD_MINUTES',
+    'INCIDENT_DURATION_MINUTES',
+    'WIDE_RANGE_MINUTES',
+    'LIST_LIMIT',
+    'THINK_SECONDS',
+    'COLD_MAX_PAGES',
+];
+
+function knob(name) {
     const v = __ENV[name];
-    return v === undefined || v === '' ? dflt : Number(v);
+    if (v === undefined || v === '') {
+        throw new Error(
+            `workload knob ${name} is not set; the stand must pin every knob ` +
+            `via k6query.workload in the helm values — silent defaults are ` +
+            `forbidden (doc/run-orchestration.md)`);
+    }
+    return v;
+}
+
+function knobNum(name) {
+    const v = Number(knob(name));
+    if (Number.isNaN(v)) {
+        throw new Error(`workload knob ${name}=${knob(name)} is not a number`);
+    }
+    return v;
 }
 
 function str(name, dflt) {
@@ -29,22 +63,27 @@ function str(name, dflt) {
     return v === undefined || v === '' ? dflt : v;
 }
 
+const workload = {};
+for (const name of WORKLOAD_KNOBS) {
+    workload[name] = knob(name);
+}
+
 const BASE = str('QUERY_URL', 'http://profiler-backend-query.profiler-load.svc:8080');
-const LIST_LIMIT = num('LIST_LIMIT', 50);
-const THINK_SECONDS = num('THINK_SECONDS', 5);
+const LIST_LIMIT = knobNum('LIST_LIMIT');
+const THINK_SECONDS = knobNum('THINK_SECONDS');
 // Wide-range probes sit just under PROFILER_WIDE_RANGE_LIMIT (default 6h)
 // unless pushed over it on purpose.
-const WIDE_RANGE_MINUTES = num('WIDE_RANGE_MINUTES', 350);
-const COLD_MAX_PAGES = num('COLD_MAX_PAGES', 200);
+const WIDE_RANGE_MINUTES = knobNum('WIDE_RANGE_MINUTES');
+const COLD_MAX_PAGES = knobNum('COLD_MAX_PAGES');
 
 const guardRejected = new Counter('query_guard_rejected');
 const partialResponses = new Counter('query_partial_responses');
 const coldPages = new Counter('query_cold_pages');
+const workloadInfo = new Gauge('workload_info');
 
 // A profile with 0 VUs is omitted entirely (constant-vus rejects vus: 0).
-// Defaults match the soak companion: the UI journey plus incident bursts on,
-// the cold-heavy profile off — it is a dedicated probe run
-// (doc/soak-runs.md).
+// The soak companion runs ui (+ incident where the stand survives it); the
+// cold-heavy profile is a dedicated probe run (doc/soak-runs.md).
 function buildScenarios() {
     const out = {};
     const add = (name, exec, vus) => {
@@ -57,9 +96,9 @@ function buildScenarios() {
             };
         }
     };
-    add('ui', 'ui', num('UI_VUS', 3));
-    add('incident', 'incident', num('INCIDENT_VUS', 20));
-    add('cold', 'cold', num('COLD_VUS', 0));
+    add('ui', 'ui', knobNum('UI_VUS'));
+    add('incident', 'incident', knobNum('INCIDENT_VUS'));
+    add('cold', 'cold', knobNum('COLD_VUS'));
     return out;
 }
 
@@ -67,6 +106,14 @@ export const options = {
     scenarios: buildScenarios(),
     tags: { testid: str('TESTID', 'query-dev') },
 };
+
+// The fingerprint: one sample per knob, the raw env string as the value
+// label (doc/run-orchestration.md, "Workload wiring").
+export function setup() {
+    for (const name of WORKLOAD_KNOBS) {
+        workloadInfo.add(1, { knob: name, value: workload[name] });
+    }
+}
 
 function getCalls(fromMs, toMs, extra, tags) {
     let url = `${BASE}/api/v1/calls?from=${fromMs}&to=${toMs}&limit=${LIST_LIMIT}`;
@@ -100,7 +147,7 @@ function classify(res) {
 // an hour's guard budget into minutes — shrink the range with the timers.
 export function ui() {
     const now = Date.now();
-    const res = getCalls(now - num('UI_RANGE_MINUTES', 60) * 60 * 1000, now, '', { profile: 'ui' });
+    const res = getCalls(now - knobNum('UI_RANGE_MINUTES') * 60 * 1000, now, '', { profile: 'ui' });
     const body = res.status === 200 ? res.json() : null;
     const calls = body && body.calls ? body.calls : [];
     if (calls.length > 0) {
@@ -128,8 +175,8 @@ function openCall(call, tags) {
 // hammer wide ranges back to back; outside the burst they idle. Phase is
 // wall-clock-based so every VU bursts together.
 export function incident() {
-    const periodMs = num('INCIDENT_PERIOD_MINUTES', 30) * 60 * 1000;
-    const burstMs = num('INCIDENT_DURATION_MINUTES', 5) * 60 * 1000;
+    const periodMs = knobNum('INCIDENT_PERIOD_MINUTES') * 60 * 1000;
+    const burstMs = knobNum('INCIDENT_DURATION_MINUTES') * 60 * 1000;
     const now = Date.now();
     if (now % periodMs >= burstMs) {
         sleep(5);

@@ -52,6 +52,40 @@ func TestLoadSpecDefaults(t *testing.T) {
 	assert.Equal(t, "runs", s.Outputs)
 }
 
+func TestLoadSpecIngestDefaults(t *testing.T) {
+	s, err := LoadSpec(writeSpec(t, `
+run: {name: t4, testid: t}
+endpoints: {k6: a, vm: b, collector: c}
+ramp:
+  levels: [20]
+  confirm:
+    ingest: {bytesPerVU: 19650}
+  hold:
+    plateau:
+      series:
+        ingest-bytes: sum(rate(profiler_ingest_bytes_total[1m]))
+`))
+	require.NoError(t, err)
+	ing := s.Ramp.Confirm.Ingest
+	assert.Equal(t, 0.25, ing.Tolerance, "tolerance defaults to 0.25")
+	assert.Equal(t, "sum(rate(profiler_ingest_bytes_total[1m]))", ing.Query,
+		"query defaults to the ingest-bytes plateau series")
+}
+
+func TestLoadSpecIngestNeedsAQuery(t *testing.T) {
+	body := `
+run: {name: t2, testid: t}
+endpoints: {k6: a, vm: b, collector: c}
+ramp:
+  levels: [10]
+  confirm:
+    ingest: {bytesPerVU: 100}
+  hold: {plateau: {series: {x: q}}}
+`
+	_, err := LoadSpec(writeSpec(t, body))
+	require.Error(t, err, "no ingest-bytes plateau series and no explicit query")
+}
+
 // TestSpecTemplatesLoad keeps every committed template in ../specs loadable:
 // a template that stops parsing is a broken runbook.
 func TestSpecTemplatesLoad(t *testing.T) {

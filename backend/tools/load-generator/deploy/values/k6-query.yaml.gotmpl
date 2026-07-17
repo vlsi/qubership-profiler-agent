@@ -15,7 +15,9 @@ deployment:
     QUERY_URL: http://profiler-backend-query.{{ .Values.stand.namespace }}.svc:8080
     DURATION: {{ .Values.k6query.duration | quote }}
     TESTID: {{ .Values.k6query.testid | quote }}
-{{- range $key, $value := .Values.k6query.extraEnv }}
+    # The complete profile map — query-scenario.js has no workload defaults
+    # and refuses to start on a missing knob (doc/run-orchestration.md).
+{{- range $key, $value := required "k6query.workload must pin every query-scenario workload knob" .Values.k6query.workload }}
     {{ $key }}: {{ $value | quote }}
 {{- end }}
 

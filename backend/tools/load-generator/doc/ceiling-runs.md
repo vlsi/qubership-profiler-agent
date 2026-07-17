@@ -17,9 +17,10 @@ helmfile -e local apply                                                # local s
 helmfile -e cluster apply --state-values-set profiler.collector.replicas=1   # large cluster
 ```
 
-Set the k6 deployment's fleet shape and run label through the environment file or `--state-values-set`
-(`k6.podsPerVU`, `k6.maxVUs`, `k6.testid`, `k6.extraEnv.*`); the k6 pod restarts with the new env, idle at 0 VUs.
-`k6.testid` must equal `run.testid` in the spec — the runner refuses to start otherwise (stale-deployment guard).
+Set the k6 deployment's run label and workload through the environment file or `--state-values-set`
+(`k6.testid`, `k6.maxVUs`, `k6.workload.*`); the k6 pod restarts with the new env, idle at 0 VUs. The workload map
+must match the spec's workload block exactly and the scenario refuses to start on a missing knob — the runner
+verifies the fingerprint and the `TESTID` in preflight (doc/run-orchestration.md, "Workload wiring").
 
 To make a smoke run hit backpressure at local load levels, shrink the pending-upload budget so `ingest_paused`
 engages early, e.g. add to the profiler values: `PENDING_UPLOAD_MAX_BYTES: "16777216"` (16 MB).

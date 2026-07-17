@@ -61,13 +61,36 @@ k6:
   # Push the image for the cluster's architecture (or a multi-arch manifest)
   # and pin an immutable tag.
   image: cdt-load-generator:dev
-  # Ceiling-run defaults (plan §7 T2/T3); the orchestrator scales VUs from 0
-  # over the k6 REST API and overrides the workload per run spec.
-  podsPerVU: 1
+  # The orchestrator scales VUs from 0 over the k6 REST API; these only cap
+  # and label the run.
   maxVUs: 2000
   duration: 6h
   testid: dev
-  extraEnv: {}
+  # The COMPLETE workload map for scripts/scenario.js (no scenario defaults;
+  # doc/run-orchestration.md, "Workload wiring"). Ceiling-run baseline —
+  # override per run to match the run spec's workload block exactly.
+  workload:
+    PODS_PER_VU: "1"
+    THREADS_PER_POD: "8"
+    CALLS_PER_SEC: "5"
+    DICT_INITIAL: "2000"
+    DICT_GROWTH_PER_MIN: "10"
+    DURATION_THRESHOLDS: "100ms,1s,10s"
+    DURATION_SHARES: "0.90,0.07,0.025,0.005"
+    STACK_DEPTH: "10"
+    SQL_SHARE: "0.2"
+    SQL_BYTES: "1024"
+    SQL_DEDUP: "0.9"
+    XML_SHARE: "0.05"
+    XML_BYTES: "4096"
+    SUSPEND_RATE: "0.5"
+    ERROR_SHARE: "0.01"
+    REQUEST_ID_SHARE: "1"
+    CPU_FRACTION: "0"
+    WAIT_FRACTION: "0"
+    MEMORY_BYTES: "4096"
+    SEED: "1"
+    START_SPREAD: "2s"
   # Plan §10: pin the runner to dedicated nodes on the big cluster so the
   # generator is never the bottleneck being measured (add a nodeSelector to
   # the chart when the cluster materializes).
@@ -77,4 +100,16 @@ k6query:
   installed: false
   duration: 48h
   testid: query-dev
-  extraEnv: {}
+  # The complete profile map for scripts/query-scenario.js — same no-defaults
+  # rule as k6.workload.
+  workload:
+    UI_VUS: "3"
+    INCIDENT_VUS: "20"
+    COLD_VUS: "0"
+    UI_RANGE_MINUTES: "60"
+    INCIDENT_PERIOD_MINUTES: "30"
+    INCIDENT_DURATION_MINUTES: "5"
+    WIDE_RANGE_MINUTES: "350"
+    LIST_LIMIT: "50"
+    THINK_SECONDS: "5"
+    COLD_MAX_PAGES: "200"

@@ -86,6 +86,34 @@ func (c *vmClient) Instant(ctx context.Context, query string) (float64, bool, er
 	return sum, seen, nil
 }
 
+// vecSample is one series of an instant-query result, labels included.
+type vecSample struct {
+	Metric map[string]string
+	Value  float64
+}
+
+// InstantVector runs an instant query and returns every series with its
+// labels — for results whose labels carry the payload (the workload
+// fingerprint), where Instant's sum-and-collapse would destroy them.
+func (c *vmClient) InstantVector(ctx context.Context, query string) ([]vecSample, error) {
+	pr, err := c.get(ctx, "/api/v1/query", url.Values{"query": {query}})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]vecSample, 0, len(pr.Data.Result))
+	for _, r := range pr.Data.Result {
+		if len(r.Value) != 2 {
+			continue
+		}
+		v, err := toFloat(r.Value[1])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vecSample{Metric: r.Metric, Value: v})
+	}
+	return out, nil
+}
+
 // Range exports a query over [from, to] for the series/ artifacts; the raw
 // JSON body is stored, not interpreted.
 func (c *vmClient) Range(ctx context.Context, query string, from, to time.Time, step time.Duration) (json.RawMessage, error) {

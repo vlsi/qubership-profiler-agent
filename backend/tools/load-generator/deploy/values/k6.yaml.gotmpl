@@ -15,11 +15,12 @@ deployment:
     COLLECTOR_PORT: "1715"
     EMULATOR_NAMESPACE: load
     EMULATOR_SERVICE: load-svc
-    PODS_PER_VU: {{ .Values.k6.podsPerVU | quote }}
     MAX_VUS: {{ .Values.k6.maxVUs | quote }}
     DURATION: {{ .Values.k6.duration | quote }}
     TESTID: {{ .Values.k6.testid | quote }}
-{{- range $key, $value := .Values.k6.extraEnv }}
+    # The complete workload map — the scenario has no workload defaults and
+    # refuses to start on a missing knob (doc/run-orchestration.md).
+{{- range $key, $value := required "k6.workload must pin every scenario workload knob" .Values.k6.workload }}
     {{ $key }}: {{ $value | quote }}
 {{- end }}
 
