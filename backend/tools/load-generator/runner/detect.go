@@ -128,17 +128,21 @@ func detectorFires(d Detector, points []Point, plateauWindow time.Duration,
 		}
 		return float64(nonzero)/float64(len(points)) > d.Share
 	case "monotonic-growth":
-		first, last := points[0].Value, points[len(points)-1].Value
+		last := points[len(points)-1].Value
 		if last < d.MinValue {
 			return false // below the absolute floor nothing counts as backlog
 		}
-		grown := false
-		switch {
-		case first == 0:
-			grown = last > 0
-		default:
-			grown = (last-first)/first > d.MinGrowth
+		// Not judged until the (post-grace) samples span a full plateau
+		// window: right after the grace expires only seconds of data exist,
+		// and one rising edge of a purge-cycle sawtooth reads as growth —
+		// the T5 storm run fired exactly that way on a healthy plateau.
+		if points[len(points)-1].At.Sub(points[0].At) < plateauWindow {
+			return false
 		}
+		// The trend is a least-squares fit over the kept samples, not a
+		// first-to-last delta: a sawtooth oscillating around a level fits to
+		// ~zero growth however its edges align with the window.
+		grown := relativeSlope(points) > d.MinGrowth
 		// Still-climbing check: a series that grew and then flattened found
 		// its level; only growth with no plateau in the last window fires.
 		return grown && !isFlat(points, plateauWindow, slopeTolerance) &&

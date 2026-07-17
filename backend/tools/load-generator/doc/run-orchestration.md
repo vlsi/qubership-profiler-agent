@@ -176,10 +176,14 @@ stale-data hot-window lag until the first new bucket seals. Growth-shaped and ab
 either as saturation.
 
 - `sticky-share`: the instant value is nonzero in more than `share` of the samples so far.
-- `monotonic-growth`: the series grew by more than `minGrowth` (relative) over the hold *and* the last plateau window
-  shows no flattening (its relative slope stays above `slopeTolerance`). An optional absolute `minValue` keeps the
+- `monotonic-growth`: the least-squares-fitted growth of the series exceeds `minGrowth` (relative to the fitted mean)
+  over the hold *and* the last plateau window shows no flattening (its relative slope stays above `slopeTolerance`).
+  The fit — not a first-to-last delta — is what keeps a sawtooth oscillating around a level from firing on whichever
+  edge aligns with the window; the T5 storm run proved the delta form wrong on a healthy purge-cycle plateau. The
+  detector is judged only once its (post-grace) samples span a full plateau window: right after the grace expires
+  only seconds of data exist, and any rising edge would read as growth. An optional absolute `minValue` keeps the
   detector silent while the last sample is below it — a gauge that oscillates down to zero (pending-parquet bytes
-  between upload cycles) otherwise reads every rising sawtooth edge as growth from zero.
+  between upload cycles) stays out of judgment while empty.
 - `nonzero`: any sample above zero.
 - `baseline-ratio`: the mean over the last plateau window exceeds `ratio ×` the baseline; the baseline is the mean of
   the same query over the first `ok` step's hold. Until a baseline exists the detector stays silent.
