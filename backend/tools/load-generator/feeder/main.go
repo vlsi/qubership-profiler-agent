@@ -161,6 +161,7 @@ type aggStats struct {
 	bytes        map[string]uint64
 	connects     int
 	disconnects  int
+	churns       int
 	ackErrors    int
 	dropped      int
 	sessionReady durAgg
@@ -200,6 +201,7 @@ func (a *aggStats) Disconnected(_ int, err error) {
 	defer a.mu.Unlock()
 	a.disconnects++
 }
+func (a *aggStats) Churned(int) { a.mu.Lock(); defer a.mu.Unlock(); a.churns++ }
 func (a *aggStats) StreamOpened(string, int, bool) {}
 func (a *aggStats) BytesSent(stream string, n int) {
 	a.mu.Lock()

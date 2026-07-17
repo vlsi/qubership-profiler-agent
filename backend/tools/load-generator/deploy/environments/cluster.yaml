@@ -97,6 +97,8 @@ k6:
     MEMORY_BYTES: "4096"
     SEED: "1"
     START_SPREAD: "2s"
+    RESTART_INTERVAL: "10s"
+    CHURN_INTERVAL: "0s"
   # Plan §10: pin the runner to dedicated nodes on the big cluster so the
   # generator is never the bottleneck being measured (add a nodeSelector to
   # the chart when the cluster materializes).

@@ -24,7 +24,7 @@ type statsAdapter struct {
 	streamTags map[string]*metrics.TagSet
 
 	// Fleet totals for the runFleet summary.
-	connects, reconnects, ackErrors, dropped atomic.Int64
+	connects, reconnects, churns, ackErrors, dropped atomic.Int64
 }
 
 var _ vdumper.StatsListener = (*statsAdapter)(nil)
@@ -66,6 +66,11 @@ func (a *statsAdapter) Connected(int) {
 func (a *statsAdapter) Disconnected(int, error) {
 	a.reconnects.Add(1)
 	a.push(a.m.reconnects, a.tags, 1)
+}
+
+func (a *statsAdapter) Churned(int) {
+	a.churns.Add(1)
+	a.push(a.m.churns, a.tags, 1)
 }
 
 func (a *statsAdapter) StreamOpened(string, int, bool) {}

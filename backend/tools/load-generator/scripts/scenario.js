@@ -42,6 +42,8 @@ const WORKLOAD_KNOBS = [
     'MEMORY_BYTES',
     'SEED',
     'START_SPREAD',
+    'RESTART_INTERVAL',
+    'CHURN_INTERVAL',
 ];
 
 function knob(name) {
@@ -114,6 +116,8 @@ export default function () {
         podPrefix: str('EMULATOR_POD_PREFIX', ''),
         seed: knobNum('SEED'),
         startSpread: knob('START_SPREAD'),
+        restartInterval: knob('RESTART_INTERVAL'),
+        churnInterval: knob('CHURN_INTERVAL'),
 
         threadsPerPod: knobNum('THREADS_PER_POD'),
         callsPerSec: knobNum('CALLS_PER_SEC'),

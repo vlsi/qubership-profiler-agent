@@ -48,6 +48,8 @@ workload:                        # complete freeze; must equal k6.workload of th
   MEMORY_BYTES: "4096"
   SEED: "1"
   START_SPREAD: "10s"            # spread each fleet's 100 connects
+  RESTART_INTERVAL: "10s"
+  CHURN_INTERVAL: "0s"
 
 ramp:
   levels: [10, 20, 30, 40, 50]   # VUs; ×100 pods = connections

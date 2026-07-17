@@ -15,6 +15,7 @@ type FleetSummary struct {
 	Pods        int   `js:"pods"`
 	Connects    int64 `js:"connects"`
 	Reconnects  int64 `js:"reconnects"`
+	Churns      int64 `js:"churns"`
 	AckErrors   int64 `js:"ackErrors"`
 	Dropped     int64 `js:"dropped"`
 	PodFailures int   `js:"podFailures"`
@@ -79,6 +80,7 @@ func (mi *ModuleInstance) RunFleet(opts FleetOptions) (FleetSummary, error) {
 		Pods:        opts.Pods,
 		Connects:    adapter.connects.Load(),
 		Reconnects:  adapter.reconnects.Load(),
+		Churns:      adapter.churns.Load(),
 		AckErrors:   adapter.ackErrors.Load(),
 		Dropped:     adapter.dropped.Load(),
 		PodFailures: podFailures,

@@ -41,6 +41,13 @@ type FleetOptions struct {
 	CallsPerSec   float64 `js:"callsPerSec"`
 	DictInitial   int     `js:"dictInitial"`
 
+	// Lifecycle timing (virtual-dumper.md §1.1): RestartInterval is the sleep
+	// between incarnations ("" keeps the agent's 10 s); ChurnInterval > 0
+	// turns on churn mode — every healthy incarnation disconnects abruptly
+	// after roughly this long, the T5 reconnect-storm shape ("" or "0s" off).
+	RestartInterval string `js:"restartInterval"`
+	ChurnInterval   string `js:"churnInterval"`
+
 	// Workload shape (load-testing-plan.md §4). DurationThresholds and
 	// DurationShares use the comma-separated form of
 	// vdumper.ParseDurationSpec; empty strings take the default tiers.
@@ -94,7 +101,28 @@ func (o FleetOptions) validate() (time.Duration, error) {
 	if err != nil {
 		return 0, errors.Wrapf(err, "runFleet: bad startSpread %q", o.StartSpread)
 	}
+	if _, err := o.lifecycle(); err != nil {
+		return 0, err
+	}
 	return spread, nil
+}
+
+// lifecycle parses the incarnation-timing knobs; empty strings keep the
+// vdumper defaults (restart 10 s, churn off).
+func (o FleetOptions) lifecycle() (struct{ restart, churn time.Duration }, error) {
+	var out struct{ restart, churn time.Duration }
+	var err error
+	if o.RestartInterval != "" {
+		if out.restart, err = time.ParseDuration(o.RestartInterval); err != nil {
+			return out, errors.Wrapf(err, "runFleet: bad restartInterval %q", o.RestartInterval)
+		}
+	}
+	if o.ChurnInterval != "" {
+		if out.churn, err = time.ParseDuration(o.ChurnInterval); err != nil {
+			return out, errors.Wrapf(err, "runFleet: bad churnInterval %q", o.ChurnInterval)
+		}
+	}
+	return out, nil
 }
 
 // workload maps the flat option fields onto vdumper.Workload.
@@ -126,6 +154,7 @@ func (o FleetOptions) workload() (vdumper.Workload, error) {
 // seeds stay unique across VUs so the collector sees distinct pods and the
 // workload streams do not correlate.
 func (o FleetOptions) podConfig(workload vdumper.Workload, vuID uint64, idx int, stats vdumper.StatsListener) vdumper.Config {
+	timing, _ := o.lifecycle() // validated in validate()
 	return vdumper.Config{
 		Namespace: o.Namespace,
 		Service:   o.Service,
@@ -142,6 +171,8 @@ func (o FleetOptions) podConfig(workload vdumper.Workload, vuID uint64, idx int,
 		DictionaryInitial:    o.DictInitial,
 		ThreadsPerPod:        o.ThreadsPerPod,
 		CallsPerSecPerThread: o.CallsPerSec,
+		RestartInterval:      timing.restart,
+		ChurnInterval:        timing.churn,
 		Seed:                 o.Seed + int64(vuID)*1_000_000 + int64(idx)*1_000,
 		Workload:             workload,
 		Stats:                stats,

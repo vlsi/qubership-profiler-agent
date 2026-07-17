@@ -35,6 +35,7 @@ type statsRec struct {
 	mu           sync.Mutex
 	connected    int
 	disconnected int
+	churned      int
 	ackErrors    int
 	dropped      int
 	tcpConnects  int
@@ -49,6 +50,13 @@ func (r *statsRec) Disconnected(_ int, err error) {
 	defer r.mu.Unlock()
 	r.disconnected++
 	r.lastErr = err
+}
+func (r *statsRec) Churned(int) { r.mu.Lock(); defer r.mu.Unlock(); r.churned++ }
+
+func (r *statsRec) churnedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.churned
 }
 func (r *statsRec) StreamOpened(string, int, bool) {}
 func (r *statsRec) BytesSent(string, int)          {}
@@ -344,6 +352,69 @@ func TestGracefulClose(t *testing.T) {
 		eventually, tick, "the agent announces a graceful close")
 	words := decodePhrases(t, col.StreamData(0, model.StreamDictionary))
 	assert.Len(t, words, 12, "the shutdown flush pushes the pending dictionary out")
+}
+
+// TestChurnCyclesAbruptly (churn mode, virtual-dumper.md §1.1): a healthy
+// incarnation disconnects on purpose after ChurnInterval — abruptly, with no
+// COMMAND_CLOSE — reconnects after RestartInterval under the same pod name,
+// re-sends the dictionary with resetRequired=1, and the cycle counts through
+// Churned, never through Disconnected or the ack-error counter.
+func TestChurnCyclesAbruptly(t *testing.T) {
+	col := emutest.Start(t)
+	clk := newFakeClock()
+	rec := &statsRec{}
+	cfg := vdumper.Config{
+		Namespace: "ns", Service: "svc", PodName: "pod-1",
+		Connection: emulator.ConnectionOpts{
+			ProtocolAddress: col.Addr(),
+			Timeout: profio.TcpTimeout{
+				ConnectTimeout: 2 * time.Second,
+				SessionTimeout: time.Minute,
+				ReadTimeout:    2 * time.Second,
+				WriteTimeout:   2 * time.Second,
+			},
+		},
+		DictionaryInitial: 12,
+		Workload:          quietWorkload(),
+		ChurnInterval:     30 * time.Second,
+		Clock:             clk,
+		Stats:             rec,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = vdumper.New(cfg).Run(ctx) }()
+
+	require.Eventually(t, func() bool { return len(initsOf(col, 0)) == 7 }, eventually, tick)
+
+	// Past the jittered churn deadline (30 s ± 20%) the incarnation ends.
+	waitTimer(t, clk)
+	clk.Advance(40 * time.Second)
+	require.Eventually(t, func() bool { return rec.churnedCount() == 1 },
+		eventually, tick, "the churn cycle must be counted")
+	assert.Empty(t, col.EventsOf(model.COMMAND_CLOSE),
+		"churn disconnects abruptly: no COMMAND_CLOSE, unlike a graceful shutdown")
+	connected, disconnected, ackErrors := rec.snapshot()
+	assert.Equal(t, 1, connected)
+	assert.Equal(t, 0, disconnected, "a deliberate cycle is not a failure reconnect")
+	assert.Equal(t, 0, ackErrors)
+
+	// The ordinary RestartInterval reconnect path follows, with the full
+	// dictionary resend under resetRequired=1.
+	waitTimer(t, clk)
+	clk.Advance(10 * time.Second)
+	require.Eventually(t, func() bool { return len(initsOf(col, 1)) == 7 },
+		eventually, tick, "the pod must reconnect after RestartInterval")
+	for _, e := range initsOf(col, 1) {
+		if e.Stream == model.StreamDictionary {
+			assert.True(t, e.Reset, "every churn cycle re-sends the dictionary with resetRequired=1")
+		}
+	}
+	waitTimer(t, clk)
+	clk.Advance(5 * time.Second)
+	require.Eventually(t, func() bool { return len(col.StreamData(1, model.StreamDictionary)) > 0 },
+		eventually, tick)
+	words := decodePhrases(t, col.StreamData(1, model.StreamDictionary))
+	assert.Len(t, words, 12, "the dictionary is re-sent from word 0 on every cycle")
 }
 
 // TestBlacklistedStops: BLACK_LISTED_RESP stops the pod permanently — the

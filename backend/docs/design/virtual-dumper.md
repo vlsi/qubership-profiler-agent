@@ -47,6 +47,14 @@ stateDiagram-v2
   dumper counts these drops instead of pausing producers.
 - Graceful shutdown flushes all streams, sends `COMMAND_CLOSE`, and closes the socket.
 
+**Churn mode (T5 reconnect storms, phase 5).** With `ChurnInterval > 0` a *healthy* incarnation disconnects on
+purpose after living that long past session-ready (± `ChurnJitter`, so a fleet does not cycle in lockstep): the
+socket closes abruptly with no `COMMAND_CLOSE` — the CrashLoopBackOff shape, not a graceful shutdown — and the pod
+takes the ordinary `Sleep → Connect` path with the full dictionary resend. The pod name never changes, so the
+collector sees the same pod restarting (new restartMs directories, a growing pod-restart set). Churn cycles are
+reported through a dedicated `Churned` stats event, never through `Disconnected` or the ack-error counter: a storm
+run must still see real failures underneath the deliberate churn.
+
 ## 2. Wire contract
 
 ### 2.1 Handshake and socket
@@ -211,6 +219,7 @@ All knobs live in `vdumper.Config`; every run records its full parameter set (`l
 | `MemoryMeanBytes` | per-call `memory.allocated` counter | 4 KB |
 | `ChunkMaxBytes` | producer buffer size (logical chunk) | 32 KB |
 | `FlushInterval`, `BufferStealInterval`, `RestartInterval` | dumper timers | 5 s, 5 s, 10 s |
+| `ChurnInterval`, `ChurnJitter` | deliberate abrupt disconnect of a healthy incarnation (§1.1 churn mode) | 0 (off), ±0.2 |
 
 The generator does not model thread occupancy: producers emit at the configured rate even when
 rate × mean duration exceeds one. When mirroring a real workload whose threads block for the call duration, set
@@ -231,7 +240,9 @@ Contracts-first and synthetic; no golden byte snapshots, no captured dumps.
 - Conformance tests (transport): ack accounting (+1 per `RCV_DATA`, no flush between cycles), opportunistic vs
   synchronous drains, piggybacked command handling, typed `AckError`.
 - Lifecycle tests (vdumper): `ACK_ERROR` → drop window → reconnect after `RestartInterval` → all seven streams
-  re-opened, dictionary re-sent from word 0 with `resetRequired=1`; graceful shutdown flushes and closes.
+  re-opened, dictionary re-sent from word 0 with `resetRequired=1`; graceful shutdown flushes and closes; churn
+  mode disconnects abruptly (no `COMMAND_CLOSE`), re-sends the dictionary with `resetRequired=1` every cycle, and
+  counts through `Churned` — not `Disconnected`, not the ack-error counter.
 - Interleaving test: decode the `RCV_DATA` sequence from the double and assert logical chunks of several thread ids
   interleave within one flush window.
 - Decodability: generated streams round-trip through `libs/parser/pipe` (trace, calls, dictionary, suspend, params,

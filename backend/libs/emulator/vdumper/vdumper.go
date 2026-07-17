@@ -29,6 +29,11 @@ var ErrBlacklisted = errors.New("collector blacklisted the namespace")
 // not implemented (virtual-dumper.md §2.2).
 var ErrServerVersion = errors.New("collector answered an unsupported protocol version")
 
+// errChurn ends a healthy incarnation on purpose (churn mode,
+// virtual-dumper.md §1.1): the socket closes abruptly with no COMMAND_CLOSE
+// and the pod takes the ordinary reconnect path. Never surfaced outside Run.
+var errChurn = errors.New("deliberate churn disconnect")
+
 // VirtualDumper emulates one profiled pod. Run drives the DumperThread
 // lifecycle: connect → open streams → pump → on any failure close, wait
 // RestartInterval, reconnect with a full dictionary resend.
@@ -147,6 +152,12 @@ func (d *VirtualDumper) Run(ctx context.Context) error {
 			return nil
 		case errors.Is(err, ErrBlacklisted), errors.Is(err, ErrServerVersion):
 			return err
+		case errors.Is(err, errChurn):
+			// A deliberate cycle, not a failure: it must not pollute the
+			// reconnect and ack-error counters a storm run reads real
+			// failures from.
+			d.stats.Churned(incarnation)
+			continue
 		}
 		if errors.Is(err, emulator.ErrAckRefused) {
 			d.stats.AckError()
@@ -264,6 +275,13 @@ func (d *VirtualDumper) writeStreamHeader(t Transport, s *streamState) error {
 // interval elapsed — runs the flush cycle.
 func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
 	nextFlush := d.clock.Now().Add(d.cfg.FlushInterval)
+	// Churn mode: a healthy incarnation lives ChurnInterval (± jitter) past
+	// session-ready, then disconnects abruptly — returning errChurn skips
+	// gracefulClose, so the deferred socket close is all the collector sees.
+	var churnCh <-chan time.Time
+	if d.cfg.ChurnInterval > 0 {
+		churnCh = d.clock.After(jitterDuration(d.rnd, d.cfg.ChurnInterval, d.cfg.ChurnJitter))
+	}
 	// flushCh stays armed across chunk wake-ups: re-arming per iteration would
 	// allocate one timer per chunk and leak the abandoned ones.
 	var flushCh <-chan time.Time
@@ -274,6 +292,8 @@ func (d *VirtualDumper) pump(ctx context.Context, t Transport) error {
 		select {
 		case <-ctx.Done():
 			return d.gracefulClose(t)
+		case <-churnCh:
+			return errChurn
 		case c := <-d.chunks:
 			if err := d.writeChunk(t, c); err != nil {
 				return err

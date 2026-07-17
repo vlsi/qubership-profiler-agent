@@ -50,6 +50,8 @@ workload:                        # complete freeze; must equal k6.workload of th
   MEMORY_BYTES: "4096"
   SEED: "1"
   START_SPREAD: "2s"
+  RESTART_INTERVAL: "10s"
+  CHURN_INTERVAL: "0s"
 
 ramp:
   levels: [500]                  # the contract point: 500 pods, one fixed hold

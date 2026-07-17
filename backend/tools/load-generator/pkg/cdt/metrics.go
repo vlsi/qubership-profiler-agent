@@ -12,6 +12,7 @@ type fleetMetrics struct {
 	sentBytes     *metrics.Metric // per RCV_DATA payload, tagged stream
 	connects      *metrics.Metric // successful handshakes + stream setups
 	reconnects    *metrics.Metric // dead incarnations (the agent's restart path)
+	churns        *metrics.Metric // deliberate churn-mode cycles (T5 storms)
 	ackErrors     *metrics.Metric // ACK_ERROR_MAGIC refusals (backpressure)
 	droppedChunks *metrics.Metric // chunks lost in reconnect drop windows
 
@@ -43,6 +44,7 @@ func registerMetrics(reg *metrics.Registry) (fleetMetrics, error) {
 	m.sentBytes = counter("vdumper_sent_bytes", metrics.Data)
 	m.connects = counter("vdumper_connects", metrics.Default)
 	m.reconnects = counter("vdumper_reconnects", metrics.Default)
+	m.churns = counter("vdumper_churns", metrics.Default)
 	m.ackErrors = counter("vdumper_ack_errors", metrics.Default)
 	m.droppedChunks = counter("vdumper_dropped_chunks", metrics.Default)
 	m.tcpConnectTime = trend("vdumper_tcp_connect_time")

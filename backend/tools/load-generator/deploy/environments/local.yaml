@@ -93,6 +93,8 @@ k6:
     MEMORY_BYTES: "4096"
     SEED: "1"
     START_SPREAD: "2s"
+    RESTART_INTERVAL: "10s"
+    CHURN_INTERVAL: "0s"
 
 # T6 background query load (query-scenario.js); starts sending on pod start,
 # so keep it parked until a soak needs it:

@@ -37,6 +37,16 @@ type Config struct {
 	// (DUMPER_RESTART_INTERVAL, default 10 s).
 	RestartInterval time.Duration
 
+	// ChurnInterval, when positive, disconnects every HEALTHY incarnation on
+	// purpose after it lived this long past session-ready: an abrupt socket
+	// close with no COMMAND_CLOSE — the CrashLoopBackOff shape of the T5
+	// reconnect storms (virtual-dumper.md §1.1, churn mode). The pod then
+	// follows the ordinary RestartInterval reconnect path. 0 disables churn.
+	ChurnInterval time.Duration
+	// ChurnJitter spreads the churn deadline uniformly by ± this fraction so
+	// a fleet does not cycle in lockstep (default 0.2 when churn is on).
+	ChurnJitter float64
+
 	// DictionaryInitial is how many synthetic dictionary words the pod knows
 	// at startup; the whole set is re-sent after every reconnect (default
 	// 2000).
@@ -82,6 +92,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.RestartInterval == 0 {
 		c.RestartInterval = 10 * time.Second
+	}
+	if c.ChurnInterval > 0 && c.ChurnJitter == 0 {
+		c.ChurnJitter = 0.2
 	}
 	if c.DictionaryInitial == 0 {
 		c.DictionaryInitial = 2000

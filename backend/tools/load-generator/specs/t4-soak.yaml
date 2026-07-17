@@ -49,6 +49,8 @@ workload:                        # the T1 contract shape (see t1-contract.yaml s
   MEMORY_BYTES: "4096"
   SEED: "1"
   START_SPREAD: "2s"
+  RESTART_INTERVAL: "10s"
+  CHURN_INTERVAL: "0s"
 
 ramp:
   levels: [500]

@@ -166,6 +166,16 @@ func (s DurationSpec) sampleMs(rnd *rand.Rand) int {
 	return int(logUniform(rnd, float64(lo.Milliseconds()), float64(hi.Milliseconds())))
 }
 
+// jitterDuration spreads d uniformly by ± fraction (the churn deadline
+// spread, virtual-dumper.md §1.1).
+func jitterDuration(rnd *rand.Rand, d time.Duration, fraction float64) time.Duration {
+	if fraction <= 0 {
+		return d
+	}
+	spread := 1 + fraction*(2*rnd.Float64()-1)
+	return time.Duration(float64(d) * spread)
+}
+
 // logUniform draws from [lo, hi) with a log-uniform density, clamping lo to 1.
 func logUniform(rnd *rand.Rand, lo, hi float64) int64 {
 	lo = math.Max(lo, 1)

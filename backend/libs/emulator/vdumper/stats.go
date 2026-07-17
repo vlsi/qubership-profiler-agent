@@ -11,6 +11,10 @@ type StatsListener interface {
 	Connected(incarnation int)
 	// Disconnected fires when an incarnation dies; err is the cause.
 	Disconnected(incarnation int, err error)
+	// Churned fires when churn mode ends a healthy incarnation on purpose
+	// (virtual-dumper.md §1.1); deliberate cycles never reach Disconnected
+	// or AckError, so a storm run still sees real failures underneath.
+	Churned(incarnation int)
 	// StreamOpened fires per INIT_STREAM_V2, including rotations.
 	StreamOpened(stream string, fileIndex int, reset bool)
 	// BytesSent counts one RCV_DATA payload of the stream.
@@ -37,6 +41,7 @@ type NoopStats struct{}
 
 func (NoopStats) Connected(int)                    {}
 func (NoopStats) Disconnected(int, error)          {}
+func (NoopStats) Churned(int)                      {}
 func (NoopStats) StreamOpened(string, int, bool)   {}
 func (NoopStats) BytesSent(string, int)            {}
 func (NoopStats) AckError()                        {}
