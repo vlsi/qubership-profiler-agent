@@ -29,8 +29,8 @@ type faultEvent struct {
 	Expects     []string    `json:"expects,omitempty"`
 	SettleSec   float64     `json:"settleSec"`
 	// RestartBudget is the injection's §8.8 unit budget (doc/checker.md).
-	RestartBudget int `json:"restartBudget"`
-	Detail      string      `json:"detail,omitempty"`
+	RestartBudget int    `json:"restartBudget"`
+	Detail        string `json:"detail,omitempty"`
 }
 
 // faultLog appends events to faults.jsonl. One JSON object per line; the
