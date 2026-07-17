@@ -4,20 +4,24 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"time"
 )
 
 // stepRecord is one steps.jsonl line (doc/run-orchestration.md).
 type stepRecord struct {
-	Level       int                `json:"level"`
-	StartedAt   time.Time          `json:"startedAt"`
-	ConfirmedAt *time.Time         `json:"confirmedAt,omitempty"`
-	EndedAt     time.Time          `json:"endedAt"`
-	Verdict     string             `json:"verdict"` // ok | saturated | invalid
-	Reasons     []string           `json:"reasons,omitempty"`
-	Plateau     bool               `json:"plateau"`
-	Measurement map[string]float64 `json:"measurements"`
-	Generator   *generatorRecord   `json:"generator,omitempty"`
+	Level       int        `json:"level"`
+	StartedAt   time.Time  `json:"startedAt"`
+	ConfirmedAt *time.Time `json:"confirmedAt,omitempty"`
+	// HoldStartedAt anchors the fault schedule: every faults[].at offset
+	// counts from it (doc/run-orchestration.md, "Fault injection").
+	HoldStartedAt *time.Time         `json:"holdStartedAt,omitempty"`
+	EndedAt       time.Time          `json:"endedAt"`
+	Verdict       string             `json:"verdict"` // ok | saturated | invalid
+	Reasons       []string           `json:"reasons,omitempty"`
+	Plateau       bool               `json:"plateau"`
+	Measurement   map[string]float64 `json:"measurements"`
+	Generator     *generatorRecord   `json:"generator,omitempty"`
 	// Pprof marks the re-hold steps that exist only to capture profiles.
 	Pprof string `json:"pprof,omitempty"`
 }
@@ -47,6 +51,13 @@ type runner struct {
 	k6   *k6Client
 	vm   *vmClient
 	art  *artifacts
+
+	// faults executes the spec's injection schedule during the hold; nil on
+	// fault-free runs. faultCtx ends the schedule when the hold is over
+	// (reverts still run to completion on a detached context).
+	faults    *faultRunner
+	faultCtx  context.Context
+	faultStop context.CancelFunc
 
 	// baselines holds the first-ok-step mean per baseline-ratio detector.
 	baselines map[string]float64
@@ -192,9 +203,13 @@ func (r *runner) holdStep(ctx context.Context, level int) (stepRecord, error) {
 	queries := r.namedQueries()
 	points := map[string][]Point{}
 	holdStart := time.Now()
+	rec.HoldStartedAt = &holdStart
 	plateauW := spec.Ramp.Hold.Plateau.Window.std()
 	tol := spec.Ramp.Hold.Plateau.SlopeTolerance
 	ingestChecked := false
+	if r.faults != nil {
+		r.faults.start(r.faultCtx, holdStart)
+	}
 
 	for {
 		select {
@@ -249,8 +264,27 @@ func (r *runner) holdStep(ctx context.Context, level int) (stepRecord, error) {
 			}
 		}
 
+		// A failed injection or revert invalidates the run: a fault run whose
+		// faults misfired proves nothing.
+		if r.faults != nil {
+			if err := r.faults.err(); err != nil {
+				rec.EndedAt = time.Now()
+				rec.Verdict = "invalid"
+				rec.Reasons = append(rec.Reasons, "fault: "+err.Error())
+				r.finishMeasurements(&rec, points, plateauW)
+				return rec, nil
+			}
+		}
+
 		for _, d := range spec.Detectors {
-			if detectorFires(d, afterGrace(points[d.Name], holdStart, d.Grace.std()), plateauW, tol, r.baselines[d.Name]) {
+			pts := afterGrace(points[d.Name], holdStart, d.Grace.std())
+			if r.faults != nil {
+				// Samples inside an expected window of a same-named signal are
+				// excluded; the checker's subject-scoped allowances stay the
+				// authoritative judge (doc/run-orchestration.md).
+				pts = excludeFaultWindows(pts, d.Name, r.faults)
+			}
+			if detectorFires(d, pts, plateauW, tol, r.baselines[d.Name]) {
 				rec.Verdict = "saturated"
 				rec.Reasons = append(rec.Reasons, d.Name)
 			}
@@ -347,13 +381,68 @@ func (r *runner) capturePoint(ctx context.Context, ceiling int, point float64) (
 	return rec, nil
 }
 
+// setupFaults wires the fault layer when the spec schedules injections:
+// event log in the artifacts, durable registry under outputs, drivers per
+// the actions used.
+func (r *runner) setupFaults(ctx context.Context) (func(), error) {
+	needsKube, needsToxi := false, false
+	for _, f := range r.spec.Faults {
+		switch f.Action {
+		case "pod-delete", "scale":
+			needsKube = true
+		case "toxics":
+			needsToxi = true
+		}
+	}
+	log, err := newFaultLog(filepath.Join(r.art.dir, "faults.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	reg, err := openFaultRegistry(r.spec.Outputs, r.spec.Run.TestID)
+	if err != nil {
+		return nil, err
+	}
+	var kube kubeFaults
+	if needsKube {
+		if kube, err = newKubeClient(); err != nil {
+			return nil, err
+		}
+	}
+	var toxi toxiFaults
+	if needsToxi {
+		toxi = newToxiClient(r.spec.Endpoints.Toxiproxy)
+	}
+	r.faults = newFaultRunner(r.spec.Faults, log, reg, kube, toxi, realClock{})
+	r.faults.toxiproxyURL = r.spec.Endpoints.Toxiproxy
+	r.faultCtx, r.faultStop = context.WithCancel(ctx)
+	return func() { _ = log.Close() }, nil
+}
+
 // Run executes the whole ramp; see doc/run-orchestration.md for the model.
 func (r *runner) Run(ctx context.Context) (runResult, error) {
 	r.startedAt = time.Now()
 	res := runResult{Name: r.spec.Run.Name, TestID: r.spec.Run.TestID, StartedAt: r.startedAt, Verdict: "completed"}
 
+	// One run per stand, enforced: a live foreign lease refuses the start,
+	// and only then is it safe to revert what dead runs left behind.
+	lock, err := acquireStandLock(ctx, r.spec.Outputs, r.spec.Run.TestID)
+	if err != nil {
+		return res, err
+	}
+	defer lock.release()
+	if _, err := revertStaleFaults(ctx, r.spec.Outputs); err != nil {
+		return res, fmt.Errorf("stale-fault recovery: %w", err)
+	}
+
 	if err := r.preflight(ctx); err != nil {
 		return res, err
+	}
+	if len(r.spec.Faults) > 0 {
+		closeLog, err := r.setupFaults(ctx)
+		if err != nil {
+			return res, err
+		}
+		defer closeLog()
 	}
 	// Leave the fleet at 0 when the run ends, whatever happened.
 	defer func() {
@@ -389,6 +478,19 @@ func (r *runner) Run(ctx context.Context) (runResult, error) {
 		}
 		if rec.Verdict != "ok" {
 			break
+		}
+	}
+
+	// The hold is over: stop scheduling injections, let running reverts
+	// finish, and fold any injection/revert failure into the verdict before
+	// anything else (profiles must reflect a fault-free stand).
+	if r.faults != nil {
+		r.faultStop()
+		fmt.Println("runner: waiting for fault reverts")
+		r.faults.wait()
+		if err := r.faults.err(); err != nil && res.Verdict != "invalid" {
+			res.Verdict = "invalid"
+			res.InvalidReasons = append(res.InvalidReasons, "fault: "+err.Error())
 		}
 	}
 

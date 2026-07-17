@@ -23,7 +23,15 @@ import (
 
 func main() {
 	specPath := flag.String("spec", "", "run spec YAML (required)")
+	revertFaults := flag.Bool("revert-faults", false, "revert stale fault state left by dead runs (skips runs protected by a live stand lease), then exit")
+	outputs := flag.String("outputs", "runs", "runs directory holding the fault registry and the stand lease (for -revert-faults)")
 	flag.Parse()
+	if *revertFaults {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		runRevertFaults(ctx, *outputs)
+		return
+	}
 	if *specPath == "" {
 		fmt.Fprintln(os.Stderr, "runner: -spec is required; see doc/run-orchestration.md")
 		os.Exit(2)

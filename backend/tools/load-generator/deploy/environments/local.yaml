@@ -11,6 +11,9 @@ monitoring:
 
 stand:
   namespace: profiler-load
+  # Empty keeps the direct MinIO endpoint; the local-faults overlay points
+  # this at toxiproxy (doc/fault-runs.md).
+  s3Endpoint: ""
 
 minio:
   storageSize: 20Gi
@@ -59,6 +62,10 @@ k6:
   maxVUs: 200
   duration: 4h
   testid: dev
+  # Empty dials the collector directly; the local-faults overlay reroutes
+  # through toxiproxy.
+  collectorHost: ""
+  collectorPort: ""
   # The COMPLETE workload map for scripts/scenario.js — the scenario has no
   # workload defaults, and a missing knob crash-loops the pod
   # (doc/run-orchestration.md, "Workload wiring"). Override per run with
@@ -107,3 +114,10 @@ k6query:
     LIST_LIMIT: "50"
     THINK_SECONDS: "5"
     COLD_MAX_PAGES: "200"
+
+# Fault tooling (plan §5.3): parked until a fault run needs it
+# (doc/fault-runs.md).
+toxiproxy:
+  installed: false
+chaosMesh:
+  installed: false

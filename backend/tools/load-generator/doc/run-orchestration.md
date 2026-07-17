@@ -2,8 +2,8 @@
 
 Contract for the ramp-run layer of the load-testing harness (`load-testing-plan.md` §5.3): how a ceiling run is
 specified, executed, judged, and archived. The implementation is `tools/load-generator/runner`; the traffic comes from
-the k6 fleet scenario (`scripts/scenario.js`) driven over the k6 REST API. Fault injection is out of scope (T7,
-phase 5).
+the k6 fleet scenario (`scripts/scenario.js`) driven over the k6 REST API. Fault injection for the T5/T7 runs is the
+*Fault injection* section below; the fault runbook is `doc/fault-runs.md`.
 
 ## Model
 
@@ -188,6 +188,89 @@ either as saturation.
 `slopeTolerance`. The hold ends at the first sample where every plateau series is flat (but not before `hold.min`);
 `hold.max` ends the hold with verdict `ok` and `plateau: false` recorded — a hint the tolerance is too tight, not a
 saturation signal by itself.
+
+## Fault injection (T5/T7)
+
+A fault run is an ordinary fixed-hold run plus a `faults:` schedule the runner executes during the hold. The layer
+has three jobs: inject on a reproducible timeline, leave an event log the checker can consume live, and never leave
+the stand faulted — whatever happens to the runner process.
+
+```yaml
+endpoints:
+  toxiproxy: http://localhost:8474   # required only when a fault uses action: toxics
+
+faults:
+  - name: kill-collector             # unique across the spec (validation)
+    at: 30m                          # from the ACTUAL hold start; required on every fault
+    action: pod-delete               # instant action: client-go delete, grace 0
+    target: {namespace: profiler-load, pod: profiler-backend-collector-1}
+    repeat: {every: 90s, count: 10, readyTimeout: 5m}   # instant actions only
+    expects: [restarts, scrape-gap, freshness, ack-errors]
+    settle: 5m                       # expected-effects tail after the fault / its revert
+  - name: s3-outage
+    at: 60m
+    action: scale                    # stateful: client-go scale, durable revert
+    target: {namespace: profiler-load, kind: statefulset, name: minio}
+    to: 0
+    duration: 15m                    # stateful actions only; repeat and duration exclude each other
+    expects: [ingest-paused, refused-bytes, ack-errors, compaction-lag, freshness]
+  - name: s3-slow
+    at: 20m
+    action: toxics                   # stateful: toxiproxy REST; several toxics land together
+    target: {proxy: s3}
+    toxics:
+      - {type: latency, attributes: {latency: 2000, jitter: 500}}
+      - {type: bandwidth, attributes: {rate: 64}}
+    duration: 10m
+    expects: [compaction-lag]
+```
+
+**Timeline.** Every `at` counts from the actual start of the (single) hold — after scale and the whole confirm phase.
+The runner records `holdStartedAt` in `steps.jsonl` and stamps it into the fault log, so the spec offset and the
+wall-clock timeline reconcile in the artifacts.
+
+**Actions.**
+
+- `pod-delete` — instant: client-go pod delete with grace 0 (the crash shape, not a drain). With `repeat`, the next
+  injection is scheduled only after the target is observed READY again plus `every`; a target that misses
+  `readyTimeout` is a failed recovery — the run turns `invalid` and injections stop. Every injection records
+  `readyAt`, so recovery time per cycle (`readyAt − at`) is a first-class artifact series.
+- `scale` — stateful: scale a statefulset/deployment to `to` replicas, revert to the observed prior count after
+  `duration`.
+- `toxics` — stateful: create the listed toxics on the named toxiproxy proxy, delete them after `duration`. All
+  toxics of one injection are named `<faultId>-<idx>`, so the revert (and any cleanup) deletes by prefix,
+  idempotently.
+
+**Event log.** `faults.jsonl` in the run directory carries atomic events, one JSON object per line, written the
+moment they happen: `{faultId, name, event, at, scheduledAt, action, target, expects, settle, detail}` with
+`event ∈ scheduled | started | ended | revert-started | reverted | ready | error`. `faultId` identifies one concrete
+injection — repeats get `kill-collector-001`, `-002`, … (no `#` or other characters unsafe in toxic names, URL
+paths, or k8s names) — so a per-injection budget and the recovery-time series stay unambiguous. `scheduledAt` is the
+plan, `at` is the fact, `error` events carry the failure; they are never folded into one field. A reader must
+tolerate a torn last line (re-read it next tick); an injection whose `started` has no `reverted` yet is active, and
+its window extends to now.
+
+**Durable revert.** Before a stateful action executes, the runner writes the prior state (replica count; toxic
+names) to the active-faults registry — `runs/.active-faults/<testid>.json`, outside the per-run directory, plus a
+copy in the run artifacts. The entry is removed after a successful revert. `runner -revert-faults` restores
+everything the registry still holds (idempotently; toxics deleted by faultId prefix) and runs automatically in every
+preflight, so a SIGKILL-ed or crashed runner cannot leave MinIO scaled down or a proxy poisoned past the next run.
+A failed injection **or** a failed revert marks the run `invalid` — a fault run whose faults misfired proves
+nothing.
+
+**Stand lock.** One run per stand is a hard rule, not a convention: the runner takes a lease
+(`runs/.stand-lock`: `{testid, pid, acquiredAt, renewedAt, ttl}`) in preflight, renews it through the run, and
+releases it at exit. A live foreign lease refuses the start — and preflight recovery then does NOT touch the
+registry, because reverting a running run's active fault would corrupt it. `-revert-faults` only processes state
+whose lease is dead or expired.
+
+**Detectors during faults.** The spec's `expects` list is the single mechanism for expected failures. The checker
+maps it to scoped allowances (`doc/checker.md`); the runner applies the same windows to its own detectors — a
+detector whose name appears in an active fault's `expects` (window + settle) has those samples excluded. Runner
+detectors are aggregate PromQL queries, so subject attribution is impossible at this layer; the exclusion can in
+principle mask an unrelated firing inside the window, which is why the checker — whose allowances are scoped by
+invariant × subject × window × budget — stays the authoritative judge of a fault run. Outside fault windows every
+detector behaves exactly as before.
 
 ## Artifacts
 

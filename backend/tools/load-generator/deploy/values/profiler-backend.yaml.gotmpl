@@ -11,7 +11,9 @@ minio:
   enabled: false
 
 s3:
-  endpoint: http://minio.{{ .Values.stand.namespace }}.svc:9000
+  # The local-faults environment reroutes this through toxiproxy
+  # (doc/fault-runs.md); everything else talks to MinIO directly.
+  endpoint: {{ .Values.stand.s3Endpoint | default (printf "http://minio.%s.svc:9000" .Values.stand.namespace) }}
   bucket: profiler-data
   auth:
     # Mirrors the minio release's root pair — dev/stand only.

@@ -18,6 +18,14 @@ environments:
     values:
       - environments/local.yaml
       - environments/local-soak.yaml
+  # local-soak + toxiproxy in the S3 and agent paths, for the T7 fault runs
+  # (doc/fault-runs.md). Kept separate so ordinary runs keep the direct
+  # topology.
+  local-faults:
+    values:
+      - environments/local.yaml
+      - environments/local-soak.yaml
+      - environments/local-faults.yaml
   cluster:
     values:
       - environments/cluster.yaml
@@ -26,6 +34,8 @@ environments:
 repositories:
   - name: minio
     url: https://charts.min.io/
+  - name: chaos-mesh
+    url: https://charts.chaos-mesh.org
 
 # The monitoring-operator charts are not published to any registry; helmfile's
 # built-in go-getter support (git::) serves them straight from the tagged git
@@ -115,3 +125,22 @@ releases:
       - values/k6-query.yaml.gotmpl
     needs:
       - {{ .Values.stand.namespace }}/profiler-backend
+
+  # Deterministic TCP fault injection for T7 (plan §5.3, §7.7): the runner
+  # drives toxics over the REST API. Parked by default; the local-faults
+  # environment installs it and reroutes the S3 and agent paths through it.
+  - name: toxiproxy
+    namespace: {{ .Values.stand.namespace }}
+    chart: ./charts/toxiproxy
+    installed: {{ .Values.toxiproxy.installed }}
+    values:
+      - values/toxiproxy.yaml.gotmpl
+
+  # netem-grade network faults (packet loss) and IOChaos for the large
+  # cluster (plan §7.7); toxiproxy covers the local T7 runs. Parked — the
+  # privileged daemonset and the runtime-socket wiring are cluster concerns.
+  - name: chaos-mesh
+    namespace: chaos-testing
+    chart: chaos-mesh/chaos-mesh
+    version: 2.7.3
+    installed: {{ .Values.chaosMesh.installed }}

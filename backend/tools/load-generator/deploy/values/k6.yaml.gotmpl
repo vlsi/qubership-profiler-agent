@@ -11,8 +11,10 @@ deployment:
   image: {{ .Values.k6.image | quote }}
 
   env:
-    COLLECTOR_HOST: profiler-backend-collector-agent.{{ .Values.stand.namespace }}.svc
-    COLLECTOR_PORT: "1715"
+    # The local-faults environment reroutes these through toxiproxy
+    # (doc/fault-runs.md); everything else dials the collector directly.
+    COLLECTOR_HOST: {{ .Values.k6.collectorHost | default (printf "profiler-backend-collector-agent.%s.svc" .Values.stand.namespace) }}
+    COLLECTOR_PORT: {{ .Values.k6.collectorPort | default "1715" | quote }}
     EMULATOR_NAMESPACE: load
     EMULATOR_SERVICE: load-svc
     MAX_VUS: {{ .Values.k6.maxVUs | quote }}

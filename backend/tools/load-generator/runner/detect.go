@@ -56,6 +56,19 @@ func afterGrace(points []Point, holdStart time.Time, grace time.Duration) []Poin
 	return nil
 }
 
+// excludeFaultWindows drops samples that fall into an expected window of the
+// named signal — legitimate fault effects a detector must not read as
+// saturation (doc/run-orchestration.md, "Detectors during faults").
+func excludeFaultWindows(points []Point, signal string, fr *faultRunner) []Point {
+	out := points[:0:0]
+	for _, p := range points {
+		if !fr.inWindow(signal, p.At) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // window trims the series to samples within d of the last sample.
 func window(points []Point, d time.Duration) []Point {
 	if len(points) == 0 {

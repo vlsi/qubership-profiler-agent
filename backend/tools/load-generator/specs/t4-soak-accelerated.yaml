@@ -52,11 +52,10 @@ ramp:
   confirm:
     timeout: 3m
     ingest:
-      # Provisional: scaled from the mis-wired 5-calls/s run (761 KB/s / 20
-      # pods × 3/5). Re-pin from the phase-5 calibration smoke before any
-      # long run; the check is the point — a wrong rate must abort, not
-      # produce artifacts that claim the spec's load.
-      bytesPerVU: 22800
+      # Pinned from the phase-5 calibration smoke
+      # (runs/20260717T085030Z-t4-cal-3cps): 395,956 B/s at 20 VUs. The
+      # mis-wired 5-calls/s rate (761 KB/s) deviates +92% and is refused.
+      bytesPerVU: 19800
       tolerance: 0.25
   hold:
     min: 2h30m                   # hold.min == hold.max: fixed-duration hold

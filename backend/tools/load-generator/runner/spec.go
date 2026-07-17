@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -23,6 +24,8 @@ type Spec struct {
 		K6        string `yaml:"k6"`
 		VM        string `yaml:"vm"`
 		Collector string `yaml:"collector"`
+		// Toxiproxy is required only when a fault uses action: toxics.
+		Toxiproxy string `yaml:"toxiproxy"`
 	} `yaml:"endpoints"`
 
 	Images     map[string]string `yaml:"images"`
@@ -62,6 +65,7 @@ type Spec struct {
 
 	Detectors []Detector        `yaml:"detectors"`
 	Context   map[string]string `yaml:"context"`
+	Faults    []FaultSpec       `yaml:"faults"`
 
 	Guard struct {
 		GeneratorCPU struct {
@@ -99,6 +103,140 @@ type Detector struct {
 	// cold start fills empty stores, and growth-shaped detectors would read
 	// that fill as saturation (doc/run-orchestration.md).
 	Grace duration `yaml:"grace"`
+}
+
+// FaultSpec is one scheduled injection of the fault layer
+// (doc/run-orchestration.md, "Fault injection").
+type FaultSpec struct {
+	Name   string      `yaml:"name"`
+	At     duration    `yaml:"at"`
+	Action string      `yaml:"action"` // pod-delete | scale | toxics
+	Target FaultTarget `yaml:"target"`
+	// To is the scale action's replica target; a pointer so 0 is expressible.
+	To     *int32      `yaml:"to"`
+	Toxics []ToxicSpec `yaml:"toxics"`
+	// Duration is the fault window of a stateful action (scale, toxics);
+	// mutually exclusive with Repeat.
+	Duration duration     `yaml:"duration"`
+	Repeat   *FaultRepeat `yaml:"repeat"`
+	// Expects names the failure signals this injection makes legitimate
+	// inside its window; the checker scopes allowances from it and the
+	// runner mutes same-named detectors.
+	Expects []string `yaml:"expects"`
+	// Settle extends the expected-effects window past the fault / its revert.
+	Settle duration `yaml:"settle"`
+}
+
+// FaultTarget names what an action acts on; the required fields depend on
+// the action.
+type FaultTarget struct {
+	Namespace string `yaml:"namespace"`
+	Pod       string `yaml:"pod"`   // pod-delete
+	Kind      string `yaml:"kind"`  // scale: statefulset | deployment
+	Name      string `yaml:"name"`  // scale
+	Proxy     string `yaml:"proxy"` // toxics
+}
+
+// ToxicSpec is one toxiproxy toxic; attributes pass through to the REST API.
+type ToxicSpec struct {
+	Type       string         `yaml:"type"`
+	Attributes map[string]any `yaml:"attributes"`
+}
+
+// FaultRepeat turns an instant action into a crashloop: the next injection
+// waits for the target's observed READY plus Every; missing ReadyTimeout is
+// a failed recovery and turns the run invalid.
+type FaultRepeat struct {
+	Every        duration `yaml:"every"`
+	Count        int      `yaml:"count"`
+	ReadyTimeout duration `yaml:"readyTimeout"`
+}
+
+// expectsVocabulary is the closed set of expected-failure signals a fault
+// may declare; checker.md defines how each maps to a §8 allowance, and the
+// runner mutes detectors whose name matches one of them.
+var expectsVocabulary = map[string]bool{
+	"restarts": true, "scrape-gap": true, "refused-bytes": true,
+	"ingest-paused": true, "freshness": true, "markers": true,
+	"compaction-lag": true, "small-file-share": true, "hot-window-lag": true,
+	"ack-errors": true, "pending-parquet-growth": true,
+}
+
+var faultNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+func (f *FaultSpec) validate(hasToxiproxy bool) error {
+	if !faultNameRe.MatchString(f.Name) {
+		return fmt.Errorf("fault %q: the name must be lowercase alphanumerics and dashes — it becomes part of toxic names, URL paths, and log keys", f.Name)
+	}
+	if f.At <= 0 {
+		return fmt.Errorf("fault %q: at is required (offset from the hold start)", f.Name)
+	}
+	if f.Repeat != nil && f.Duration != 0 {
+		return fmt.Errorf("fault %q: repeat and duration exclude each other", f.Name)
+	}
+	for _, e := range f.Expects {
+		if !expectsVocabulary[e] {
+			return fmt.Errorf("fault %q: unknown expects entry %q", f.Name, e)
+		}
+	}
+	if f.Settle == 0 {
+		f.Settle = duration(5 * time.Minute)
+	}
+	switch f.Action {
+	case "pod-delete":
+		if f.Target.Namespace == "" || f.Target.Pod == "" {
+			return fmt.Errorf("fault %q: pod-delete needs target.namespace and target.pod", f.Name)
+		}
+		if f.Duration != 0 || f.To != nil || len(f.Toxics) > 0 {
+			return fmt.Errorf("fault %q: pod-delete is instant — no duration, to, or toxics", f.Name)
+		}
+		if f.Repeat != nil {
+			if f.Repeat.Every <= 0 || f.Repeat.Count <= 0 {
+				return fmt.Errorf("fault %q: repeat needs every > 0 and count > 0", f.Name)
+			}
+			if f.Repeat.ReadyTimeout == 0 {
+				f.Repeat.ReadyTimeout = duration(5 * time.Minute)
+			}
+		}
+	case "scale":
+		if f.Target.Namespace == "" || f.Target.Name == "" ||
+			(f.Target.Kind != "statefulset" && f.Target.Kind != "deployment") {
+			return fmt.Errorf("fault %q: scale needs target.namespace, target.name, and kind statefulset|deployment", f.Name)
+		}
+		if f.To == nil {
+			return fmt.Errorf("fault %q: scale needs to (the replica target)", f.Name)
+		}
+		if f.Duration <= 0 {
+			return fmt.Errorf("fault %q: a stateful action needs duration", f.Name)
+		}
+		if f.Repeat != nil {
+			return fmt.Errorf("fault %q: repeat applies to instant actions only", f.Name)
+		}
+	case "toxics":
+		if f.Target.Proxy == "" {
+			return fmt.Errorf("fault %q: toxics needs target.proxy", f.Name)
+		}
+		if len(f.Toxics) == 0 {
+			return fmt.Errorf("fault %q: toxics needs at least one toxic", f.Name)
+		}
+		for _, tx := range f.Toxics {
+			if tx.Type == "" {
+				return fmt.Errorf("fault %q: every toxic needs a type", f.Name)
+			}
+		}
+		if f.Duration <= 0 {
+			return fmt.Errorf("fault %q: a stateful action needs duration", f.Name)
+		}
+		if f.Repeat != nil {
+			return fmt.Errorf("fault %q: repeat applies to instant actions only", f.Name)
+		}
+		if !hasToxiproxy {
+			return fmt.Errorf("fault %q: action toxics needs endpoints.toxiproxy", f.Name)
+		}
+	default:
+		return fmt.Errorf("fault %q: unknown action %q", f.Name, f.Action)
+	}
+	return nil
 }
 
 // duration wraps time.Duration for YAML ("3m", "15s").
@@ -186,6 +324,22 @@ func (s *Spec) validate() error {
 	}
 	if s.Ramp.Hold.Plateau.SlopeTolerance == 0 {
 		s.Ramp.Hold.Plateau.SlopeTolerance = 0.05
+	}
+	if len(s.Faults) > 0 {
+		if len(s.Ramp.Levels) != 1 {
+			return fmt.Errorf("faults need a single-level spec: the schedule counts from the one hold's start")
+		}
+		seen := map[string]bool{}
+		for i := range s.Faults {
+			f := &s.Faults[i]
+			if seen[f.Name] {
+				return fmt.Errorf("fault %q: names must be unique across the spec", f.Name)
+			}
+			seen[f.Name] = true
+			if err := f.validate(s.Endpoints.Toxiproxy != ""); err != nil {
+				return err
+			}
+		}
 	}
 	if ing := &s.Ramp.Confirm.Ingest; ing.BytesPerVU > 0 {
 		if ing.Tolerance == 0 {
