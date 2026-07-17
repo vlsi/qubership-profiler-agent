@@ -37,6 +37,9 @@ profiler:
     storageClassName: ""
     # Empty keeps the chart default (15m); the local-soak overlay shrinks it.
     hotRetention: ""
+    # Empty keeps the chart default (10GB); the t7-small-pv run shrinks it
+    # (doc/fault-runs.md).
+    chunksStagingMaxBytes: ""
     # Per-run collector env, e.g. a small PROFILER_PENDING_UPLOAD_MAX_BYTES
     # to force backpressure at smoke-level load (doc/ceiling-runs.md).
     extraEnv: {}

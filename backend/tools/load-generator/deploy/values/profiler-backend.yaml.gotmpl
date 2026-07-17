@@ -30,6 +30,11 @@ collector:
   # a duplicate PROFILER_HOT_RETENTION.
   hotRetention: {{ .Values.profiler.collector.hotRetention }}
 {{- end }}
+{{- if .Values.profiler.collector.chunksStagingMaxBytes }}
+  # Same first-class rule as hotRetention; the t7-small-pv run shrinks it
+  # (doc/fault-runs.md).
+  chunksStagingMaxBytes: {{ .Values.profiler.collector.chunksStagingMaxBytes | quote }}
+{{- end }}
   env:
     PROFILER_PPROF_ENABLED: "true"
 {{- range $key, $value := .Values.profiler.collector.extraEnv }}

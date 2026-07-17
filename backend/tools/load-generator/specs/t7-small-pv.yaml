@@ -5,7 +5,9 @@
 # pressure:
 #
 #   helmfile -e local-soak apply \
-#     --state-values-set profiler.collector.extraEnv.PROFILER_CHUNKS_STAGING_MAX_BYTES=268435456
+#     --state-values-set profiler.collector.chunksStagingMaxBytes=268435456
+# (a first-class chart value — an extraEnv override loses to the chart's own
+# PROFILER_CHUNKS_STAGING_MAX_BYTES default)
 #
 # What the run measures (report section T7): janitor_segments_evicted_total /
 # evicted_bytes rates, eviction tier order (refcount-0 closed segments first,

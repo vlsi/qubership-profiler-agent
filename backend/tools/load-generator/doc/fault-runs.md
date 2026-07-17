@@ -38,6 +38,13 @@ checker).
 
 ## Running
 
+**Start from a steady baseline.** A stand redeploy (collector env change, topology switch) rolls every collector
+through WAL recovery, and the re-seal burst that follows looks exactly like backlog growth to the run's own
+detectors — a t7-s3-slow attempt died on `pending-parquet-growth` twelve minutes into its baseline, before the
+toxics even engaged. After any redeploy, wait until `pending_parquet_bytes` is back to its near-zero sawtooth and
+the WAL band is flat before starting the runner; the drain typically takes 5–15 minutes on the accelerated
+timers.
+
 1. Deploy the stand, set a fresh `k6.testid`, and start the checker with every source enabled plus the fault log
    and the target-to-pod mapping (the scrape-gap allowance is scoped to mapped targets only, `checker.md`):
 
