@@ -167,7 +167,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Connects are completed session setups; reconnects are dead incarnations entering the agent's 10 s restart path.",
+      "description": "Connects are completed session setups; reconnects are dead incarnations entering the agent's 10 s restart path; churns are deliberate churn-mode cycles (T5 storms).",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -208,6 +208,15 @@
           "expr": "rate(k6_vdumper_reconnects_total{testid=~\"$testid\"}[$__rate_interval])",
           "legendFormat": "reconnects",
           "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "rate(k6_vdumper_churns_total{testid=~\"$testid\"}[$__rate_interval])",
+          "legendFormat": "churns",
+          "refId": "C",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
