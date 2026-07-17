@@ -57,9 +57,9 @@ type InitEvent struct {
 
 // StreamStats aggregates one stream's RCV_DATA traffic.
 type StreamStats struct {
-	Bytes     int64         `json:"bytes"`
-	Rcv       int64         `json:"rcv"`
-	BytesSec  map[int]int64 `json:"bytes_sec"`
+	Bytes    int64         `json:"bytes"`
+	Rcv      int64         `json:"rcv"`
+	BytesSec map[int]int64 `json:"bytes_sec"`
 }
 
 type tap struct {

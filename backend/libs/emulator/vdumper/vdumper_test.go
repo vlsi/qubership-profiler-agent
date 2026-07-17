@@ -60,7 +60,7 @@ func (r *statsRec) churnedCount() int {
 }
 func (r *statsRec) StreamOpened(string, int, bool) {}
 func (r *statsRec) BytesSent(string, int)          {}
-func (r *statsRec) AckError() { r.mu.Lock(); defer r.mu.Unlock(); r.ackErrors++ }
+func (r *statsRec) AckError()                      { r.mu.Lock(); defer r.mu.Unlock(); r.ackErrors++ }
 func (r *statsRec) Dropped(n int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
