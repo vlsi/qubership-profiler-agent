@@ -16,6 +16,42 @@ import (
 // label pairs sorted, so a series key is stable across scrapes.
 type metrics map[string]float64
 
+// gapTracker counts consecutive failed polls per source target. A silent
+// source must not pass by absence (doc/checker.md): past the configured gap
+// the target-available invariant latches a violation.
+type gapTracker struct {
+	warmup  time.Duration
+	started time.Time
+	gaps    map[string]int
+}
+
+func newGapTracker(warmup time.Duration) *gapTracker {
+	return &gapTracker{warmup: warmup, started: time.Now(), gaps: map[string]int{}}
+}
+
+func (g *gapTracker) observe(target string, ok bool) {
+	if ok {
+		g.gaps[target] = 0
+		return
+	}
+	g.gaps[target]++
+}
+
+func (g *gapTracker) findings(maxGap int) []finding {
+	if time.Since(g.started) < g.warmup {
+		return nil
+	}
+	var out []finding
+	for target, gap := range g.gaps {
+		if gap > maxGap {
+			out = append(out, finding{subject: target,
+				msg: fmt.Sprintf("no data for %d consecutive polls (max %d)", gap, maxGap)})
+		}
+	}
+	sortFindings(out)
+	return out
+}
+
 // sample is one poll of every target at one instant.
 type sample struct {
 	at      time.Time
