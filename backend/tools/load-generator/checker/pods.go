@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -79,28 +80,41 @@ type podTrack struct {
 	isReplacement bool
 }
 
-// podState is the §8.8 accounting (doc/checker.md): a total restart budget
-// over the whole run, replacements counted as one event plus their own
-// restarts, disappearances without replacement flagged separately.
+// restartEvent is one observed restart-count increment or replacement, with
+// the pod-list time it was first seen at — the time allowance windows match
+// against (doc/checker.md, "Expected failures").
+type restartEvent struct {
+	pod        string
+	observedAt time.Time
+	weight     int
+	kind       string // restart | replacement
+}
+
+// podState is the §8.8 accounting (doc/checker.md): every restart-count
+// increment and replacement becomes a timed event; events matched to a
+// per-injection restarts allowance (one event per injection, target pod
+// only) are expected, everything else counts against -allowed-restarts.
 type podState struct {
 	allowed int
 
-	baselined    bool
-	tracks       map[string]*podTrack
-	replacements int
-	gone         []string // names of pods that vanished, in vanish order
-	current      []finding
+	baselined bool
+	tracks    map[string]*podTrack
+	events    []restartEvent
+	gone      []string // names of pods that vanished, in vanish order
+	current   func(faults *faultState) []finding
+	replaced  int
 }
 
 func newPodState(allowed int) *podState {
-	return &podState{allowed: allowed, tracks: map[string]*podTrack{}}
+	p := &podState{allowed: allowed, tracks: map[string]*podTrack{}}
+	p.current = func(*faultState) []finding { return nil } // nothing observed yet
+	return p
 }
 
-func (p *podState) findings() []finding { return p.current }
+func (p *podState) findings(faults *faultState) []finding { return p.current(faults) }
 
-// observe folds one successful pod list into the accounting and refreshes
-// the invariant findings.
-func (p *podState) observe(pods []podInfo) {
+// observe folds one successful pod list into the accounting.
+func (p *podState) observe(pods []podInfo, at time.Time) {
 	seen := map[string]bool{}
 	for _, pod := range pods {
 		seen[pod.UID] = true
@@ -112,8 +126,12 @@ func (p *podState) observe(pods []podInfo) {
 			}
 			p.tracks[pod.UID] = track
 			if p.baselined {
-				p.replacements++
+				p.replaced++
+				p.events = append(p.events, restartEvent{pod: pod.Name, observedAt: at, weight: 1, kind: "replacement"})
 			}
+		}
+		if delta := pod.Restarts - track.last; delta > 0 && p.baselined {
+			p.events = append(p.events, restartEvent{pod: pod.Name, observedAt: at, weight: delta, kind: "restart"})
 		}
 		track.last = pod.Restarts
 		track.alive = true
@@ -125,33 +143,68 @@ func (p *podState) observe(pods []podInfo) {
 		}
 	}
 	p.baselined = true
-	p.current = p.evaluate()
+	p.current = p.evaluate
 }
 
-func (p *podState) evaluate() []finding {
+// evaluate classifies the accumulated events against the allowances. It
+// recomputes from the full event list every tick: events and windows only
+// append, so the greedy earliest-window matching stays deterministic.
+func (p *podState) evaluate(faults *faultState) []finding {
 	var out []finding
-	budget := 0
-	var contributors []string
-	for _, track := range p.tracks {
-		if delta := track.last - track.baseline; delta > 0 {
-			budget += delta
-			contributors = append(contributors, fmt.Sprintf("%s +%d", track.name, delta))
+
+	// consumed tracks per-injection budgets: ONE restart-or-replacement unit
+	// per injection — a multi-restart increment spends one allowance and the
+	// excess stays a violation.
+	consumed := map[string]bool{}
+	unexpectedTotal := 0
+	var unexpected []string
+	expectedByFault := map[string][]string{}
+	for _, ev := range p.events {
+		remaining := ev.weight
+		if faults != nil {
+			for _, w := range faults.restartAllowances(ev.pod) {
+				if remaining == 0 {
+					break
+				}
+				if consumed[w.faultID] || !w.contains(ev.observedAt) {
+					continue
+				}
+				consumed[w.faultID] = true
+				remaining--
+				expectedByFault[w.faultID] = append(expectedByFault[w.faultID],
+					fmt.Sprintf("%s %s", ev.pod, ev.kind))
+			}
 		}
-		if track.isReplacement {
-			contributors = append(contributors, track.name+" (replacement)")
+		if remaining > 0 {
+			unexpectedTotal += remaining
+			unexpected = append(unexpected, fmt.Sprintf("%s %s +%d at %s",
+				ev.pod, ev.kind, remaining, ev.observedAt.Format(time.RFC3339)))
 		}
 	}
-	budget += p.replacements
-	if budget > p.allowed {
-		sort.Strings(contributors)
-		out = append(out, finding{subject: "restart-budget",
+	if unexpectedTotal > p.allowed {
+		sort.Strings(unexpected)
+		out = append(out, finding{subject: "restart-budget", observedAt: lastEventTime(p.events),
 			msg: fmt.Sprintf("%d restart events exceed the budget of %d: %s",
-				budget, p.allowed, strings.Join(contributors, ", "))})
+				unexpectedTotal, p.allowed, strings.Join(unexpected, ", "))})
 	}
-	if excess := len(p.gone) - p.replacements; excess > 0 {
+	for faultID, evs := range expectedByFault {
+		sort.Strings(evs)
+		out = append(out, finding{subject: "restart-budget", expected: true,
+			observedAt: lastEventTime(p.events),
+			msg:        fmt.Sprintf("expected under fault %s: %s", faultID, strings.Join(evs, ", "))})
+	}
+
+	if excess := len(p.gone) - p.replaced; excess > 0 {
 		names := p.gone[len(p.gone)-excess:]
-		out = append(out, finding{subject: "pods-gone",
+		out = append(out, finding{subject: "pods-gone", observedAt: lastEventTime(p.events),
 			msg: fmt.Sprintf("%d pod(s) disappeared without a replacement: %s", excess, strings.Join(names, ", "))})
 	}
 	return out
+}
+
+func lastEventTime(events []restartEvent) time.Time {
+	if len(events) == 0 {
+		return time.Time{}
+	}
+	return events[len(events)-1].observedAt
 }

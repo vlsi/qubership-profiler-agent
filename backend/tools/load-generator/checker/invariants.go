@@ -58,6 +58,21 @@ func (h *history) seriesByTarget(name string, samples []sample) map[string][]flo
 	return out
 }
 
+// timedSeriesByTarget is seriesByTarget with scrape timestamps kept — for
+// invariants that match observations against allowance windows or judge
+// increments between consecutive scrapes.
+func (h *history) timedSeriesByTarget(name string, samples []sample) map[string][]tsPoint {
+	out := map[string][]tsPoint{}
+	for _, s := range samples {
+		for target, m := range s.targets {
+			if v, ok := lookupSeries(m, name); ok {
+				out[target] = append(out[target], tsPoint{at: s.at, v: v})
+			}
+		}
+	}
+	return out
+}
+
 // pairSample is one scrape's (first, second) values with the scrape time —
 // the trend rules fit against real timestamps, not sample indexes, so
 // scrape gaps do not distort the slope.
@@ -107,6 +122,10 @@ type invariantConfig struct {
 	// maxScrapeGap latches target-unavailable after this many consecutive
 	// failed polls of one source target.
 	maxScrapeGap int
+	// targetPods maps metrics-target URLs to pod names for the scrape-gap
+	// allowance scoping; unmapped targets never get that allowance
+	// (doc/checker.md, "Expected failures").
+	targetPods map[string]string
 }
 
 // invariant is one automated §8 check: a pure predicate over the current
@@ -126,6 +145,15 @@ type state struct {
 	api     *apiState
 	pods    *podState
 	gaps    *gapTracker
+	// faults holds the expected-failure allowances parsed from the runner's
+	// fault log; nil outside fault runs (doc/checker.md).
+	faults *faultState
+}
+
+// expectedAt consults the allowance windows; a checker without a fault log
+// expects nothing.
+func (st *state) expectedAt(signal string, t time.Time) bool {
+	return st.faults != nil && st.faults.expected(signal, t)
 }
 
 func allInvariants(cfg invariantConfig) []invariant {
@@ -143,15 +171,23 @@ func allInvariants(cfg invariantConfig) []invariant {
 				if !h.windowFull(samples) {
 					return nil // not enough history to judge a trend yet
 				}
+				// A declared hot-store-growth fault window inside the trend
+				// span makes the trend meaningless — skip, do not judge
+				// (doc/checker.md).
+				if st.faults != nil && len(samples) > 0 &&
+					st.faults.overlaps("hot-store-growth", samples[0].at, samples[len(samples)-1].at) {
+					return nil
+				}
 				var out []finding
 				sums := sumSeriesByTarget(samples,
 					"profiler_hotstore_segments_disk_bytes",
 					"profiler_hotstore_partitions_disk_bytes",
 					"profiler_hotstore_wal_disk_bytes",
 					"profiler_hotstore_pending_parquet_bytes")
+				last := samples[len(samples)-1].at
 				for target, values := range sums {
 					if err := monotonicGrowth(values); err != nil {
-						out = append(out, finding{subject: target, msg: err.Error()})
+						out = append(out, finding{subject: target, msg: err.Error(), observedAt: last})
 					}
 				}
 				return out
@@ -160,12 +196,20 @@ func allInvariants(cfg invariantConfig) []invariant {
 		{
 			name: "ingest-paused-not-sticky",
 			plan: "§8.2",
+			// Samples inside a declared ingest-paused window leave the ratio
+			// entirely — numerator and denominator (doc/checker.md).
 			check: func(st *state) []finding {
 				h := st.metrics
 				var out []finding
-				for target, values := range h.seriesByTarget("profiler_backpressure_ingest_paused", h.checked()) {
-					if ratio := pausedRatio(values); ratio >= 0.01 {
-						out = append(out, finding{subject: target,
+				for target, points := range h.timedSeriesByTarget("profiler_backpressure_ingest_paused", h.checked()) {
+					judged := points[:0:0]
+					for _, p := range points {
+						if !st.expectedAt("ingest-paused", p.at) {
+							judged = append(judged, p)
+						}
+					}
+					if ratio := pausedRatio(judged); ratio >= 0.01 {
+						out = append(out, finding{subject: target, observedAt: judged[len(judged)-1].at,
 							msg: fmt.Sprintf("ingest paused %.1f%% of the run (budget 1%%)", ratio*100)})
 					}
 				}
@@ -175,13 +219,30 @@ func allInvariants(cfg invariantConfig) []invariant {
 		{
 			name: "no-refused-bytes",
 			plan: "§8.3",
+			// Judged on increments between consecutive scrapes, not on the
+			// cumulative value: a windowed, expected refusal must not keep the
+			// cumulative counter latching forever after the drain
+			// (doc/checker.md). Any increment outside an allowance window is
+			// the violation.
 			check: func(st *state) []finding {
 				h := st.metrics
 				var out []finding
-				for target, values := range h.seriesByTarget("profiler_ingest_refused_bytes_total", h.checked()) {
-					if n := len(values); n > 0 && values[n-1] > 0 {
-						out = append(out, finding{subject: target,
-							msg: fmt.Sprintf("ingest_refused_bytes_total = %.0f (must stay 0 at contract load)", values[n-1])})
+				for target, points := range h.timedSeriesByTarget("profiler_ingest_refused_bytes_total", h.checked()) {
+					for i := 1; i < len(points); i++ {
+						delta := points[i].v - points[i-1].v
+						if delta <= 0 {
+							continue
+						}
+						out = append(out, finding{subject: target, observedAt: points[i].at,
+							expected: st.expectedAt("refused-bytes", points[i].at),
+							msg: fmt.Sprintf("ingest refused %.0f bytes (counter %.0f at %s)",
+								delta, points[i].v, points[i].at.Format(time.RFC3339))})
+					}
+					// The pre-history baseline: a first sample already above
+					// zero on a run that expects nothing is a violation too.
+					if len(points) > 0 && points[0].v > 0 && st.faults == nil {
+						out = append(out, finding{subject: target, observedAt: points[0].at,
+							msg: fmt.Sprintf("ingest_refused_bytes_total = %.0f (must stay 0 at contract load)", points[0].v)})
 					}
 				}
 				return out
@@ -194,10 +255,11 @@ func allInvariants(cfg invariantConfig) []invariant {
 				h := st.metrics
 				bound := cfg.maxHotLag.Seconds()
 				var out []finding
-				for target, values := range h.seriesByTarget("profiler_hotstore_hot_window_lag_seconds", h.checked()) {
-					if n := len(values); n > 0 && values[n-1] > bound {
-						out = append(out, finding{subject: target,
-							msg: fmt.Sprintf("hot_window_lag %.0fs exceeds the %.0fs budget", values[n-1], bound)})
+				for target, points := range h.timedSeriesByTarget("profiler_hotstore_hot_window_lag_seconds", h.checked()) {
+					if n := len(points); n > 0 && points[n-1].v > bound {
+						out = append(out, finding{subject: target, observedAt: points[n-1].at,
+							expected: st.expectedAt("hot-window-lag", points[n-1].at),
+							msg:      fmt.Sprintf("hot_window_lag %.0fs exceeds the %.0fs budget", points[n-1].v, bound)})
 					}
 				}
 				return out
@@ -210,7 +272,7 @@ func allInvariants(cfg invariantConfig) []invariant {
 				if st.s3 == nil {
 					return nil
 				}
-				return st.s3.checkCompaction(time.Now())
+				return st.s3.checkCompaction(time.Now(), st.faults)
 			},
 		},
 		{
@@ -220,7 +282,7 @@ func allInvariants(cfg invariantConfig) []invariant {
 				if st.s3 == nil {
 					return nil
 				}
-				return st.s3.checkSmallFileShare(time.Now())
+				return st.s3.checkSmallFileShare(time.Now(), st.faults)
 			},
 		},
 		{
@@ -293,7 +355,7 @@ func allInvariants(cfg invariantConfig) []invariant {
 				if st.api == nil {
 					return nil
 				}
-				return st.api.findings()
+				return st.api.findings(st.faults)
 			},
 		},
 		{
@@ -303,7 +365,7 @@ func allInvariants(cfg invariantConfig) []invariant {
 				if st.pods == nil {
 					return nil
 				}
-				return st.pods.findings()
+				return st.pods.findings(st.faults)
 			},
 		},
 		{
@@ -316,7 +378,7 @@ func allInvariants(cfg invariantConfig) []invariant {
 				if st.gaps == nil {
 					return nil
 				}
-				return st.gaps.findings(cfg.maxScrapeGap)
+				return st.gaps.findings(cfg.maxScrapeGap, st.faults, cfg.targetPods)
 			},
 		},
 	}
@@ -349,17 +411,17 @@ func sumSeriesByTarget(samples []sample, names ...string) map[string][]float64 {
 }
 
 // pausedRatio is the fraction of samples with a 0/1 gauge at 1.
-func pausedRatio(values []float64) float64 {
-	if len(values) == 0 {
+func pausedRatio(points []tsPoint) float64 {
+	if len(points) == 0 {
 		return 0
 	}
 	paused := 0
-	for _, v := range values {
-		if v >= 1 {
+	for _, p := range points {
+		if p.v >= 1 {
 			paused++
 		}
 	}
-	return float64(paused) / float64(len(values))
+	return float64(paused) / float64(len(points))
 }
 
 // growthTolerance separates real monotonic growth from a flat series with

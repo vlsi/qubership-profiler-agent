@@ -86,7 +86,7 @@ func TestCompactionKeepsUp(t *testing.T) {
 		objects = append(objects, s3Object{Key: sealKey("normal_clean", freshBucket, "collector-0", seq), Size: 4 << 20})
 	}
 
-	fs := s3StateWith(now, objects).checkCompaction(now)
+	fs := s3StateWith(now, objects).checkCompaction(now, nil)
 	require.Len(t, fs, 1, "only the settled bucket is judged")
 	assert.Contains(t, fs[0].msg, "5 sealed objects")
 
@@ -96,7 +96,7 @@ func TestCompactionKeepsUp(t *testing.T) {
 		objects = append(objects, s3Object{Key: sealKey("normal_clean", oldBucket, "collector-0", seq), Size: 4 << 20})
 	}
 	objects = append(objects, s3Object{Key: sealKey("normal_clean", oldBucket, maintainReplica, 0), Size: 64 << 20})
-	assert.Empty(t, s3StateWith(now, objects).checkCompaction(now))
+	assert.Empty(t, s3StateWith(now, objects).checkCompaction(now, nil))
 }
 
 func TestSmallFileShareSlidingWindow(t *testing.T) {
@@ -125,13 +125,13 @@ func TestSmallFileShareSlidingWindow(t *testing.T) {
 	st.append(newS3Sample(now.Add(-20*time.Minute), mkObjects(4, 8), timers))
 	st.append(newS3Sample(now.Add(-10*time.Minute), mkObjects(6, 8), timers))
 
-	assert.Empty(t, st.checkSmallFileShare(now),
+	assert.Empty(t, st.checkSmallFileShare(now, nil),
 		"the early drop keeps the whole-window series non-monotonic")
 
 	// The window slides: once the early samples age out, the growth is bare.
 	st.window = 25 * time.Minute
 	st.append(newS3Sample(now, mkObjects(8, 8), timers))
-	fs := st.checkSmallFileShare(now)
+	fs := st.checkSmallFileShare(now, nil)
 	require.Len(t, fs, 1, "monotonic small-file growth inside the sliding window latches")
 	assert.Contains(t, fs[0].subject, "short_clean/")
 }
@@ -149,5 +149,5 @@ func TestSmallFileShareWaitsForTheHour(t *testing.T) {
 			{Key: sealKey("short_clean", lastBucket, "collector-0", i), Size: 1 << 10},
 		}, timers))
 	}
-	assert.Empty(t, st.checkSmallFileShare(now))
+	assert.Empty(t, st.checkSmallFileShare(now, nil))
 }

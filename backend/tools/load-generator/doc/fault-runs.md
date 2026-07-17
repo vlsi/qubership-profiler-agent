@@ -38,10 +38,13 @@ checker).
 
 ## Running
 
-1. Deploy the stand, set a fresh `k6.testid`, and start the checker with every source enabled plus the fault log:
+1. Deploy the stand, set a fresh `k6.testid`, and start the checker with every source enabled plus the fault log
+   and the target-to-pod mapping (the scrape-gap allowance is scoped to mapped targets only, `checker.md`):
 
    ```bash
-   go run ./checker ... -faults-log runs/<run-dir>/faults.jsonl
+   go run ./checker ... \
+     -faults-log runs/<run-dir>/faults.jsonl \
+     -target-pods http://localhost:8081/metrics=profiler-backend-collector-0,http://localhost:8082/metrics=profiler-backend-collector-1,http://localhost:8083/metrics=profiler-backend-collector-2
    ```
 
    The run directory name is printed by the runner at start; start the checker right after (its warm-up covers

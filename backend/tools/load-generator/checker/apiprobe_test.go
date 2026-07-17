@@ -89,27 +89,27 @@ func TestFreshness(t *testing.T) {
 	fresh := &fakeQuery{calls: []model.CallJSON{callAt(now.Add(-time.Minute), "short_clean", 1)}}
 	a := probeAgainst(t, fresh, apiProbeConfig{})
 	require.NoError(t, a.poll(context.Background(), now, false))
-	assert.Empty(t, a.findings(), "a minute-old newest call is fresh")
+	assert.Empty(t, a.findings(nil), "a minute-old newest call is fresh")
 
 	stale := &fakeQuery{calls: []model.CallJSON{callAt(now.Add(-10*time.Minute), "short_clean", 1)}}
 	a = probeAgainst(t, stale, apiProbeConfig{})
 	require.NoError(t, a.poll(context.Background(), now, false))
-	require.Len(t, a.findings(), 1, "a 10-minute-old newest call breaks the 4-minute budget")
-	assert.Contains(t, a.findings()[0].msg, "newest call")
+	require.Len(t, a.findings(nil), 1, "a 10-minute-old newest call breaks the 4-minute budget")
+	assert.Contains(t, a.findings(nil)[0].msg, "newest call")
 
 	empty := &fakeQuery{}
 	a = probeAgainst(t, empty, apiProbeConfig{})
 	require.NoError(t, a.poll(context.Background(), now, false))
-	require.Len(t, a.findings(), 1)
-	assert.Contains(t, a.findings()[0].msg, "no calls")
+	require.Len(t, a.findings(nil), 1)
+	assert.Contains(t, a.findings(nil)[0].msg, "no calls")
 
 	// A guard rejection of the small freshness window is a §8.7 violation,
 	// not a transport gap: the UI cannot list recent calls.
 	guarded := &fakeQuery{guardCalls: true}
 	a = probeAgainst(t, guarded, apiProbeConfig{})
 	require.NoError(t, a.poll(context.Background(), now, false))
-	require.Len(t, a.findings(), 1)
-	assert.Contains(t, a.findings()[0].msg, "guard rejected")
+	require.Len(t, a.findings(nil), 1)
+	assert.Contains(t, a.findings(nil)[0].msg, "guard rejected")
 }
 
 func TestMarkersRetrievableUntilTTL(t *testing.T) {
@@ -125,7 +125,7 @@ func TestMarkersRetrievableUntilTTL(t *testing.T) {
 	require.NoError(t, a.poll(context.Background(), now, true))
 	require.True(t, a.markersSampled)
 	var markerFindings []finding
-	for _, fd := range a.findings() {
+	for _, fd := range a.findings(nil) {
 		if strings.Contains(fd.msg, "trace answered") {
 			markerFindings = append(markerFindings, fd)
 		}
@@ -138,7 +138,7 @@ func TestMarkersRetrievableUntilTTL(t *testing.T) {
 		f.traceStatus[c.PK.PathString()] = http.StatusOK
 	}
 	require.NoError(t, a.poll(context.Background(), now, true))
-	for _, fd := range a.findings() {
+	for _, fd := range a.findings(nil) {
 		assert.NotContains(t, fd.msg, "trace answered")
 	}
 }
@@ -164,7 +164,7 @@ func TestExpectTTLDeletion(t *testing.T) {
 
 	retrievable := func() []finding {
 		var out []finding
-		for _, fd := range a.findings() {
+		for _, fd := range a.findings(nil) {
 			if strings.Contains(fd.msg, "still retrievable") {
 				out = append(out, fd)
 			}

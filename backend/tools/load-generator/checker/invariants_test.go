@@ -244,7 +244,7 @@ func TestLatchKeepsMidRunViolation(t *testing.T) {
 
 	// The registry never clears: a healthy final tick records nothing new,
 	// and the run still fails.
-	assert.Equal(t, 1, l.len())
+	assert.Equal(t, 1, l.unexpectedLen())
 }
 
 func TestGapTracker(t *testing.T) {
@@ -254,15 +254,15 @@ func TestGapTracker(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		g.observe("c0", false)
 	}
-	assert.Empty(t, g.findings(3), "3 consecutive misses sit at the limit")
+	assert.Empty(t, g.findings(3, nil, nil), "3 consecutive misses sit at the limit")
 
 	g.observe("c0", false)
-	fs := g.findings(3)
+	fs := g.findings(3, nil, nil)
 	require.Len(t, fs, 1, "the 4th consecutive miss latches")
 	assert.Equal(t, "c0", fs[0].subject)
 
 	g.observe("c0", true)
-	assert.Empty(t, g.findings(3), "a successful poll resets the gap (the latch upstream keeps the record)")
+	assert.Empty(t, g.findings(3, nil, nil), "a successful poll resets the gap (the latch upstream keeps the record)")
 }
 
 func TestGapTrackerSilentDuringWarmup(t *testing.T) {
@@ -270,5 +270,5 @@ func TestGapTrackerSilentDuringWarmup(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		g.observe("c0", false)
 	}
-	assert.Empty(t, g.findings(3), "warm-up gaps are not judged")
+	assert.Empty(t, g.findings(3, nil, nil), "warm-up gaps are not judged")
 }

@@ -66,7 +66,11 @@ func main() {
 		// §8.8.
 		kubeNamespace = flag.String("kube-namespace", "", "namespace of the backend pods; enables the §8.8 restart watch")
 		kubeSelector  = flag.String("kube-selector", "app.kubernetes.io/name=profiler-backend", "label selector for the §8.8 pod list")
-		allowedRest   = flag.Int("allowed-restarts", 0, "total restart-event budget for the run (§8.8)")
+		allowedRest   = flag.Int("allowed-restarts", 0, "budget for UNEXPECTED restart events (§8.8); injected restarts arrive as fault-log allowances, not through this flag")
+
+		// Expected failures (fault runs; doc/checker.md).
+		faultsLog  = flag.String("faults-log", "", "the runner's faults.jsonl; enables the expected-failure allowances")
+		targetPods = flag.String("target-pods", "", "comma-separated <metrics URL>=<pod name> pairs scoping the scrape-gap allowance")
 	)
 	flag.Parse()
 	if *targets == "" {
@@ -99,6 +103,20 @@ func main() {
 	st := &state{
 		metrics: newHistory(*warmup, *window),
 		gaps:    newGapTracker(*warmup),
+	}
+	if *faultsLog != "" {
+		st.faults = newFaultState(*faultsLog)
+	}
+	podsByTarget := map[string]string{}
+	if *targetPods != "" {
+		for _, pair := range strings.Split(*targetPods, ",") {
+			url, pod, ok := strings.Cut(strings.TrimSpace(pair), "=")
+			if !ok || url == "" || pod == "" {
+				fmt.Fprintf(os.Stderr, "checker: -target-pods entry %q is not <metrics URL>=<pod name>\n", pair)
+				os.Exit(2)
+			}
+			podsByTarget[url] = pod
+		}
 	}
 
 	var lister objectLister
@@ -154,6 +172,7 @@ func main() {
 		rssLimitBytes:      *rssLimit,
 		goroutineTolerance: *goroutineTol,
 		maxScrapeGap:       *maxScrapeGap,
+		targetPods:         podsByTarget,
 	})
 
 	fmt.Printf("checker: polling %s every %s; warmup %s, window %s\n",
@@ -169,10 +188,15 @@ func main() {
 		pods:       pods,
 	}, st, invariants, l)
 
-	if l.len() > 0 {
-		l.report()
-		fmt.Printf("checker: FAIL — %d latched violation(s)\n", l.len())
+	l.report()
+	if n := l.unexpectedLen(); n > 0 {
+		fmt.Printf("checker: FAIL — %d latched violation(s) (%d expected under fault allowances)\n",
+			n, l.expectedLen())
 		os.Exit(1)
+	}
+	if n := l.expectedLen(); n > 0 {
+		fmt.Printf("checker: PASS — every latched violation (%d) matched a fault allowance\n", n)
+		return
 	}
 	fmt.Println("checker: PASS — no invariant violations")
 }
@@ -265,7 +289,16 @@ func run(ctx context.Context, cfg runConfig, st *state, invariants []invariant, 
 			if err != nil {
 				fmt.Printf("%s pod list: %v\n", now.Format(time.RFC3339), err)
 			} else {
-				st.pods.observe(pods)
+				st.pods.observe(pods, time.Now())
+			}
+		}
+
+		// Tick order is scrape → fault events → evaluate (doc/checker.md):
+		// an injection started before this evaluation must be visible to it,
+		// and findings still match by their own observation times.
+		if st.faults != nil {
+			if err := st.faults.reload(); err != nil {
+				fmt.Printf("%s faults log: %v\n", time.Now().Format(time.RFC3339), err)
 			}
 		}
 
@@ -290,11 +323,15 @@ func evaluate(now time.Time, pastWarmup bool, st *state, invariants []invariant,
 			if !pastWarmup {
 				continue
 			}
+			label := "VIOLATION"
+			if f.expected {
+				label = "EXPECTED"
+			}
 			rec, isNew := l.record(now, inv, f)
 			if isNew {
-				fmt.Printf("%s VIOLATION %s (%s) %s: %s\n",
-					now.Format(time.RFC3339), inv.name, inv.plan, f.subject, f.msg)
-			} else if rec.count%10 == 0 {
+				fmt.Printf("%s %s %s (%s) %s: %s\n",
+					now.Format(time.RFC3339), label, inv.name, inv.plan, f.subject, f.msg)
+			} else if rec.count%10 == 0 && !f.expected {
 				fmt.Printf("%s violation persists %s (%s) %s: %s (%d times)\n",
 					now.Format(time.RFC3339), inv.name, inv.plan, f.subject, f.msg, rec.count)
 			}

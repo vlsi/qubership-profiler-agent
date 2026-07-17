@@ -166,10 +166,54 @@ in-cluster config — the `tools/migration/pkg/cleaner` pattern).
 - A pod that disappears without a replacement latches its own violation.
 - A failed list is treated like a scrape gap: the tick is not judged, the gap counter grows.
 
-Phase 4 runs with the default budget of 0; the flag exists so phase 5 (T5 injected restarts) can raise it without
-contract changes.
+Healthy runs keep the default budget of 0. Injected restarts (T5) are NOT budgeted through this flag — a global
+budget would let an unexpected restart hide behind an expected one. They arrive as scoped allowances from the
+fault log (*Expected failures* below), matched per pod, per injection, per window.
+
+## Expected failures (fault runs, phase 5)
+
+T5/T7 runs inject failures on purpose; the checker must accept the *declared* consequences without accepting
+anything else. The single mechanism is the scoped allowance, derived from the runner's fault log — never from a
+global budget or a muted invariant.
+
+- **Source**: `-faults-log <path>` points at the runner's `faults.jsonl`. The checker re-reads it on every tick,
+  STRICTLY between the scrape phase and `evaluate()` — the tick order is scrape → read fault events → evaluate,
+  so an injection that started before this tick's evaluation is always visible to it. A torn last line is
+  ignored and re-read next tick.
+- **Windows**: an injection's window opens at its `started` event and closes at `reverted` (stateful actions) or
+  `ended` (instant actions) plus `settle`. An injection with no closing event yet is active: its window extends
+  to now.
+- **Observation time, not evaluation time**: every finding carries `observedAt` — the scrape, listing, probe, or
+  pod-list time that produced the evidence — and the window match uses it. A violation measured before the
+  injection's `started` stays unexpected even when the event lands between the scrape and the evaluation.
+- **Scope**: an allowance is (signal × subject scope × window × budget). The `expects` list of the fault maps to
+  invariants as follows:
+
+  | `expects` entry | Invariant | Allowance semantics |
+  | --- | --- | --- |
+  | `restarts` | §8.8 | +1 restart-or-replacement event for the TARGET pod per injection, observed in the window; other pods, later events, and per-injection excess stay violations |
+  | `scrape-gap` | target-available | gaps of the metrics target mapped to the target pod (`-target-pods`), in the window; unmapped targets never get this allowance |
+  | `refused-bytes` | §8.3 | counter increments observed in the window are expected (and logged with their volume); increments outside stay violations |
+  | `ingest-paused` | §8.2 | in-window samples leave the paused-ratio entirely (numerator and denominator) |
+  | `hot-window-lag` | §8.4 | breaches observed in the window are expected |
+  | `hot-store-growth` | §8.1 | the trend is not judged while a window overlaps the trend span (a mid-span outage makes the trend meaningless) |
+  | `freshness`, `markers` | §8.7 | probe failures observed in the window are expected |
+  | `compaction-lag` | §8.5 (1) | group deadlines shift by the closed windows' durations; groups are not judged while a window is open |
+  | `small-file-share` | §8.5 (2) | listings observed in the window are not judged |
+  | `ack-errors`, `pending-parquet-growth` | — | runner-side detectors; the checker does not watch them |
+
+- **§8.3 predicate change**: `no-refused-bytes` judges counter *increments* between consecutive scrapes, not the
+  cumulative value — a cumulative check would latch every tick after a legitimate, windowed refusal forever.
+  The healthy-run behavior is unchanged (any increment from zero is a violation).
+- **Latch and exit**: an expected finding latches with an `expected` mark; the final report prints expected and
+  unexpected records as separate lists, and only unexpected records fail the run. Nothing is dropped — an
+  expected latch is still evidence for the report.
+
+`-target-pods` maps metrics targets to pod names for the scrape-gap scoping, e.g.
+`-target-pods http://localhost:8082/metrics=profiler-backend-collector-1`.
 
 ## Exit and report
 
-`checker: PASS` and exit 0 only with an empty latch registry. Otherwise the final report lists every latched
-violation (`invariant`, `subject`, first/last time, count, message) and the exit code is 1. Flag errors exit 2.
+`checker: PASS` and exit 0 only when no *unexpected* violation latched. The final report lists every latched
+violation (`invariant`, `subject`, first/last time, count, message), expected records under their own heading;
+the exit code is 1 on any unexpected record. Flag errors exit 2.

@@ -23,10 +23,12 @@ type gapTracker struct {
 	warmup  time.Duration
 	started time.Time
 	gaps    map[string]int
+	lastAt  map[string]time.Time // time of the newest failed poll per target
 }
 
 func newGapTracker(warmup time.Duration) *gapTracker {
-	return &gapTracker{warmup: warmup, started: time.Now(), gaps: map[string]int{}}
+	return &gapTracker{warmup: warmup, started: time.Now(),
+		gaps: map[string]int{}, lastAt: map[string]time.Time{}}
 }
 
 func (g *gapTracker) observe(target string, ok bool) {
@@ -35,18 +37,36 @@ func (g *gapTracker) observe(target string, ok bool) {
 		return
 	}
 	g.gaps[target]++
+	g.lastAt[target] = time.Now()
 }
 
-func (g *gapTracker) findings(maxGap int) []finding {
+// findings judges the gaps. A gap is expected only when the target is mapped
+// to a pod (targetPods) whose scrape-gap allowance window covers the newest
+// failed poll — unmapped targets and other pods stay violations
+// (doc/checker.md, "Expected failures").
+func (g *gapTracker) findings(maxGap int, faults *faultState, targetPods map[string]string) []finding {
 	if time.Since(g.started) < g.warmup {
 		return nil
 	}
 	var out []finding
 	for target, gap := range g.gaps {
-		if gap > maxGap {
-			out = append(out, finding{subject: target,
-				msg: fmt.Sprintf("no data for %d consecutive polls (max %d)", gap, maxGap)})
+		if gap <= maxGap {
+			continue
 		}
+		at := g.lastAt[target]
+		expected := false
+		if faults != nil {
+			if pod, ok := targetPods[target]; ok {
+				expected = faults.expectedForPod("scrape-gap", pod, at)
+			}
+			// The query API goes partially dark while a collector is down;
+			// scope it to any scrape-gap window (no pod identity to match).
+			if target == "query-api" {
+				expected = faults.expected("scrape-gap", at)
+			}
+		}
+		out = append(out, finding{subject: target, observedAt: at, expected: expected,
+			msg: fmt.Sprintf("no data for %d consecutive polls (max %d)", gap, maxGap)})
 	}
 	sortFindings(out)
 	return out

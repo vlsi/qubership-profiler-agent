@@ -238,24 +238,35 @@ func (s *s3state) append(sm s3Sample) {
 
 // checkCompaction is §8.5 sub-invariant 1: every (bucket, class) group past
 // its compaction deadline must hold fewer seal-produced objects than the
-// compaction trigger — residue below the trigger is legal by design.
-func (s *s3state) checkCompaction(now time.Time) []finding {
+// compaction trigger — residue below the trigger is legal by design. A
+// compaction-lag allowance shifts the deadlines by the closed fault windows'
+// lengths; while such a window is open, groups are not judged at all
+// (doc/checker.md, "Expected failures").
+func (s *s3state) checkCompaction(now time.Time, faults *faultState) []finding {
 	if len(s.samples) == 0 {
+		return nil
+	}
+	if faults != nil && faults.hasOpen("compaction-lag") {
 		return nil
 	}
 	last := s.samples[len(s.samples)-1]
 	var out []finding
 	for gk, count := range last.sealed {
 		bucketEnd := time.UnixMilli(gk.bucketStartMs).Add(s.timers.timeBucket)
-		if now.Before(s.timers.compactionDueAt(bucketEnd)) {
+		due := s.timers.compactionDueAt(bucketEnd)
+		if faults != nil {
+			due = due.Add(faults.deadlineShift("compaction-lag", bucketEnd))
+		}
+		if now.Before(due) {
 			continue
 		}
 		if count >= s.timers.compactionMinFiles {
 			out = append(out, finding{
-				subject: fmt.Sprintf("%s@%s", gk.class, time.UnixMilli(gk.bucketStartMs).UTC().Format(time.RFC3339)),
+				subject:    fmt.Sprintf("%s@%s", gk.class, time.UnixMilli(gk.bucketStartMs).UTC().Format(time.RFC3339)),
+				observedAt: last.at,
 				msg: fmt.Sprintf("%d sealed objects in a bucket past its compaction deadline (trigger is %d, deadline %s, listed %s)",
 					count, s.timers.compactionMinFiles,
-					s.timers.compactionDueAt(bucketEnd).UTC().Format(time.RFC3339),
+					due.UTC().Format(time.RFC3339),
 					last.at.UTC().Format(time.RFC3339)),
 			})
 		}
@@ -266,8 +277,9 @@ func (s *s3state) checkCompaction(now time.Time) []finding {
 
 // checkSmallFileShare is §8.5 sub-invariant 2: once every bucket of an hour
 // prefix is past its compaction deadline, the small-file share of that hour
-// must not grow monotonically across the sliding window.
-func (s *s3state) checkSmallFileShare(now time.Time) []finding {
+// must not grow monotonically across the sliding window. Listings observed
+// inside a small-file-share allowance window are not judged.
+func (s *s3state) checkSmallFileShare(now time.Time, faults *faultState) []finding {
 	if len(s.samples) < 2 {
 		return nil
 	}
@@ -290,14 +302,18 @@ func (s *s3state) checkSmallFileShare(now time.Time) []finding {
 			if sm.at.Before(hourDue) {
 				continue
 			}
+			if faults != nil && faults.expected("small-file-share", sm.at) {
+				continue
+			}
 			if stat, ok := sm.hours[hk]; ok {
 				shares = append(shares, stat.smallShare())
 			}
 		}
 		if err := monotonicGrowth(shares); err != nil {
 			out = append(out, finding{
-				subject: hk.class + "/" + hk.hour,
-				msg:     "small-file share " + err.Error(),
+				subject:    hk.class + "/" + hk.hour,
+				observedAt: last.at,
+				msg:        "small-file share " + err.Error(),
 			})
 		}
 	}

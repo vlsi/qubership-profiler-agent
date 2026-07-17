@@ -35,6 +35,14 @@ type marker struct {
 	class string
 }
 
+// probeFinding pairs a §8.7 finding with the allowance signal that may make
+// it expected; the marking happens at evaluation time, against the freshly
+// reloaded fault log (doc/checker.md).
+type probeFinding struct {
+	f      finding
+	signal string // freshness | markers
+}
+
 // apiState runs the §8.7 probes and keeps their outcome for the invariant.
 type apiState struct {
 	cfg     apiProbeConfig
@@ -44,25 +52,39 @@ type apiState struct {
 	markers        []marker
 	markersSampled bool
 	// current holds the findings of the last poll; the invariant reads them.
-	current []finding
+	current []probeFinding
 }
 
 func newAPIState(cfg apiProbeConfig) *apiState {
 	return &apiState{cfg: cfg, client: &http.Client{Timeout: 30 * time.Second}, started: time.Now()}
 }
 
-func (a *apiState) findings() []finding { return a.current }
+// findings marks each probe finding against its allowance signal by the
+// probe's own observation time.
+func (a *apiState) findings(faults *faultState) []finding {
+	out := make([]finding, 0, len(a.current))
+	for _, pf := range a.current {
+		f := pf.f
+		f.expected = faults != nil && faults.expected(pf.signal, f.observedAt)
+		out = append(out, f)
+	}
+	return out
+}
 
 // poll runs one §8.7 tick. The error return is transport-level (feeds the
-// scrape-gap tracker); invariant findings land in a.current.
+// scrape-gap tracker); invariant findings land in a.current, stamped with
+// the probe time.
 func (a *apiState) poll(ctx context.Context, now time.Time, pastWarmup bool) error {
-	var out []finding
+	var out []probeFinding
 
 	fresh, err := a.checkFreshness(ctx, now)
 	if err != nil {
 		return err
 	}
-	out = append(out, fresh...)
+	for _, f := range fresh {
+		f.observedAt = now
+		out = append(out, probeFinding{f: f, signal: "freshness"})
+	}
 
 	if pastWarmup && !a.markersSampled {
 		if err := a.sampleMarkers(ctx, now); err != nil {
@@ -73,7 +95,10 @@ func (a *apiState) poll(ctx context.Context, now time.Time, pastWarmup bool) err
 	if err != nil {
 		return err
 	}
-	out = append(out, markerFindings...)
+	for _, f := range markerFindings {
+		f.observedAt = now
+		out = append(out, probeFinding{f: f, signal: "markers"})
+	}
 
 	a.current = out
 	return nil
