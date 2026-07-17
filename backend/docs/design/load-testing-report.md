@@ -211,7 +211,144 @@ no §8.7 freshness violations and no effect on ingest: 393 KB/s ingest stayed fl
 Hot-read pressure at UI levels does not push ingest toward backpressure on this stand; the incident/cold levels
 that *do* hurt hit the query pod's memory first (above).
 
-## 8. Invariant checker coverage (plan §8)
+## 8. T5: crashloop and restarts (phase 5) *(local — functional results, mechanisms portable)*
+
+All T5/T7 runs use the accelerated-timer stand; absolute numbers are *(local, not a ceiling)*, the mechanisms and
+orderings carry. Fault runs are judged by the checker's scoped allowances (`doc/checker.md`, "Expected failures"):
+declared consequences latch as expected, everything else fails the run.
+
+### T5.1 agent reconnect storm
+
+Four runs (`runs/20260717T{120457,122802,125426,133845}Z-t5-reconnect-storm`; the last is the definitive one):
+40 churn-mode pods (45 s ± 20% cycles, `virtual-dumper.md` §1.1) sustained ~42 restarts/min for up to 39 minutes —
+each cycle an abrupt disconnect, a 10 s restart, and a full dictionary resend under the same pod name.
+
+- **The tracked pod-restart backlog is NOT bounded under a sustained storm.** It first plateaus at
+  `restart rate × purge-eligibility lag` (~0.73/s × ~5 min ≈ 220 tracked restarts, sawtooth 196–263 as purge
+  batches run), but purge eligibility itself degrades: the collector logs show WAL purges running 3.8 → 7.5 min
+  "past full flush" as the run ages, and on the longest attempt the purge rate collapsed from 0.72/s to 0.35/s
+  against a steady 0.7/s production at minute ~35 — tracked restarts jumped to 327 and WAL to 110 MB, both still
+  climbing when the `wal-bytes-growth` detector ended the run.
+- **The purge gate is hot-partition indexing, not `WAL_PURGE_GRACE`.** Purges wait for the hot index to age past
+  each restart's rows (~5 min on this stand: 3 m retention + eviction cadence + drift), far past the 2 m grace.
+  At the production 1 h grace the same storm floors at ~2 500 tracked restarts before any degradation — the
+  backlog scales with `max(grace, hot-indexing lag)`.
+- **RAM and CPU are not the pressure point at this scale**: 600 MB RSS and 0.2 CPU cores across 3 replicas,
+  in-RAM state 14 MB, accept path unstressed (session-ready p95 flat). No backpressure, zero refused bytes, zero
+  ack errors — and zero failure reconnects: deliberate churn cycles count separately (`k6_vdumper_churns_total`).
+- **Compaction feels the storm.** Churn doubles per-bucket object counts (each incarnation seals its own files);
+  during storm fronts maintain missed the accelerated deadlines with 49–80 sealed objects per (bucket, class)
+  (persisting across listings in the first two attempts — real lateness, unlike the one-shot listing-staleness
+  race the campaign later fixed in the checker).
+
+The storm campaign also hardened the harness itself: the `monotonic-growth` detector was rebuilt twice on this
+run's evidence (first-to-last delta → least-squares fit; then a three-plateau-window minimum span), and the final
+thresholds are derived from the measured purge-cycle amplitude (±11%), not guessed
+(`doc/run-orchestration.md`, "Detector kinds").
+
+### T5.2 collector restart under load
+
+`runs/20260717T142638Z-t5-restart`: the accelerated-soak shape, one grace-0 kill of collector-1 at hold+20 m,
+runner verdict **completed** with every detector silent.
+
+- **READY 10.1 s after the kill** — including one extra container restart: the replacement pod's first start
+  died on `collector.lock held by another process` (the killed process's flock on the shared PV had not been
+  released yet), kubelet restarted it, the second start recovered the WAL and went READY. The lock does its
+  two-writers job at the cost of one crash cycle; the §8.8 allowance model now carries this as
+  `restartBudget: 2` per grace-0 kill.
+- **Zero refused bytes**: the loss window of a hard kill is confined to unacked data, exactly as the write
+  contract documents; agents failed over with a reconnect spike and ingest returned to the declared rate.
+- The checker matched the replacement to the kill's allowance and kept an unexpected latch for the
+  lock-collision restart — which is how the mechanism was discovered and then modeled.
+- **Gap (follow-up)**: there is no recovery-duration metric; time-to-READY comes from the fault log and probe
+  transitions.
+
+### T5.3 collector crashloop
+
+`runs/20260717T152844Z-t5-crashloop`: ten ready-gated kills of collector-1 (the next kill only after observed
+READY + 90 s), runner verdict **completed**.
+
+- **Recovery does not degrade cycle over cycle**: the `readyAt − at` series is 10.1, 10.1, 25.1, 10.0, 15.1,
+  10.1, 15.1, 30.1, 15.1, 10.0 s — flat, with the variance explained by kubelet's restart backoff on the
+  lock-collision restart, not by store state.
+- All 20 §8.8 units (10 replacements + 10 lock-collision restarts) matched the budget-2 allowances; no orphan
+  parquet or WAL survived stabilization (janitor counters, post-run listings).
+- **The startup gate holds**: during every recovery the agent port stayed unbound (k6 saw connect errors, never
+  an accepted-then-stalled session), matching the design (`libs/collector/service.go` binds after READY).
+
+### Protection decision (plan §7.5.4)
+
+By the numbers above — designs are follow-ups, nothing is implemented in this campaign:
+
+1. **Aggressive purge of near-empty pod-restarts: warranted.** The storm's unbounded backlog is gated by purge
+   eligibility, and churn restarts are near-empty by construction (a dictionary and seconds of data). A
+   fast-path that frees a pod-restart's WAL set once its rows are sealed and below a size floor — skipping the
+   hot-index wait — bounds the backlog at `rate × grace` regardless of hot-window drift.
+2. **Per-pod-key reconnect rate limit: not now.** The collector absorbs 42 restarts/min at negligible CPU/RAM;
+   the damage is bookkeeping downstream. Shedding agent data to protect a purge queue is the wrong trade at
+   this scale; revisit with cluster-scale T3 numbers.
+3. **Cap on tracked pod-restarts: defer, coupled to (1).** A cap without faster purge only drops observability;
+   with (1) the set is bounded anyway.
+4. **Accept-side connection cap (plan §7.3): still open, cluster-pending** — the T3 ceiling run owns that
+   decision; nothing local stressed the accept path.
+
+## 9. T7: fault injection (phase 5) *(local — functional results, mechanisms portable)*
+
+### S3 unavailable (`runs/20260717T165508Z-t7-s3-outage`)
+
+MinIO scaled to 0 for 20 minutes under the soak shape, with `PENDING_UPLOAD_MAX_BYTES` pinned to 256 MiB per
+replica so the gates fit the run; the sizing and its consequences were computed in the spec before the run.
+
+- **The chain engaged as re-derived, not as §7.7 documents it**: refusals began 10 minutes into the outage
+  (predicted 8–10), `IngestPaused` from +12 min — and **`SealPaused` never fired**. On this stand WAL and live
+  partitions dominate the backlog, so the ingest gate (whole budget) trips long before pending parquet alone
+  can reach the seal gate (half budget). The documented seal-before-ingest order presupposes a pending-dominant
+  backlog; whether production stands are pending- or WAL-dominant decides which protection engages first.
+- Agents saw `ACK_ERROR` and reconnect-looped; after the revert the gate cleared within ~40 s and every refusal
+  reconciled with `ingest_refused_bytes_total` (107 KB total, each windowed increment logged by the checker).
+- **Budget sizing lesson**: 28 minutes after the revert one replica briefly re-crossed the gate (a ~4 KB refusal
+  flap outside the settle window) — with the budget at ~3× the steady backlog, residual WAL keeps the collector
+  hovering at the threshold. The gate needs to sit well above the steady WAL+partitions level (the 2 GiB
+  default is ~11× on this stand).
+
+### S3 slow (`runs/20260717T191126Z-t7-s3-slow`)
+
+1 s latency + 32 KB/s-per-connection bandwidth toxics on the S3 path for 15 minutes, sized to push the drain
+rate below the measured parquet production. Runner **completed** the full hold, checker **PASS with zero
+violations** — the backlog grew slowly, upload workers sat pinned on crawling PUTs (there is still no per-PUT
+timeout, only ambient context — recorded), compaction deadlines shifted by the declared allowance windows, and
+the post-revert drain finished inside the settle. The degraded-but-under-threshold regime is absorbed by the
+existing machinery.
+
+### Small PV / disk pressure (`runs/20260717T215007Z-t7-small-pv`, probe `20260717T203936Z`)
+
+A deploy-time variant: the segment staging budget shrunk to 32 MiB per replica — below the measured steady
+segment footprint (~66 MB per replica at the accelerated seal cadence, from the 256 MiB probe run that never
+evicted).
+
+- **Class-aware eviction holds the line exactly**: segments sat at 100.1 MB against a 100.7 MB summed budget
+  (99.5% utilization, never exceeded) with ~6.6 segments/min evicted continuously.
+- **The cost is visible and counted**: 0.92 truncated rows/s sealed with `truncated_reason=disk_budget` and
+  57 429 chunk references pointing at evicted segments — the read side serves those calls without trace blobs.
+- Ingest, backpressure, hot lag, and the whole §8 set stayed green (checker PASS, zero violations).
+- The true ENOSPC path stays **cluster-pending**: OrbStack hostpath volumes enforce no size, so a full-disk
+  write failure (stream teardown → reconnect; no reactive ENOSPC handling exists) cannot be produced locally.
+
+### Agent↔collector network faults (`runs/20260717T231036Z-t7-agent-net` and successors)
+
+- **2 s of path latency does not break sessions — it starves them.** The 40 s read deadline held, not one
+  reconnect fired; but ingest collapsed from ~440 KB/s to ~11 KB/s (~40×), ack-flush p95 grew to 2.1 s, and
+  producers dropped ~30 chunks/s. The wire protocol is latency-bound: 8 KB socket buffers and a synchronous
+  per-stream ack drain per 5 s flush cycle turn RTT into a hard throughput ceiling. A WAN-grade agent link is
+  effectively unusable — a finding for any multi-region deployment thought.
+- The first run also caught a transient single-pass failure unrelated to the faults: one seal and one upload
+  pass on one replica failed with `SQL logic error: no such table: call_index` (a call-partition drop racing an
+  in-flight pass), self-healed on the next pass, backlog drained in minutes. The loop-error counters account it;
+  a follow-up note, not a stability issue in itself.
+- The full-stall + reconnect-storm scenario is covered by the successor run recorded in the run directory list.
+- Packet loss proper needs netem and stays **cluster-pending** (the parked `chaos-mesh` release).
+
+## 10. Invariant checker coverage (plan §8)
 
 | Invariant | Source | Status |
 | --- | --- | --- |
@@ -230,7 +367,19 @@ Violations latch: a failure after warm-up fails the run even when the final tick
 OOM and panic restarts, and the scrape-gap rule on real query-API outages — none of the final latches were false
 positives.
 
-## 9. Generator headroom (plan §10)
+Phase 5 hardened three rules on the fault runs' own evidence and added the expected-failure layer:
+
+- **§8.6** judges goroutines by a least-squares trend over real scrape timestamps (a healthy 115–130 oscillation
+  had latched under the old range rule); **§8.5** judges a compaction group only from a listing that postdates
+  the group's deadline (every recurring one-shot latch of the fault runs was a listing-staleness race, and the
+  T5.2/T5.3 compaction "misses" retro-resolve to that race); the runner's `monotonic-growth` detector fits a
+  trend over at least three plateau windows instead of a first-to-last delta.
+- **Expected failures** (`doc/checker.md`): fault runs declare their consequences per injection, the checker
+  scopes them to (invariant × subject × window × budget) matched by observation time, and expected latches
+  report separately without masking anything undeclared — battle-tested by T5.2 (the lock-collision restart
+  surfaced as unexpected, then measured and modeled) and T5.3 (20 declared units matched, zero masked).
+
+## 11. Generator headroom (plan §10)
 
 Every step records the k6 pod's CPU share against its limit (`steps.jsonl`, `generator` field); runs stop as
 `invalid` past 70%. Large-cluster runs additionally pin the runner to dedicated nodes.
@@ -238,15 +387,30 @@ Every step records the k6 pod's CPU share against its limit (`steps.jsonl`, `gen
 > Placeholder — headroom observed at the T2/T3 ceilings, and the runner sizing that keeps it. On the local smoke
 > levels the generator used 1–2% of a 2-core limit — the guard machinery is verified, the sizing question is not.
 
-## 10. Follow-ups
+## 12. Follow-ups
 
 - ~~Fix the `CallsPipeReader` panic~~ — fixed (`608ce6a9`) and verified by the phase-5 accelerated re-run (§5):
   no crash across 2.5 h under the shape that killed a collector in under an hour. The suspend/params reader
   mis-framing flagged in phase 2 remains open.
 - **Global read-path memory budget** for the query service (§7): the per-request scan guard multiplies under
   concurrency; a global budget or admission semaphore is needed before T6 runs at cluster scale.
+- **Aggressive purge of near-empty pod-restarts** (§8, the T5 protection decision): design the fast-path that
+  frees a sealed, below-floor pod-restart without waiting out the hot-index aging — the storm backlog is
+  unbounded without it.
+- **Recovery-duration metric** for the collector (§8, T5.2): time-to-READY is currently only derivable from
+  probes and the fault log.
+- **Per-PUT timeout in the uploader** (§9, T7 slow-S3): a crawling PUT pins its worker until the ambient
+  context ends; a bounded per-attempt timeout keeps the retry loop live.
+- **Wire-protocol latency sensitivity** (§9, T7 agent-net): 2 s RTT costs ~40× throughput through the 8 KB
+  socket buffers and synchronous per-stream flush acks. If WAN-separated agents are ever a target, the protocol
+  needs windowing/pipelining; otherwise document the co-location assumption.
+- **Partition-drop vs seal/upload pass race** (§9): one transient `no such table: call_index` pass failure,
+  self-healed; worth a look at the drop path's locking before the cluster soak.
 - Re-run the ceilings on the large cluster; only then replace the placeholders above.
-- Decide, from the T3 failure shape, whether an accept-side connection cap is warranted (plan §7.3 note).
+- Decide, from the T3 failure shape, whether an accept-side connection cap is warranted (plan §7.3 note; the T5
+  decision explicitly defers it to those numbers).
 - Run `specs/t1-contract.yaml` and `specs/t4-soak.yaml` on the large cluster (with the checker and `k6-query`);
   only then fill §5–§7.
+- Cluster-pending fault scenarios: real ENOSPC (a size-enforcing filesystem), netem packet loss, and PV IOPS
+  throttling (the parked `chaos-mesh` release).
 - Revisit the T6 profile shares (UI VUs, incident cadence) when real usage data appears (plan §7.6).

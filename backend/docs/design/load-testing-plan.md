@@ -1,7 +1,7 @@
 # Load-testing plan: Go profiler backend
 
-Status: phases 1–2 done 2026-07-16 (§11–§12); the phase-3 harness is done and smoke-validated on the local stand
-2026-07-16 (§13) — the ceiling numbers themselves wait for the large cluster. Owner: @vlsi.
+Status: phases 1–4 done 2026-07-16 (§11–§14); phase 5 (crashloop + faults) done locally 2026-07-18 (§15) — the
+ceiling, contract, and real-timer soak numbers wait for the large cluster. Owner: @vlsi.
 
 This plan defines the load tests for the Go backend (`backend/apps/profiler-backend` and `backend/libs`): what we
 measure, on which stands, with which generator, and what counts as a pass. The outcome is an engineering report
@@ -410,3 +410,47 @@ read-path memory budget) and deep pagination costs a full re-scan per page, as t
 Waiting on the large cluster: `t1-contract` finale (baseline utilization + headroom), the 24–48 h real-timer
 `t4-soak` (slow leaks — the accelerated run cannot see them, §10; **blocked on the `CallsPipeReader` fix**), T6
 numbers worth quoting, and the T2/T3 ceiling campaign of §13.
+
+## 15. Phase 5 status (crashloop + faults; done 2026-07-18, local)
+
+The full §9.5 program ran on the local stand (the large cluster is still unavailable): T5 (§7.5), T7 (§7.7),
+and the §7.5.4 protection decision. Results, run citations, and the decision live in the report
+(`load-testing-report.md` §8–§9); the campaign followed step 0 of the phase brief — trust the checker first.
+
+Step 0 (harness trust), all closed:
+
+- **Workload wiring fails loudly** (the 0a defect): the phase-4 verification soak had silently run at 1.9× its
+  declared rate. Scenarios carry no workload defaults (a missing knob crash-loops the k6 pod), the environments
+  pin complete `k6.workload` maps, the runner verifies the deployment's `k6_workload_info` fingerprint against
+  the spec's frozen block both ways, and `confirm.ingest` compares the measured rate against
+  `level × bytesPerVU` (re-calibrated: 19.8 KB/s per pod at 8 × 3 calls/s, `runs/20260717T085030Z-t4-cal-3cps`).
+- **§8.6 goroutines** (0b) judges a least-squares trend, not a range — the verification run's latch was legal
+  worker oscillation (rationale in `doc/checker.md`).
+- **The re-run at the declared rate** (0c, `runs/20260717T091106Z-t4-soak-accelerated`) was clean end to end:
+  runner completed, zero §8 violations across the 2.5 h hold — the §8.5 pressure of the mis-wired run was
+  overload, not a maintain ceiling.
+
+Shipped for the fault campaign (contracts first, in `doc/run-orchestration.md`, `doc/checker.md`,
+`doc/fault-runs.md`, `virtual-dumper.md`):
+
+- the **fault-injection layer** in the runner: a `faults:` schedule (pod-delete / scale / toxiproxy toxics)
+  anchored to the actual hold start, atomic per-injection events in `faults.jsonl`, durable revert through
+  `runs/.active-faults` with `-revert-faults` in every preflight, a stand-lock lease, and ready-gated crashloop
+  repeats whose `readyAt` series is a first-class artifact;
+- **scoped expected-failure allowances** in the checker: per-injection (invariant × subject × window × budget),
+  matched by observation time, expected latches reported separately — plus the §8.5 post-deadline-listing rule
+  and the runner's three-window fitted-trend detector, all three hardened on the fault runs' own evidence;
+- **churn mode** in the virtual dumper (deliberate abrupt disconnects under a stable pod name, counted apart
+  from failure reconnects) and the toxiproxy release + `local-faults` environment (chaos-mesh stays parked for
+  cluster-side netem/IOChaos).
+
+Findings (details and citations in the report §8–§9): the storm's pod-restart/WAL backlog is unbounded — purge
+eligibility is gated by hot-index aging and degrades under churn (the §7.5.4 decision: design the near-empty
+purge fast-path; skip rate limits and caps for now; the accept-side cap stays with T3); a grace-0 kill recovers
+to READY in ~10 s through one measured `collector.lock`-collision restart and a crashloop of ten does not
+degrade; the S3-outage gate order inverts the documented §7.7 chain on WAL-dominant backlogs; class-aware
+eviction holds a shrunken budget to within 0.5% at a counted truncation cost; and 2 s of agent-path RTT costs
+~40× throughput — the wire protocol assumes co-location.
+
+Cluster-pending: real ENOSPC, netem packet loss, PV IOPS throttling, and every ceiling/contract number, as
+before.
