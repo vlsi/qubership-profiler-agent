@@ -59,9 +59,11 @@ func (g *gapTracker) findings(maxGap int, faults *faultState, targetPods map[str
 			if pod, ok := targetPods[target]; ok {
 				expected = faults.expectedForPod("scrape-gap", pod, at)
 			}
-			// The query API goes partially dark while a collector is down;
-			// scope it to any scrape-gap window (no pod identity to match).
-			if target == "query-api" {
+			// The query API and the S3 listing have no pod identity to match:
+			// query goes partially dark while a collector is down, and the
+			// listing dies with a scaled-down MinIO. Scope both to any
+			// scrape-gap window.
+			if target == "query-api" || target == "s3" {
 				expected = faults.expected("scrape-gap", at)
 			}
 		}

@@ -91,9 +91,11 @@ faults:
     target: {namespace: profiler-load, kind: deployment, name: minio}
     to: 0
     duration: 20m
+    # scrape-gap covers the checker's own S3 listing: it dies with the
+    # scaled-down MinIO (checker.md scopes the s3 source to any window).
     expects: [ingest-paused, refused-bytes, ack-errors, pending-parquet-growth,
               hot-store-growth, hot-window-lag, freshness, markers,
-              compaction-lag, small-file-share]
+              compaction-lag, small-file-share, scrape-gap]
     settle: 20m                  # the drain: uploads catch up, WAL purges resume
 
 detectors:
