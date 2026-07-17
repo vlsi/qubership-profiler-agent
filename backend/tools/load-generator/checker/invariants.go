@@ -58,17 +58,25 @@ func (h *history) seriesByTarget(name string, samples []sample) map[string][]flo
 	return out
 }
 
+// pairSample is one scrape's (first, second) values with the scrape time —
+// the trend rules fit against real timestamps, not sample indexes, so
+// scrape gaps do not distort the slope.
+type pairSample struct {
+	at            time.Time
+	first, second float64
+}
+
 // pairedSeriesByTarget collects, per target, the value pairs of two series
 // taken from the same scrape, so both sides share time points. Samples where
 // the target reported only one of the two are skipped.
-func (h *history) pairedSeriesByTarget(first, second string, samples []sample) map[string][][2]float64 {
-	out := map[string][][2]float64{}
+func (h *history) pairedSeriesByTarget(first, second string, samples []sample) map[string][]pairSample {
+	out := map[string][]pairSample{}
 	for _, s := range samples {
 		for target, m := range s.targets {
 			a, okA := lookupSeries(m, first)
 			b, okB := lookupSeries(m, second)
 			if okA && okB {
-				out[target] = append(out[target], [2]float64{a, b})
+				out[target] = append(out[target], pairSample{at: s.at, first: a, second: b})
 			}
 		}
 	}
@@ -93,8 +101,8 @@ type invariantConfig struct {
 	// rssLimitBytes enables the §8.6 RSS check; the pod memory limit is not
 	// exposed on /metrics, so it must come from the operator.
 	rssLimitBytes int64
-	// goroutineTolerance is the §8.6 relative goroutine range allowed while
-	// the connection count stays constant.
+	// goroutineTolerance is the §8.6 relative fitted-growth tolerance for
+	// goroutines while the connection count stays constant.
 	goroutineTolerance float64
 	// maxScrapeGap latches target-unavailable after this many consecutive
 	// failed polls of one source target.
@@ -247,10 +255,12 @@ func allInvariants(cfg invariantConfig) []invariant {
 		{
 			name: "goroutines-flat",
 			plan: "§8.6",
-			// The leak signal: goroutines must stay flat while the connection
-			// count does. Both series come from the same scrapes of the same
-			// target, so they share time points; ticks where connections move
-			// are not judged (doc/checker.md).
+			// The leak signal: goroutines must not TREND upward while the
+			// connection count stays constant. Both series come from the same
+			// scrapes of the same target, so they share time points; ticks
+			// where connections move are not judged — a collector restart
+			// drops the connection count, so restart-spanning windows fall
+			// out automatically (doc/checker.md).
 			check: func(st *state) []finding {
 				h := st.metrics
 				samples := h.checked()
@@ -261,14 +271,15 @@ func allInvariants(cfg invariantConfig) []invariant {
 				pairs := h.pairedSeriesByTarget("profiler_ingest_active_connections", "go_goroutines", samples)
 				for target, ps := range pairs {
 					conns := make([]float64, len(ps))
-					gors := make([]float64, len(ps))
+					gors := make([]tsPoint, len(ps))
 					for i, p := range ps {
-						conns[i], gors[i] = p[0], p[1]
+						conns[i] = p.first
+						gors[i] = tsPoint{at: p.at, v: p.second}
 					}
 					if !seriesConstant(conns) {
 						continue
 					}
-					if msg := goroutinesNotFlat(gors, cfg.goroutineTolerance); msg != "" {
+					if msg := goroutinesTrending(gors, cfg.goroutineTolerance); msg != "" {
 						out = append(out, finding{subject: target, msg: msg})
 					}
 				}
@@ -404,31 +415,82 @@ func seriesConstant(values []float64) bool {
 	return hi-lo <= allowed
 }
 
-// goroutinesNotFlat returns a violation message when the goroutine range
-// over the window exceeds max(tolerance × mean, 10): the absolute floor
-// keeps tiny goroutine counts (near-idle processes) out of the noise.
-func goroutinesNotFlat(values []float64, tolerance float64) string {
-	if len(values) < 2 {
+// tsPoint is one timestamped observation for the trend rules.
+type tsPoint struct {
+	at time.Time
+	v  float64
+}
+
+// §8.6 trend parameters: a trend needs enough points to mean anything, and
+// tiny fitted growth (near-idle processes, worker-pool jitter) is noise, not
+// a leak.
+const (
+	minTrendPoints    = 8
+	goroutineAbsFloor = 10.0
+)
+
+// fittedGrowth least-squares-fits a line through the points (against real
+// timestamps — scrape gaps are legal) and reports the fitted growth over the
+// span plus the mean level. Under two points there is nothing to fit.
+func fittedGrowth(points []tsPoint) (growth, mean float64) {
+	if len(points) < 2 {
+		return 0, 0
+	}
+	t0 := points[0].at
+	var n, sumX, sumY, sumXY, sumXX float64
+	for _, p := range points {
+		x := p.at.Sub(t0).Seconds()
+		n++
+		sumX += x
+		sumY += p.v
+		sumXY += x * p.v
+		sumXX += x * x
+	}
+	den := n*sumXX - sumX*sumX
+	if den == 0 {
+		return 0, sumY / n
+	}
+	slope := (n*sumXY - sumX*sumY) / den
+	span := points[len(points)-1].at.Sub(t0).Seconds()
+	return slope * span, sumY / n
+}
+
+// goroutinesTrending returns a violation message when the goroutine count
+// shows a sustained upward trend at a constant connection count: the fitted
+// growth over the window exceeds max(tolerance × mean, absolute floor) AND
+// the tail quarter of the window is still climbing (its proportional share
+// of the allowance). Oscillation around a flat baseline fits to ~zero growth
+// and passes; growth that found a level (flat tail) passes too — the leak
+// signal is growth that keeps going (doc/checker.md).
+func goroutinesTrending(points []tsPoint, tolerance float64) string {
+	if len(points) < minTrendPoints {
 		return ""
 	}
-	lo, hi, sum := values[0], values[0], 0.0
-	for _, v := range values {
-		if v < lo {
-			lo = v
-		}
-		if v > hi {
-			hi = v
-		}
-		sum += v
-	}
-	mean := sum / float64(len(values))
+	growth, mean := fittedGrowth(points)
 	allowed := tolerance * mean
-	if allowed < 10 {
-		allowed = 10
+	if allowed < goroutineAbsFloor {
+		allowed = goroutineAbsFloor
 	}
-	if hi-lo > allowed {
-		return fmt.Sprintf("goroutines ranged %.0f–%.0f (spread %.0f > %.0f allowed) at a constant connection count",
-			lo, hi, hi-lo, allowed)
+	if growth <= allowed {
+		return ""
 	}
-	return ""
+	span := points[len(points)-1].at.Sub(points[0].at)
+	cut := points[len(points)-1].at.Add(-span / 4)
+	tail := points
+	for i, p := range points {
+		if !p.at.Before(cut) {
+			tail = points[i:]
+			break
+		}
+	}
+	// A sparse tail (long scrape gap) cannot prove the growth stopped; the
+	// full-window verdict stands.
+	if len(tail) >= 3 {
+		tailGrowth, _ := fittedGrowth(tail)
+		if tailGrowth <= allowed/4 {
+			return "" // grew, then found its level — not a leak signal
+		}
+	}
+	return fmt.Sprintf("goroutines trend +%.0f over the window (allowed %.0f) at a constant connection count, still climbing",
+		growth, allowed)
 }

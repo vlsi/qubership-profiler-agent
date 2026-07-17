@@ -103,19 +103,32 @@ RSS, per metrics target: `process_resident_memory_bytes` must stay under `-rss-l
 required to enable the check — the limit is not exposed on `/metrics`), and must not grow monotonically over the
 `-window` (same 5% tolerance as §8.1).
 
-Goroutine flatness, per metrics target that exposes `profiler_ingest_active_connections` (the collector; maintain and
+Goroutine trend, per metrics target that exposes `profiler_ingest_active_connections` (the collector; maintain and
 query are exempt from this half): only samples where the same scrape returned both `go_goroutines` and the connection
 gauge are used, so both series share time points. Over the `-window`:
 
 ```text
 connections constant  ⇔  range(conns) ≤ max(0.01 × mean(conns), 2)
-goroutines flat       ⇔  range(goroutines) ≤ max(tolerance × mean(goroutines), 10)
-                          (tolerance: -goroutine-tolerance, default 0.10; the absolute floor of 10
-                           keeps near-idle processes out of the noise)
+goroutines leaking    ⇔  fittedGrowth(window) > max(tolerance × mean, 10)
+                          AND fittedGrowth(tail quarter) > allowed/4   (still climbing)
+                          (tolerance: -goroutine-tolerance, default 0.10; judged only on
+                           ≥ 8 points spanning the full window; the fit runs against real
+                           scrape timestamps, so scrape gaps do not distort the slope)
 ```
 
-The invariant fires when connections are constant and goroutines are not flat. When connections move, the tick is not
-judged — §8.6 pins the leak signal, not the connection churn.
+The invariant fires when connections are constant and the goroutine count shows a sustained upward trend. When
+connections move, the tick is not judged — §8.6 pins the leak signal, not the connection churn; a collector restart
+drops the connection count, so restart-spanning windows fall out through the same gate.
+
+Why a fitted trend and not the range: plan §8.6 asks for a *leak* signal, and a collector's goroutine count
+legitimately oscillates at a constant connection count (seal/upload workers, scrape handlers) — the phase-4
+verification soak latched a healthy 115–130 oscillation under the old `range > max(tolerance × mean, 10)` rule.
+The §8.1-style strict `monotonicGrowth` is the opposite failure: per-scrape jitter of ±5 goroutines hides a real
++1-per-minute leak behind single-sample dips, so strict monotonicity never fires. A least-squares fit over the
+window measures the trend through both kinds of noise. The still-climbing clause mirrors the runner's
+`monotonic-growth` detector: growth that found a level (worker pools ramping after a start) is a startup shape, not
+a leak; only growth whose tail quarter keeps its proportional share of the allowance fires. A tail thinned out by a
+scrape gap (< 3 points) cannot prove the growth stopped, so the full-window verdict stands there.
 
 ### §8.7 sampled UI queries
 

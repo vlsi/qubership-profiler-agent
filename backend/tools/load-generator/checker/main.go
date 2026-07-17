@@ -54,7 +54,7 @@ func main() {
 
 		// §8.6.
 		rssLimit     = flag.Int64("rss-limit-bytes", 0, "pod memory limit; enables the §8.6 RSS check")
-		goroutineTol = flag.Float64("goroutine-tolerance", 0.10, "relative goroutine range allowed at a constant connection count (§8.6)")
+		goroutineTol = flag.Float64("goroutine-tolerance", 0.10, "relative fitted goroutine growth allowed over the window at a constant connection count (§8.6)")
 
 		// §8.7: TTLs come from the PROFILER_RETENTION_* environment.
 		queryURL        = flag.String("query-url", "", "query service base URL; enables the §8.7 sampled queries")

@@ -125,28 +125,79 @@ func histPairsAt(t *testing.T, pairs [][2]float64) *history {
 	return h
 }
 
-func TestGoroutinesFlat(t *testing.T) {
+func TestGoroutinesTrend(t *testing.T) {
 	inv := findInvariant(t, defaultConfig(), "goroutines-flat")
 
+	// The phase-4 false positive: a 115–130 oscillation around a flat
+	// baseline at 20 constant connections. The old range rule latched it
+	// (spread 15 > 12 allowed); the trend rule must not — legal worker and
+	// scrape jitter fits to ~zero growth.
 	assert.Empty(t, inv.check(stateOf(histPairsAt(t, [][2]float64{
-		{300, 3600}, {300, 3640}, {300, 3610}, {300, 3650},
-	}))), "1.4%% goroutine spread at constant connections is flat")
+		{20, 116}, {20, 125}, {20, 115}, {20, 130}, {20, 118}, {20, 127},
+		{20, 116}, {20, 129}, {20, 117}, {20, 124}, {20, 115}, {20, 128},
+	}))), "oscillation around a flat baseline is not a leak")
 
+	// A steady climb of the same magnitude IS the leak signal: fitted growth
+	// ~+33 over the window against an allowance of ~13, still climbing at
+	// the tail.
 	assert.NotEmpty(t, inv.check(stateOf(histPairsAt(t, [][2]float64{
-		{300, 3600}, {300, 3900}, {300, 4200}, {300, 4800},
-	}))), "33%% goroutine spread at constant connections is the leak signal")
+		{20, 116}, {20, 119}, {20, 122}, {20, 125}, {20, 128}, {20, 131},
+		{20, 134}, {20, 137}, {20, 140}, {20, 143}, {20, 146}, {20, 149},
+	}))), "a sustained climb at constant connections is the leak signal")
+
+	// Growth that found its level passes: the tail quarter is flat, so the
+	// process ramped (worker pools, caches) and stopped — not a leak.
+	assert.Empty(t, inv.check(stateOf(histPairsAt(t, [][2]float64{
+		{20, 116}, {20, 124}, {20, 132}, {20, 140}, {20, 148}, {20, 156},
+		{20, 160}, {20, 160}, {20, 160}, {20, 160}, {20, 160}, {20, 160},
+	}))), "growth followed by a flat tail found its level")
 
 	assert.Empty(t, inv.check(stateOf(histPairsAt(t, [][2]float64{
-		{100, 1200}, {200, 2400}, {300, 3600}, {400, 4800},
+		{100, 1200}, {150, 1800}, {200, 2400}, {250, 3000}, {300, 3600}, {350, 4200},
+		{400, 4800}, {450, 5400}, {500, 6000}, {550, 6600}, {600, 7200}, {650, 7800},
 	}))), "moving connections are not judged")
 
+	// A collector restart inside the window drops the connection count to
+	// zero and back: the constant-connections gate keeps the mixed window
+	// out of judgment even though goroutines re-ramp from the fresh
+	// process's baseline.
 	assert.Empty(t, inv.check(stateOf(histPairsAt(t, [][2]float64{
-		{0, 12}, {0, 14}, {0, 18}, {0, 20},
-	}))), "near-idle process: spread of 8 sits inside the absolute floor of 10")
+		{20, 120}, {20, 121}, {20, 122}, {0, 35}, {0, 36}, {20, 80},
+		{20, 90}, {20, 100}, {20, 110}, {20, 118}, {20, 121}, {20, 123},
+	}))), "a restart-spanning window is not judged")
 
-	assert.NotEmpty(t, inv.check(stateOf(histPairsAt(t, [][2]float64{
-		{0, 12}, {0, 14}, {0, 18}, {0, 40},
-	}))), "near-idle process: spread of 28 exceeds the absolute floor of 10")
+	assert.Empty(t, inv.check(stateOf(histPairsAt(t, [][2]float64{
+		{0, 12}, {0, 13}, {0, 14}, {0, 15}, {0, 16}, {0, 17},
+		{0, 18}, {0, 19}, {0, 20}, {0, 21}, {0, 21}, {0, 21},
+	}))), "near-idle process: fitted growth of ~9 sits inside the absolute floor of 10")
+}
+
+func TestGoroutinesTrendNeedsEnoughPoints(t *testing.T) {
+	// Steeply climbing, but under minTrendPoints pairs: not judged.
+	assert.Empty(t, goroutinesTrending([]tsPoint{
+		{at: time.Unix(0, 0), v: 100}, {at: time.Unix(600, 0), v: 200},
+		{at: time.Unix(1200, 0), v: 300}, {at: time.Unix(1800, 0), v: 400},
+	}, 0.10), "a trend needs at least %d points", minTrendPoints)
+}
+
+func TestFittedGrowthUsesTimestampsNotIndexes(t *testing.T) {
+	// The same values on an uneven time grid: the fit must weigh the real
+	// spacing. A jump concentrated at the end of a long quiet stretch reads
+	// as a shallower slope than index-based fitting would claim.
+	even := []tsPoint{
+		{at: time.Unix(0, 0), v: 100}, {at: time.Unix(100, 0), v: 110},
+		{at: time.Unix(200, 0), v: 120}, {at: time.Unix(300, 0), v: 130},
+	}
+	growth, mean := fittedGrowth(even)
+	assert.InDelta(t, 30, growth, 1e-6, "linear series: fitted growth equals the actual rise")
+	assert.InDelta(t, 115, mean, 1e-6)
+
+	gapped := []tsPoint{
+		{at: time.Unix(0, 0), v: 100}, {at: time.Unix(100, 0), v: 110},
+		{at: time.Unix(200, 0), v: 120}, {at: time.Unix(3000, 0), v: 130},
+	}
+	gappedGrowth, _ := fittedGrowth(gapped)
+	assert.Less(t, gappedGrowth, 30.0, "a long scrape gap flattens the fitted slope")
 }
 
 func TestRSSUnderLimit(t *testing.T) {
