@@ -10,15 +10,16 @@ captured dumps or other binary fixtures.
   `go-prometheus-exporter` module.
 - `pkg/cdt/` — the `k6/x/cdt` module: one VU drives a fleet of virtual dumpers and maps their stats to k6 metrics.
 - `go-metrics/` — the `go-prometheus-exporter` module: serves the runner's own Go runtime metrics on `:5656`.
-- `scripts/` — the k6 scenario (externally-controlled executor; the run orchestrator scales VUs over the k6 REST API).
+- `scripts/` — the k6 scenarios: `scenario.js` (write fleet, externally-controlled executor; the run orchestrator
+  scales VUs over the k6 REST API) and `query-scenario.js` (T6 read load on `k6/http`); `SCENARIO` picks one.
 - `runner/` — the run orchestrator: ramp steps, plateau/saturation detection, pprof capture, artifact collection.
   Contract: `doc/run-orchestration.md`.
 - `feeder/` — standalone CLI that drives virtual dumpers without k6; handy for local debugging.
 - `calibrate/` — the decoding TCP tap used for the phase-2 calibration (`doc/calibration.md`).
-- `checker/` — the soak invariant checker (`load-testing-plan.md` §8).
-- `deploy/` — helmfile for the stand (backend, MinIO, monitoring, k6 runner); see `deploy/README.md`.
+- `checker/` — the soak invariant checker, §8.1–§8.8 with latched violations. Contract: `doc/checker.md`.
+- `deploy/` — helmfile for the stand (backend, MinIO, monitoring, k6 runner, T6 `k6-query`); see `deploy/README.md`.
 - `dashboards/` — Grafana dashboards as code, shipped as `GrafanaDashboard` CRs by the `monitoring-crs` release.
-- `doc/` — runbooks: `calibration.md`, `run-orchestration.md`, `ceiling-runs.md`.
+- `doc/` — runbooks: `calibration.md`, `run-orchestration.md`, `ceiling-runs.md`, `soak-runs.md`, `checker.md`.
 
 ## Build
 

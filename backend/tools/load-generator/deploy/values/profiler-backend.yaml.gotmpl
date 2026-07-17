@@ -23,6 +23,11 @@ collector:
   storage:
     size: {{ .Values.profiler.collector.storageSize }}
     storageClassName: {{ .Values.profiler.collector.storageClassName | quote }}
+{{- if .Values.profiler.collector.hotRetention }}
+  # First-class chart value; keep it out of extraEnv or the pod spec carries
+  # a duplicate PROFILER_HOT_RETENTION.
+  hotRetention: {{ .Values.profiler.collector.hotRetention }}
+{{- end }}
   env:
     PROFILER_PPROF_ENABLED: "true"
 {{- range $key, $value := .Values.profiler.collector.extraEnv }}
@@ -31,15 +36,37 @@ collector:
 
 query:
   replicas: {{ .Values.profiler.query.replicas }}
+{{- if .Values.profiler.query.resources }}
+  resources:
+{{ toYaml .Values.profiler.query.resources | indent 4 }}
+{{- end }}
   env:
     PROFILER_PPROF_ENABLED: "true"
+{{- range $key, $value := .Values.profiler.query.extraEnv }}
+    {{ $key }}: {{ $value | quote }}
+{{- end }}
 
 maintain:
   # Deployment mode is the only maintain mode with a scrape surface; the
   # soak invariants (plan §8.5) watch its compaction counters.
   mode: deployment
+{{- if .Values.profiler.maintain.checkInterval }}
+  checkInterval: {{ .Values.profiler.maintain.checkInterval }}
+{{- end }}
   env:
     PROFILER_PPROF_ENABLED: "true"
+{{- range $key, $value := .Values.profiler.maintain.extraEnv }}
+    {{ $key }}: {{ $value | quote }}
+{{- end }}
+
+{{- if .Values.profiler.retention }}
+
+# Per-class retention TTLs (chart keys mirror PROFILER_RETENTION_*); set by
+# the accelerated-soak overlay so several full lifecycle cycles fit into one
+# local run (doc/soak-runs.md).
+retention:
+{{ toYaml .Values.profiler.retention | indent 2 }}
+{{- end }}
 
 metrics:
   serviceMonitor:

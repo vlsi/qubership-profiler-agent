@@ -12,6 +12,12 @@ environments:
     values:
       - environments/local.yaml
   default: *local
+  # local + accelerated lifecycle timers for the §7.4 short soak
+  # (doc/soak-runs.md).
+  local-soak:
+    values:
+      - environments/local.yaml
+      - environments/local-soak.yaml
   cluster:
     values:
       - environments/cluster.yaml
@@ -94,5 +100,18 @@ releases:
     installed: {{ .Values.k6.installed }}
     values:
       - values/k6.yaml.gotmpl
+    needs:
+      - {{ .Values.stand.namespace }}/profiler-backend
+
+  # T6 background query load (plan §7.6): the same image running
+  # query-scenario.js under its own resource names (global.name cdt-query)
+  # and its own TESTID. Off by default; soak runs switch it on
+  # (doc/soak-runs.md).
+  - name: k6-query
+    namespace: {{ .Values.stand.namespace }}
+    chart: ../charts/cdt-load-generator
+    installed: {{ .Values.k6query.installed }}
+    values:
+      - values/k6-query.yaml.gotmpl
     needs:
       - {{ .Values.stand.namespace }}/profiler-backend

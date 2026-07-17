@@ -32,11 +32,22 @@ profiler:
     replicas: 1
     storageSize: 20Gi
     storageClassName: ""
+    # Empty keeps the chart default (15m); the local-soak overlay shrinks it.
+    hotRetention: ""
     # Per-run collector env, e.g. a small PROFILER_PENDING_UPLOAD_MAX_BYTES
     # to force backpressure at smoke-level load (doc/ceiling-runs.md).
     extraEnv: {}
   query:
     replicas: 1
+    extraEnv: {}
+    # Empty keeps the chart defaults (limits 1 CPU / 2Gi).
+    resources: {}
+  maintain:
+    # Empty keeps the chart default (5m); the local-soak overlay shrinks it.
+    checkInterval: ""
+    extraEnv: {}
+  # Empty keeps the chart's per-class retention TTL defaults.
+  retention: {}
 
 k6:
   installed: true
@@ -51,4 +62,15 @@ k6:
   testid: dev
   # Workload knobs for scripts/scenario.js beyond the defaults, e.g.
   # THREADS_PER_POD: "0" for a T3 smoke.
+  extraEnv: {}
+
+# T6 background query load (query-scenario.js); starts sending on pod start,
+# so keep it parked until a soak needs it:
+#   helmfile -e local-soak apply --state-values-set k6query.installed=true
+k6query:
+  installed: false
+  duration: 4h
+  testid: query-dev
+  # UI_VUS / INCIDENT_VUS / COLD_VUS / WIDE_RANGE_MINUTES / ... — see
+  # scripts/query-scenario.js.
   extraEnv: {}

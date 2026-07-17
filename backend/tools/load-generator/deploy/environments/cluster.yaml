@@ -40,10 +40,21 @@ profiler:
     replicas: 3
     storageSize: 50Gi
     storageClassName: ""
+    # Empty keeps the chart default (15m).
+    hotRetention: ""
     # Per-run collector env overrides (doc/ceiling-runs.md).
     extraEnv: {}
   query:
     replicas: 2
+    extraEnv: {}
+    # Empty keeps the chart defaults (limits 1 CPU / 2Gi).
+    resources: {}
+  maintain:
+    # Empty keeps the chart default (5m).
+    checkInterval: ""
+    extraEnv: {}
+  # Empty keeps the chart's per-class retention TTL defaults.
+  retention: {}
 
 k6:
   installed: true
@@ -60,3 +71,10 @@ k6:
   # Plan §10: pin the runner to dedicated nodes on the big cluster so the
   # generator is never the bottleneck being measured (add a nodeSelector to
   # the chart when the cluster materializes).
+
+# T6 background query load; a T4 soak turns it on (doc/soak-runs.md).
+k6query:
+  installed: false
+  duration: 48h
+  testid: query-dev
+  extraEnv: {}
