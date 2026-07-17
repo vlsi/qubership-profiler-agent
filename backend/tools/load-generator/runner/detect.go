@@ -132,11 +132,14 @@ func detectorFires(d Detector, points []Point, plateauWindow time.Duration,
 		if last < d.MinValue {
 			return false // below the absolute floor nothing counts as backlog
 		}
-		// Not judged until the (post-grace) samples span a full plateau
-		// window: right after the grace expires only seconds of data exist,
-		// and one rising edge of a purge-cycle sawtooth reads as growth —
-		// the T5 storm run fired exactly that way on a healthy plateau.
-		if points[len(points)-1].At.Sub(points[0].At) < plateauWindow {
+		// Not judged until the (post-grace) samples span three plateau
+		// windows. One window is the flatness scale of the TAIL, not the
+		// trend scale: the second T5 storm attempt fired at exactly one
+		// window of span, where the fit covered a single trough-to-crest arc
+		// of a purge-cycle sawtooth whose period exceeded the window. With
+		// three windows the tail is a minority of the evidence and a cycle
+		// fits flat; a genuine climb just fires a little later.
+		if points[len(points)-1].At.Sub(points[0].At) < 3*plateauWindow {
 			return false
 		}
 		// The trend is a least-squares fit over the kept samples, not a

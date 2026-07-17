@@ -51,37 +51,65 @@ func TestStickyShare(t *testing.T) {
 		"a sticking gauge fires")
 }
 
+// grow builds n points climbing linearly from start by step.
+func grow(start, step float64, n int) []Point {
+	vals := make([]float64, n)
+	for i := range vals {
+		vals[i] = start + step*float64(i)
+	}
+	return series(vals...)
+}
+
+// sawtooth builds n points cycling start..start+amplitude with the given
+// period (in samples) — the purge-cycle shape of the T5 storm.
+func sawtooth(start, amplitude float64, period, n int) []Point {
+	vals := make([]float64, n)
+	for i := range vals {
+		phase := i % period
+		vals[i] = start + amplitude*float64(phase)/float64(period-1)
+	}
+	return series(vals...)
+}
+
 func TestMonotonicGrowth(t *testing.T) {
 	d := Detector{Name: "pending-parquet", Kind: "monotonic-growth", MinGrowth: 0.10}
-	assert.True(t, detectorFires(d, series(100, 120, 145, 172, 205, 246, 295, 350, 420, 500), w, 0.05, 0),
+	assert.True(t, detectorFires(d, grow(100, 15, 30), w, 0.05, 0),
 		"unbounded growth through the hold fires")
-	assert.False(t, detectorFires(d, series(100, 120, 145, 160, 165, 166, 165, 166, 165, 166, 165, 166), w, 0.05, 0),
+	plateaued := append(grow(100, 15, 10), grow(250, 0.1, 20)...)
+	for i := range plateaued {
+		plateaued[i].At = t0.Add(time.Duration(i) * 15 * time.Second)
+	}
+	assert.False(t, detectorFires(d, plateaued, w, 0.05, 0),
 		"growth that found a plateau is a level shift, not saturation")
-	assert.False(t, detectorFires(d, series(100, 101, 100, 102, 101, 100, 101, 100, 101, 100), w, 0.05, 0),
+	assert.False(t, detectorFires(d, sawtooth(100, 2, 8, 30), w, 0.05, 0),
 		"noise under minGrowth does not fire")
-	assert.True(t, detectorFires(d, series(0, 10, 25, 45, 70, 100, 140, 190, 250, 330), w, 0.05, 0),
+	assert.True(t, detectorFires(d, grow(0, 30, 30), w, 0.05, 0),
 		"growth from zero fires")
 }
 
-func TestMonotonicGrowthNeedsAFullWindow(t *testing.T) {
-	// The T5 storm regression: right after the grace expiry only seconds of
-	// samples exist, and one rising edge of the purge-cycle sawtooth read as
-	// growth. Under a plateau window of data, nothing is judged.
+func TestMonotonicGrowthNeedsThreeWindows(t *testing.T) {
+	// The T5 storm regressions. Attempt a: seconds after the grace expiry a
+	// rising sawtooth edge read as first-to-last growth. Attempt b: at
+	// exactly ONE plateau window of span the least-squares fit covered a
+	// single trough-to-crest arc of a sawtooth whose period exceeded the
+	// window. Under three windows of span nothing is judged.
 	d := Detector{Name: "pod-restarts-growth", Kind: "monotonic-growth", MinGrowth: 0.10, MinValue: 100}
 	assert.False(t, detectorFires(d, series(217, 219, 230, 232, 236, 236), w, 0.05, 0),
 		"90 seconds of a rising sawtooth edge is not judgeable growth")
+	oneArc := series(208, 211, 215, 219, 222, 226, 230, 235, 241, 247)
+	assert.False(t, detectorFires(d, oneArc, w, 0.05, 0),
+		"one trough-to-crest arc spanning a single window is not judgeable growth")
 }
 
 func TestMonotonicGrowthIgnoresSawtoothPlateau(t *testing.T) {
 	// The T5 storm shape at full length: tracked pod-restarts oscillate
-	// 217–263 as purge cycles run. However the window edges align, the
-	// fitted trend is ~zero — a healthy plateau must not read as growth.
+	// ~208–247 as purge cycles run, with a period longer than the plateau
+	// window. Over three windows the cycles average out and the fit is
+	// ~zero — a healthy plateau must not read as growth.
 	d := Detector{Name: "pod-restarts-growth", Kind: "monotonic-growth", MinGrowth: 0.10, MinValue: 100}
-	saw := series(240, 263, 225, 240, 217, 230, 255, 263, 220, 235, 250, 217, 230, 245, 260, 240, 219, 232, 248, 263)
-	assert.False(t, detectorFires(d, saw, w, 0.05, 0),
+	assert.False(t, detectorFires(d, sawtooth(208, 39, 10, 40), w, 0.05, 0),
 		"a purge-cycle sawtooth around a level is not growth, whatever edge the window ends on")
-	climb := series(217, 224, 231, 238, 245, 252, 259, 266, 273, 280, 287, 294, 301, 308, 315, 322, 329, 336, 343, 350)
-	assert.True(t, detectorFires(d, climb, w, 0.05, 0),
+	assert.True(t, detectorFires(d, grow(208, 4, 40), w, 0.05, 0),
 		"a genuine climb of the same magnitude still fires")
 }
 
@@ -112,10 +140,12 @@ func TestAfterGrace(t *testing.T) {
 	assert.Empty(t, afterGrace(ps, t0, time.Hour), "grace beyond the hold keeps nothing")
 
 	d := Detector{Name: "pending-parquet-growth", Kind: "monotonic-growth", MinGrowth: 0.10}
-	long := series(0, 0, 300, 500, 620, 780, 940, 1100, 1320, 1600, 1900, 2300)
-	assert.True(t, detectorFires(d, long, w, 0.05, 0),
+	assert.True(t, detectorFires(d, grow(0, 200, 30), w, 0.05, 0),
 		"without grace the cold-start fill from zero fires")
-	flatTail := series(0, 0, 300, 500, 480, 510, 495, 505, 500, 495, 505, 500, 495, 505)
+	flatTail := append(grow(0, 250, 3), sawtooth(480, 30, 6, 30)...)
+	for i := range flatTail {
+		flatTail[i].At = t0.Add(time.Duration(i) * 15 * time.Second)
+	}
 	assert.False(t, detectorFires(d, afterGrace(flatTail, t0, time.Minute), w, 0.05, 0),
 		"after the grace the series is an oscillating level, not growth")
 }
@@ -123,13 +153,11 @@ func TestAfterGrace(t *testing.T) {
 func TestMonotonicGrowthMinValue(t *testing.T) {
 	// A climb that never reaches the floor: whatever its slope, it is not
 	// backlog.
-	edge := series(0, 0, 0, 100, 300, 600, 900, 1300, 1800, 2400)
 	d := Detector{Name: "pending", Kind: "monotonic-growth", MinGrowth: 0.10}
-	assert.True(t, detectorFires(d, edge, w, 0.05, 0))
+	assert.True(t, detectorFires(d, grow(0, 250, 30), w, 0.05, 0))
 	d.MinValue = 8 << 20
-	assert.False(t, detectorFires(d, edge, w, 0.05, 0),
+	assert.False(t, detectorFires(d, grow(0, 250, 30), w, 0.05, 0),
 		"below the absolute floor a rising edge is not backlog")
-	big := series(0, 10<<20, 20<<20, 40<<20, 80<<20, 160<<20, 240<<20, 320<<20, 400<<20, 480<<20)
-	assert.True(t, detectorFires(d, big, w, 0.05, 0),
+	assert.True(t, detectorFires(d, grow(0, 20<<20, 30), w, 0.05, 0),
 		"growth past the floor still fires")
 }

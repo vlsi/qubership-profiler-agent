@@ -180,10 +180,12 @@ either as saturation.
   over the hold *and* the last plateau window shows no flattening (its relative slope stays above `slopeTolerance`).
   The fit — not a first-to-last delta — is what keeps a sawtooth oscillating around a level from firing on whichever
   edge aligns with the window; the T5 storm run proved the delta form wrong on a healthy purge-cycle plateau. The
-  detector is judged only once its (post-grace) samples span a full plateau window: right after the grace expires
-  only seconds of data exist, and any rising edge would read as growth. An optional absolute `minValue` keeps the
-  detector silent while the last sample is below it — a gauge that oscillates down to zero (pending-parquet bytes
-  between upload cycles) stays out of judgment while empty.
+  detector is judged only once its (post-grace) samples span three plateau windows: one window is the flatness scale
+  of the tail, not the trend scale — the storm's second attempt fired at exactly one window of span, where the fit
+  covered a single trough-to-crest arc of a sawtooth whose period exceeded the window. With three windows the tail
+  is a minority of the evidence and a cycle fits flat; a genuine climb just fires a little later. An optional
+  absolute `minValue` keeps the detector silent while the last sample is below it — a gauge that oscillates down to
+  zero (pending-parquet bytes between upload cycles) stays out of judgment while empty.
 - `nonzero`: any sample above zero.
 - `baseline-ratio`: the mean over the last plateau window exceeds `ratio ×` the baseline; the baseline is the mean of
   the same query over the first `ok` step's hold. Until a baseline exists the detector stays silent.
