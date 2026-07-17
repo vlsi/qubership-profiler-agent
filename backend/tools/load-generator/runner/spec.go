@@ -159,7 +159,7 @@ var expectsVocabulary = map[string]bool{
 	"restarts": true, "scrape-gap": true, "refused-bytes": true,
 	"ingest-paused": true, "freshness": true, "markers": true,
 	"compaction-lag": true, "small-file-share": true, "hot-window-lag": true,
-	"ack-errors": true, "pending-parquet-growth": true,
+	"hot-store-growth": true, "ack-errors": true, "pending-parquet-growth": true,
 }
 
 var faultNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
