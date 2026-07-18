@@ -86,9 +86,13 @@ faults:
     # plus the synchronous per-stream ack drain make the wire protocol
     # latency-bound (ack-flush p95 ~2.1 s, ingest 440 -> 11 KB/s). The
     # collapse starves the hot window, so its lag and freshness are
-    # declared; a reconnect wave under plain latency is still a finding.
-    expects: [freshness, markers, hot-window-lag]
-    settle: 10m
+    # declared; and the late-arriving data re-opens already-sealed buckets,
+    # multiplying per-bucket file counts (41-186 objects vs ~20 steady on
+    # the 2026-07-18 run) — compaction legitimately falls behind the
+    # accelerated deadlines while digesting them. A reconnect wave under
+    # plain latency is still a finding.
+    expects: [freshness, markers, hot-window-lag, compaction-lag, small-file-share]
+    settle: 15m
   - name: agent-stall
     at: 35m
     action: toxics
@@ -97,9 +101,11 @@ faults:
       - {type: timeout, attributes: {timeout: 0}}   # hold connections, pass no data
     duration: 5m
     # The stall starves every session: reads time out on both sides, data
-    # stops, and the revert releases the reconnect storm.
-    expects: [freshness, markers, hot-window-lag, ingest-paused, scrape-gap]
-    settle: 10m
+    # stops, and the revert releases the reconnect storm — plus the same
+    # late-data seal burst and compaction digestion as the latency window.
+    expects: [freshness, markers, hot-window-lag, ingest-paused, scrape-gap,
+              compaction-lag, small-file-share]
+    settle: 15m
 
 detectors:
   - name: ingest-paused

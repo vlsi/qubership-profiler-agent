@@ -1,7 +1,7 @@
 # Load-testing report: Go profiler backend
 
-Status: **draft — harness and lifecycle invariants validated on the local stand; final numbers await the large
-cluster** (`load-testing-plan.md` §5.2). Owner: @vlsi.
+Status: **draft — harness, lifecycle invariants, and the crashloop/fault campaign (T5/T7, §8–§9) validated on
+the local stand; final numbers await the large cluster** (`load-testing-plan.md` §5.2). Owner: @vlsi.
 
 Every number in this report must cite its run: the artifact directory (`runs/<ts>-<name>/`, kept outside the
 repository), the image digests, and the frozen run spec inside it. A number without a run citation is a placeholder,
@@ -334,18 +334,27 @@ evicted).
 - The true ENOSPC path stays **cluster-pending**: OrbStack hostpath volumes enforce no size, so a full-disk
   write failure (stream teardown → reconnect; no reactive ENOSPC handling exists) cannot be produced locally.
 
-### Agent↔collector network faults (`runs/20260717T231036Z-t7-agent-net` and successors)
+### Agent↔collector network faults (`runs/20260717T231036Z` and `runs/20260717T235336Z-t7-agent-net`)
 
 - **2 s of path latency does not break sessions — it starves them.** The 40 s read deadline held, not one
   reconnect fired; but ingest collapsed from ~440 KB/s to ~11 KB/s (~40×), ack-flush p95 grew to 2.1 s, and
   producers dropped ~30 chunks/s. The wire protocol is latency-bound: 8 KB socket buffers and a synchronous
   per-stream ack drain per 5 s flush cycle turn RTT into a hard throughput ceiling. A WAN-grade agent link is
   effectively unusable — a finding for any multi-region deployment thought.
+- **Late data re-opens sealed buckets and floods compaction.** The trickle that does get through arrives after
+  its bucket sealed, so seal passes re-emit files for closed buckets: 41–186 objects per (bucket, class)
+  against ~20 steady during both injection windows, and maintain digested the burst 10–25 minutes past the
+  accelerated deadlines (post-deadline listings — real lateness, not the fixed checker race). The chain was
+  undeclared on the first full run and latched as unexpected — exactly the checker's job — and is now a
+  declared consequence of agent-path degradation in the spec.
+- **A 5-minute full stall tears sessions by deadline, and the revert storm is absorbed.** During the stall
+  ingest went to 0 and active connections fell to 10 as read deadlines fired; on the revert the whole fleet
+  re-established within ~a minute (0.7 connects/s, tcp-connect p95 steady at ~10 ms — the accept path did not
+  notice the front), and ingest overshot to ~950 KB/s (2.2× steady) draining producer backlogs before settling.
 - The first run also caught a transient single-pass failure unrelated to the faults: one seal and one upload
   pass on one replica failed with `SQL logic error: no such table: call_index` (a call-partition drop racing an
   in-flight pass), self-healed on the next pass, backlog drained in minutes. The loop-error counters account it;
   a follow-up note, not a stability issue in itself.
-- The full-stall + reconnect-storm scenario is covered by the successor run recorded in the run directory list.
 - Packet loss proper needs netem and stays **cluster-pending** (the parked `chaos-mesh` release).
 
 ## 10. Invariant checker coverage (plan §8)
