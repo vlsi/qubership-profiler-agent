@@ -82,6 +82,8 @@ The agent tracks one pending ack per `RCV_DATA` it sends (`pendingAcks++` in `at
 
 **Failure mode if the ack is missing.** If the collector reads `RCV_DATA` but never writes the byte, the agent's `pendingAcks` grows without bound; the 5 s flush then blocks in `validateAckSync` until the 30 s socket timeout fires, throws, and reconnects — a silent throughput collapse that looks like a network fault. The synthetic test (§9) exists to catch exactly this.
 
+**Latency sensitivity: the protocol assumes co-location.** The agent writes through ~8 KB socket buffers and, on every 5 s flush, drains all pending acks synchronously per stream, so end-to-end throughput degrades roughly with 1/RTT rather than with available bandwidth. The load campaign measured a ~40× ingest collapse (~440 KB/s → ~11 KB/s on the measuring stand) at 2 s of injected path latency, with zero reconnects — the 40 s read deadline holds and sessions starve instead of failing (`load-testing-report.md` §9, `runs/20260717T235336Z-t7-agent-net`). A WAN-grade agent link is therefore effectively unusable; agents and collectors must share a low-RTT network. Windowing or pipelining the acks would lift the ceiling but changes both sides of the wire contract — deferred (`deferred.md`).
+
 ## 6. Error handling and connection teardown
 
 The collector signals an unrecoverable condition with `ACK_ERROR_MAGIC` = `-1` and then closes the socket. The agent treats `ACK_ERROR_MAGIC` as "collector cannot accept data, rotation requested", throws, and reconnects from a clean state (`validateAckSync`, `DefaultCollectorClient.java:424-426`; reconnect resets the dictionary, `01-write-contract.md` §3.7). Cases:

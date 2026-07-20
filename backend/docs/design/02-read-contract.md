@@ -174,6 +174,8 @@ The exemption check runs the same class derivation discovery uses, so a filter t
 
 **Layer 2 — estimated scan.** For a query that clears layer 1, the discovery LIST (§5.1) already returns, per candidate object, its size and — from the key — its `retention_class`. Summing these gives `(file_count, total_bytes)` for the whole scan with no extra request and no file opened. If `file_count > PROFILER_MAX_SCAN_FILES` or `total_bytes > PROFILER_MAX_SCAN_BYTES`, reject with `400` before reading. The two limits map to the two cost axes of §5.5: object count bounds LIST and GET round-trips, byte total bounds decode-and-scan volume. Both are needed — many tiny files pass a byte limit but not a file limit, and a few large files the reverse.
 
+**What the byte limit actually bounds.** The sizes a LIST returns are on-object (ZSTD-compressed) bytes, so `PROFILER_MAX_SCAN_BYTES` bounds what is fetched, not what is held: decoding multiplies the footprint several-fold before rows are merged. The guard is also strictly per-request — N concurrent guard-passing queries can hold N budgets of decoded data at once. Sizing the pod around the guard is therefore backwards. The load campaign OOM-killed a 3 GiB query pod in 34 seconds with eight concurrent wide queries inside the 2 GB default budget, and reached stability only with the budget cut to 256 MB and the concurrent wide profile off (`load-testing-report.md` §7). Until a global read-path budget exists (`load-testing-backlog.md`), derive the budget from the pod: `MAX_SCAN_BYTES ≤ (memory limit − baseline) / (max concurrent guard-passing queries × decompression factor)`.
+
 The rejection body (§8) carries the estimate and a per-class byte breakdown, so the caller sees which axis dominates — usually `short_clean` — and which filter would cut it.
 
 **Evaluated on every page.** The guard runs on page 1 against the parsed query and on pages 2..N against the query frozen in the cursor (§2.3.1). Until the cursor is HMAC-signed it is client-forgeable, so re-checking is the only thing that stops a hand-minted cursor from smuggling a wide query straight into cold discovery. Re-checking does not penalize honest pagination: a cursor `query` minted for a query that already cleared page 1 carries the same window, so the span layer re-passes, and a later page's cold window is bounded by the dynamic cutoff (§4.3) — its discovered file set is a subset of page 1's, so the cost estimate cannot grow past the page-1 verdict.
@@ -537,7 +539,7 @@ If at least one replica or S3 LIST fails:
 
 A profiler is most useful when at least partial data is shown — failing the whole query because one replica is slow defeats the purpose.
 
-**Scan budget (deferred, Stage 2).** Layer 2 of the wide-query guard (§2.3.2) estimates scan cost before reading, but the estimate is by file size: it overshoots a projection-only read and cannot see a pathological row distribution. A per-request scan budget backstops it — if execution reads past a hard byte or deadline cap, `query` stops and returns what it has with `partial: true` and `partial_reasons: [budget_exceeded]`, a `200` rather than a `400`, matching the preference for bounded partial data over failure (§2.3.1). Deferred to Stage 2; the `budget_exceeded` reason is reserved now so the `partial_reasons` vocabulary stays stable.
+**Scan budget (deferred, Stage 2).** Layer 2 of the wide-query guard (§2.3.2) estimates scan cost before reading, but the estimate is by file size: it overshoots a projection-only read and cannot see a pathological row distribution. A per-request scan budget backstops it — if execution reads past a hard byte or deadline cap, `query` stops and returns what it has with `partial: true` and `partial_reasons: [budget_exceeded]`, a `200` rather than a `400`, matching the preference for bounded partial data over failure (§2.3.1). Deferred to Stage 2; the `budget_exceeded` reason is reserved now so the `partial_reasons` vocabulary stays stable. The load campaign has since fired the revisit trigger: concurrent guard-passing queries OOM the pod (§2.3.2), which no per-request cap can bound — a global read-path memory budget with admission control is a required follow-up before cluster-scale query load, tracked as the P1 item in `load-testing-backlog.md`.
 
 ## 8. Error responses
 
@@ -584,7 +586,7 @@ The span-layer rejection omits the estimate members — it fires before the LIST
 | `PROFILER_WIDE_RANGE_LIMIT` | `6h` | Span above which `/calls` requires a narrowing filter (§2.3.2). |
 | `PROFILER_MAX_PODS_RANGE` | `8784h` (366 d) | Span above which `/pods` is rejected with `400`; `/pods` lists one S3 prefix per UTC day and has no narrowing filter (§2.7). |
 | `PROFILER_MAX_SCAN_FILES` | `10000` | Candidate-object ceiling for a `/calls` scan; over it, `400` (§2.3.2). |
-| `PROFILER_MAX_SCAN_BYTES` | `2GB` | Estimated-scan-byte ceiling for a `/calls` scan; over it, `400` (§2.3.2). |
+| `PROFILER_MAX_SCAN_BYTES` | `2GB` | Estimated-scan-byte ceiling for a `/calls` scan; over it, `400`. Counts compressed object bytes, per request — see §2.3.2 for how to size it against the pod. |
 | `PROFILER_EXTERNAL_API_PORT` | `8080` | Bind for `/api/v1/*`. |
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | — | Same as in `01-write-contract.md` §9. |
 
