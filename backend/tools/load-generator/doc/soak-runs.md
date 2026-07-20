@@ -136,8 +136,6 @@ responses, and the reverse effect — whether hot-read traffic pushes ingest tow
 
 ## Pending-cluster checklist
 
-Frozen and ready to run when the large cluster arrives:
-
-- `specs/t1-contract.yaml` — the 2 h contract run (final baseline-utilization numbers).
-- `specs/t4-soak.yaml` — the 24–48 h real-timer soak with checker + `k6-query`.
-- Runner sizing and node pinning per plan §10 before trusting any number.
+Moved to [cluster-checklist.md](cluster-checklist.md) at the phase-6 close-out: prerequisites, the full run order
+(T1, T2, T3, T4, T6, T7, and runner sizing), the frozen T6 safe-profile blocks, and the T3 accept-cap decision
+criteria.
