@@ -1,7 +1,8 @@
 # Load-testing plan: Go profiler backend
 
-Status: phases 1–4 done 2026-07-16 (§11–§14); phase 5 (crashloop + faults) done locally 2026-07-18 (§15) — the
-ceiling, contract, and real-timer soak numbers wait for the large cluster. Owner: @vlsi.
+Status: campaign closed 2026-07-20 — phases 1–5 done (§11–§15), phase 6 close-out done (§16). The ceiling,
+contract, and real-timer soak numbers wait for the large cluster; their runs are frozen as a mechanical checklist
+(`tools/load-generator/doc/cluster-checklist.md`). The harness is in maintenance mode. Owner: @vlsi.
 
 This plan defines the load tests for the Go backend (`backend/apps/profiler-backend` and `backend/libs`): what we
 measure, on which stands, with which generator, and what counts as a pass. The outcome is an engineering report
@@ -204,7 +205,9 @@ saturation signal fires.
 - **S3 unavailable / slow**: stop or throttle MinIO for 5–30 min under contract load. Expected chain:
   `pending_parquet_bytes` grows → `SealPaused` at half budget → `IngestPaused` at `PENDING_UPLOAD_MAX_BYTES` →
   agents get `ACK_ERROR` and reconnect-loop; after recovery the backlog drains and losses stay within the counted
-  `ingest_refused_bytes_total`. Requires generator gaps G3–G4 closed.
+  `ingest_refused_bytes_total`. Requires generator gaps G3–G4 closed. (Measured: the gate order inverts on
+  WAL-dominant backlogs — `IngestPaused` fires with `SealPaused` silent; §15, report §9.
+  `01-write-contract.md` §4.6 now documents both orders.)
 - **Slow / small PV**: throttle IOPS or shrink the PV below the 10 GB segment budget; verify janitor class-aware
   eviction and behavior at real disk pressure (ENOSPC path).
 - **Agent↔collector network faults**: latency, loss, and connection resets (tc or chaos-mesh); verify socket
@@ -454,3 +457,40 @@ eviction holds a shrunken budget to within 0.5% at a counted truncation cost; an
 
 Cluster-pending: real ENOSPC, netem packet loss, PV IOPS throttling, and every ceiling/contract number, as
 before.
+
+## 16. Phase 6 status (campaign close-out; done 2026-07-20)
+
+§9.6 promised "consolidated numbers for goals (a) and (b)". Those numbers do not exist and cannot be produced
+honestly: goals §1(1)–(3) and the real-timer soak are blocked on the large cluster (§13–§15). Phase 6 therefore
+closed the campaign instead of the numbers — consolidating what is portable, folding contradictions back into the
+contracts, and freezing the cluster work so its arrival means execution, not design. Nothing from the findings was
+implemented in this phase, no runs were added, and no number was quoted without its source.
+
+Shipped:
+
+- **Report consolidated** (`load-testing-report.md`): a §1.1 goals scoreboard with the honest per-goal status, a
+  §1.2 portable-findings summary lifted out of §5–§9, every cluster placeholder naming the spec (or frozen values
+  block) and the checklist step that fills it, the T6 incident rows marked blocked-on-P1, and §12 reduced to a
+  router over the three follow-up homes.
+- **Findings folded into the contracts** — the contracts, not the report, carry the corrected behavior:
+  - `01-write-contract.md` §4.6: the backpressure gate order depends on the backlog mix; a WAL-dominant backlog
+    trips `IngestPaused` with `SealPaused` never firing (the §7.7 chain presupposed pending-dominant), plus the
+    budget-sizing note;
+  - `01-write-contract.md` §3.5 / `03-lifecycle.md` §3.9: the effective WAL purge lag is
+    `max(WAL_PURGE_GRACE, hot-index lag)`, which is what makes the storm backlog unbounded;
+  - `01-write-contract.md` §6.6: sustained late data multiplies patch files — a designed degradation, now stated;
+  - `01-write-contract.md` §8: the `collector.lock` crash cycle on a grace-0 kill is expected, measured behavior;
+  - `02-read-contract.md` §2.3.2/§7.4/§9: the scan-byte guard counts compressed bytes, is per-request, and
+    multiplies under concurrency; the fail-soft backstop's revisit trigger has fired;
+  - `06-wire-protocol-server.md` §5: the ack protocol assumes co-location — RTT is a hard throughput ceiling.
+- **Backlog** (`load-testing-backlog.md`): every open finding as a self-contained, prioritized task — two P1
+  requirements (global read-path memory budget, near-empty purge fast-path), three P2 defects, two P3 items —
+  with the defect/requirement/deferred classification rule stated. The declined protections went to `deferred.md`
+  with explicit triggers (ack windowing/pipelining; reconnect rate limit + tracked-restart cap).
+- **Cluster checklist** (`tools/load-generator/doc/cluster-checklist.md`): prerequisites, the run order mapped to
+  the report placeholders, the T3 ramp-continuation rule with frozen accept-cap decision criteria, the T6
+  safe-profile values blocks (both scan guards pinned, worst-case concurrency math, a mandatory preflight that
+  measures the decompression factor, incident profile blocked on P1), and the three cluster-only fault scenarios.
+
+The harness is in maintenance mode: no new scenarios; fixes only. The next load-testing work is either a backlog
+item in its own session or the checklist run when the cluster arrives.

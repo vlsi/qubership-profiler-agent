@@ -1,7 +1,8 @@
 # Load-testing report: Go profiler backend
 
-Status: **draft — harness, lifecycle invariants, and the crashloop/fault campaign (T5/T7, §8–§9) validated on
-the local stand; final numbers await the large cluster** (`load-testing-plan.md` §5.2). Owner: @vlsi.
+Status: **campaign closed 2026-07-20 — the local program is complete; every cluster number is frozen as a
+placeholder with the spec and checklist step that fills it** (`tools/load-generator/doc/cluster-checklist.md`).
+The harness is in maintenance mode: no new scenarios, fixes only. Owner: @vlsi.
 
 Every number in this report must cite its run: the artifact directory (`runs/<ts>-<name>/`, kept outside the
 repository), the image digests, and the frozen run spec inside it. A number without a run citation is a placeholder,
@@ -25,6 +26,44 @@ run (T1, §7.1), the soaks (T4, §7.4), and the background query load (T6, §7.6
 A step counts toward a ceiling only when the generator guard held (k6 pod CPU under 70% of its limit) and the level
 was confirmed (`k6_vus`, and for T3 the `profiler_ingest_active_connections` gauge) before the hold started.
 
+### 1.1 Goals: where the campaign closed
+
+Plan §1 goals, each with its honest status at close-out. "Blocked-cluster" means the harness, spec, and detectors
+are validated and the run itself waits for the large cluster — the checklist step names the mechanical path.
+
+| Plan §1 goal | Status |
+| --- | --- |
+| (1) Resource utilization under load | **Blocked-cluster.** Specs frozen; observability validated end to end (plan §11). Checklist steps 1–4. |
+| (2) Contract ~6 MB/s confirmed | **Blocked-cluster.** `specs/t1-contract.yaml` frozen; spec mechanics validated (§6, `runs/20260716T155045Z-t1-contract`). Checklist step 3. |
+| (3) Single-replica ceilings (T2/T3) | **Blocked-cluster.** Ramp, saturation detection, and the connection gauge validated by smoke runs (§3–§4). Checklist steps 1–2. |
+| (4) Long-run stability (soak) | **Functional verdict closed locally**: the accelerated soak cycles the full lifecycle cleanly under the §8 checker (§5, `runs/20260717T091106Z-t4-soak-accelerated`). The mandatory real-timer 24–48 h run is blocked-cluster (checklist step 4) — the accelerated run cannot see slow leaks (plan §10). |
+| (5) Crashloop characterization + protection decision | **Closed locally.** T5 characterized (§8), the §7.5.4 protection decision recorded; the accept-side cap alone defers to the cluster T3 numbers (checklist §3). |
+
+### 1.2 Portable findings
+
+What carries to any stand regardless of scale — mechanisms and orderings, not absolute numbers. Each line points at
+the detailed section and its run.
+
+- **The backpressure gate order depends on the backlog mix**: a WAL-dominant backlog trips `IngestPaused` with
+  `SealPaused` never firing; the documented seal-first order presupposes a pending-dominant backlog. Folded into
+  `01-write-contract.md` §4.6 (§9, `runs/20260717T165508Z-t7-s3-outage`).
+- **The storm backlog is purge-gated and unbounded**: WAL purge waits out hot-index aging, purge eligibility
+  degrades as the backlog ages, and churn keeps every restart near-empty — the basis of the §7.5.4 fast-path
+  decision, folded into `01-write-contract.md` §3.5 (§8, `runs/20260717T133845Z-t5-reconnect-storm`).
+- **Recovery is fast and flat**: READY ~10 s after a grace-0 kill through one designed `collector.lock` crash
+  cycle, with no cycle-over-cycle degradation across ten kills — folded into `01-write-contract.md` §8 (§8,
+  `runs/20260717T142638Z-t5-restart`, `runs/20260717T152844Z-t5-crashloop`).
+- **Class-aware eviction holds a shrunken budget exactly**, at a counted truncation cost the read side degrades
+  explicitly on (§9, `runs/20260717T215007Z-t7-small-pv`).
+- **The wire protocol is latency-bound**: 2 s RTT costs ~40× throughput without breaking sessions — the
+  co-location assumption now lives in `06-wire-protocol-server.md` §5 (§9, `runs/20260717T235336Z-t7-agent-net`).
+- **Sustained late data floods compaction** with patch files for closed buckets — a designed degradation, folded
+  into `01-write-contract.md` §6.6 (§9, same run).
+- **The read path has no global memory bound**: the per-request scan guard counts compressed bytes and multiplies
+  under concurrency — OOM in 34 s at 3 Gi; the P1 backlog item (§7, `load-testing-backlog.md`).
+- **Deep pagination costs a full re-scan per page** (~23 s/page on the local probe shape), exactly as the read
+  contract prices it, and the span guard rejects fail-closed in ~4 ms with no I/O (§7).
+
 ## 2. Stands
 
 | Stand | Purpose | Disk / S3 | Status |
@@ -39,7 +78,8 @@ caveat when T6 runs.
 
 > Placeholder — to be filled from large-cluster runs. Per sweep (bytes/s, calls/s small, calls/s large, dictionary
 > churn): the ceiling in MB/s and calls/s, the firing detector, the limiting stage (ingest decode / SQLite index /
-> seal / upload) read from the CPU profiles, and the CPU/RAM/disk-I/O curves over the ramp.
+> seal / upload) read from the CPU profiles, and the CPU/RAM/disk-I/O curves over the ramp. Filled by checklist
+> step 1 (`tools/load-generator/doc/cluster-checklist.md`, specs derived from `specs/t2-bytes.yaml`).
 
 | Sweep | Ceiling | Firing detector | Limiting stage | Run |
 | --- | --- | --- | --- | --- |
@@ -67,7 +107,9 @@ Two OrbStack runs on 2026-07-16, images `profiler-backend:dev@sha256:8a7ecf…` 
 
 > Placeholder — to be filled from large-cluster runs: RAM and goroutines per idle connection, cost per tracked
 > pod-restart, where accept latency / `PROFILER_MEM_BUDGET` / the fd limit bites first, and what the failure looks
-> like to the agent (there is no accept-side connection cap today, `libs/server/services.go`).
+> like to the agent (there is no accept-side connection cap today, `libs/server/services.go`). Filled by checklist
+> step 2 (`specs/t3-connections.yaml`); the ramp-continuation rule and the accept-cap decision criteria are frozen
+> in the checklist's §3.
 
 | Metric | Value | Run |
 | --- | --- | --- |
@@ -147,13 +189,14 @@ no feed; the runbook now says to stop the checker when the runner exits (`doc/so
 > Placeholder — the mandatory 24–48 h run on real timers (`specs/t4-soak.yaml`): checker verdict over the full §8
 > set, RSS/goroutine trends, S3 object-count trends, and the slow-leak check the accelerated run cannot see
 > (plan §10). Runs with the T6 UI profile in the background (`k6-query`). The `CallsPipeReader` panic that
-> blocked it is fixed and survived the phase-5 accelerated re-run cleanly.
+> blocked it is fixed and survived the phase-5 accelerated re-run cleanly. Filled by checklist step 4, with the
+> frozen ui-companion block of the checklist's §4.
 
 ## 6. T1: contract-level run (pending cluster)
 
 > Placeholder — `specs/t1-contract.yaml` on 3 replicas, 500 pods, ~6 MB/s total, fixed 2 h hold. Deliverable:
 > the baseline utilization table (collector CPU/RSS/PV I/O, query CPU/RSS, S3 traffic) and the headroom estimate
-> of plan goal (a).
+> of plan goal (a). Filled by checklist step 3.
 
 | Metric | Value | Run |
 | --- | --- | --- |
@@ -177,7 +220,11 @@ set, connection-gated confirm, `pprof.points: [1.0]` — are ready for the clust
 
 > Cluster numbers are placeholders until T4 runs there; the local profiles below establish the qualitative
 > behavior of the guards, the pagination cost model, and the read-vs-ingest interaction. Absolute latency and
-> LIST/GET volumes are not portable from MinIO on a local SSD (plan §10).
+> LIST/GET volumes are not portable from MinIO on a local SSD (plan §10). The UI rows are filled by checklist
+> step 4 (ui companion) and the cold/pagination rows by step 5 (dedicated probe), both under the frozen
+> safe-profile blocks of the checklist's §4. The incident and concurrent-wide rows are **blocked-on-P1**: they
+> stay placeholders until the global read-path memory budget lands (`load-testing-backlog.md`), per the OOM
+> finding below.
 
 ### Read-path memory: concurrent wide queries OOM the query pod *(local, mechanism portable)*
 
@@ -190,7 +237,8 @@ guard-passing wide-range queries multiply it, and the read path has no global me
 - 3 Gi limit with the scan budget cut to 256 MB *and* incident off: stable.
 
 Sizing the pod around the guard is backwards — the guard must be sized to the pod, and even then concurrency
-multiplies it. Follow-up: a global scan budget (or admission semaphore) on the query read path.
+multiplies it. The finding is folded into `02-read-contract.md` §2.3.2 (what the guard actually bounds) and is the
+P1 item in `load-testing-backlog.md`: a global read-path memory budget with admission control.
 
 ### Guards and deep pagination *(local)*
 
@@ -357,7 +405,7 @@ evicted).
   a follow-up note, not a stability issue in itself.
 - Packet loss proper needs netem and stays **cluster-pending** (the parked `chaos-mesh` release).
 
-## 10. Invariant checker coverage (plan §8)
+## 10. Invariant checker coverage (plan §8) — final for the campaign
 
 | Invariant | Source | Status |
 | --- | --- | --- |
@@ -395,31 +443,20 @@ Every step records the k6 pod's CPU share against its limit (`steps.jsonl`, `gen
 
 > Placeholder — headroom observed at the T2/T3 ceilings, and the runner sizing that keeps it. On the local smoke
 > levels the generator used 1–2% of a 2-core limit — the guard machinery is verified, the sizing question is not.
+> Filled by checklist step 0 (generator sizing validation) and confirmed by every ceiling run after it.
 
-## 12. Follow-ups
+## 12. Follow-ups — dispatched at close-out
 
-- ~~Fix the `CallsPipeReader` panic~~ — fixed (`608ce6a9`) and verified by the phase-5 accelerated re-run (§5):
-  no crash across 2.5 h under the shape that killed a collector in under an hour. The suspend/params reader
-  mis-framing flagged in phase 2 remains open.
-- **Global read-path memory budget** for the query service (§7): the per-request scan guard multiplies under
-  concurrency; a global budget or admission semaphore is needed before T6 runs at cluster scale.
-- **Aggressive purge of near-empty pod-restarts** (§8, the T5 protection decision): design the fast-path that
-  frees a sealed, below-floor pod-restart without waiting out the hot-index aging — the storm backlog is
-  unbounded without it.
-- **Recovery-duration metric** for the collector (§8, T5.2): time-to-READY is currently only derivable from
-  probes and the fault log.
-- **Per-PUT timeout in the uploader** (§9, T7 slow-S3): a crawling PUT pins its worker until the ambient
-  context ends; a bounded per-attempt timeout keeps the retry loop live.
-- **Wire-protocol latency sensitivity** (§9, T7 agent-net): 2 s RTT costs ~40× throughput through the 8 KB
-  socket buffers and synchronous per-stream flush acks. If WAN-separated agents are ever a target, the protocol
-  needs windowing/pipelining; otherwise document the co-location assumption.
-- **Partition-drop vs seal/upload pass race** (§9): one transient `no such table: call_index` pass failure,
-  self-healed; worth a look at the drop path's locking before the cluster soak.
-- Re-run the ceilings on the large cluster; only then replace the placeholders above.
-- Decide, from the T3 failure shape, whether an accept-side connection cap is warranted (plan §7.3 note; the T5
-  decision explicitly defers it to those numbers).
-- Run `specs/t1-contract.yaml` and `specs/t4-soak.yaml` on the large cluster (with the checker and `k6-query`);
-  only then fill §5–§7.
-- Cluster-pending fault scenarios: real ENOSPC (a size-enforcing filesystem), netem packet loss, and PV IOPS
-  throttling (the parked `chaos-mesh` release).
-- Revisit the T6 profile shares (UI VUs, incident cadence) when real usage data appears (plan §7.6).
+Every open follow-up now lives in exactly one of three homes; this section only routes.
+
+- **Fixed during the campaign**: the `CallsPipeReader` panic (`608ce6a9`, verified by the §5 re-run) and the
+  collector ack-flush cadence (`82aed788`, phase 2).
+- **Backlog** (`load-testing-backlog.md`): the global read-path memory budget (P1), the near-empty pod-restart
+  purge fast-path (P1), the per-PUT upload timeout, the partition-drop race, the suspend/params reader
+  mis-framing, the recovery-duration metric, and the `collector.lock` collision softening.
+- **Deferred with triggers** (`deferred.md`): wire-protocol ack windowing/pipelining, and the per-pod-key
+  reconnect rate limit + tracked-restart cap declined by the §7.5.4 decision.
+- **Cluster checklist** (`tools/load-generator/doc/cluster-checklist.md`): every placeholder run above (T1–T4,
+  T6 safe profile, the cluster-only faults), the accept-side cap decision with its frozen criteria, and the
+  runner sizing validation. Revisiting the T6 profile shares against real usage data (plan §7.6) rides with the
+  T6 steps.
