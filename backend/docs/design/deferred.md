@@ -30,6 +30,13 @@ Design-level ideas that surfaced during Stage 0 (contracts) but are intentionall
 
 **Trigger fired (2026-07-16, load campaign).** Concurrent guard-passing wide queries OOM-killed a 3 GiB query pod in 34 seconds (`load-testing-report.md` §7) — the per-request backstop cannot bound concurrent decoded state, so the need is promoted past this entry: a global read-path memory budget with admission control is the P1 item in `load-testing-backlog.md`. The `budget_exceeded` reservation stands; the per-request backstop remains a useful complement, not the fix.
 
+**Outcome (2026-07-21).** The promoted need is implemented: the process-wide read memory budget with admission
+control (`02-read-contract.md` §7.5) bounds concurrent materialized state and sheds load with an atomic `503`.
+This entry's per-request fail-soft backstop stays deferred with the original trigger wording — it would catch a
+single accepted query whose actual scan overruns the estimate, which the global budget only bounds process-wide —
+and the `partial_reasons: [budget_exceeded]` vocabulary remains reserved for it (§7.5 explains why the budget
+itself must not emit a partial page).
+
 ## Versioned CallV2 reader for non-additive schema changes
 
 **What.** A cold reader that branches on the `profiler.schema_version` key in the parquet footer metadata (`01-write-contract.md` §5.2) and reads each file with the shape its version names. Needed the first time a `CallV2` column is renamed, retyped, or semantically redefined after release, while old and new files coexist inside the 30-day retention window.
