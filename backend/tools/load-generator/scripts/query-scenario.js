@@ -26,6 +26,11 @@ import http from 'k6/http';
 import { sleep } from 'k6';
 import { Counter, Gauge } from 'k6/metrics';
 
+// Guard rejections (400) and read-budget rejections (503) are probe results
+// counted by classify(); without this callback k6 would also fold them into
+// http_req_failed and taint the run verdict.
+http.setResponseCallback(http.expectedStatuses(200, 400, 503));
+
 const WORKLOAD_KNOBS = [
     'UI_VUS',
     'INCIDENT_VUS',
@@ -77,6 +82,7 @@ const WIDE_RANGE_MINUTES = knobNum('WIDE_RANGE_MINUTES');
 const COLD_MAX_PAGES = knobNum('COLD_MAX_PAGES');
 
 const guardRejected = new Counter('query_guard_rejected');
+const budgetRejected = new Counter('query_budget_rejected');
 const partialResponses = new Counter('query_partial_responses');
 const coldPages = new Counter('query_cold_pages');
 const workloadInfo = new Gauge('workload_info');
@@ -126,10 +132,15 @@ function getCalls(fromMs, toMs, extra, tags) {
 }
 
 // classify folds the expected non-200s into the custom counters: a guard
-// rejection is a probe result, not a failure.
+// rejection (400) and a read-budget rejection (503, 02-read-contract.md
+// §7.5) are probe results, not failures.
 function classify(res) {
     if (res.status === 400) {
         guardRejected.add(1);
+        return null;
+    }
+    if (res.status === 503) {
+        budgetRejected.add(1);
         return null;
     }
     if (res.status !== 200) {
