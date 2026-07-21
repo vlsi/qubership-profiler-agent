@@ -109,6 +109,8 @@ func runQuery(cmd *cobra.Command, _ []string) error {
 			PodsRangeLimit:     cfg.PodsRangeLimit,
 			MaxScanFiles:       cfg.MaxScanFiles,
 			MaxScanBytes:       int64(cfg.MaxScanBytes),
+			ReadMemoryBudget:   int64(cfg.ReadMemoryBudget),
+			ReadBudgetWait:     cfg.ReadBudgetWait,
 			DurationThresholds: cfg.DurationThresholds,
 			ListConcurrency:    cfg.ListConcurrency,
 			CollectorService:   cfg.CollectorService,

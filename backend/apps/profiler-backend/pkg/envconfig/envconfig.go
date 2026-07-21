@@ -112,6 +112,10 @@ type (
 		PodsRangeLimit   time.Duration `envconfig:"PROFILER_MAX_PODS_RANGE" default:"8784h"`
 		MaxScanFiles     int           `envconfig:"PROFILER_MAX_SCAN_FILES" default:"10000"`
 		MaxScanBytes     ByteSize      `envconfig:"PROFILER_MAX_SCAN_BYTES" default:"2GB"`
+		// ReadMemoryBudget / ReadBudgetWait shape the process-wide read
+		// memory budget and its admission queue (02 §7.5).
+		ReadMemoryBudget ByteSize      `envconfig:"PROFILER_READ_MEMORY_BUDGET" default:"512MB"`
+		ReadBudgetWait   time.Duration `envconfig:"PROFILER_READ_BUDGET_WAIT" default:"5s"`
 		// DurationThresholds must mirror the collector's value: the cold
 		// class pruning and the guard exemption derive their bounds from the
 		// same tier table the seal pass classified with (№10). Unset keeps
@@ -262,8 +266,15 @@ func ParseCollect() (Collect, error) {
 // ParseQuery reads the `query` configuration from the environment.
 func ParseQuery() (Query, error) {
 	var q Query
-	err := envconfig.Process("", &q)
-	return q, errors.Wrap(err, "parse query env")
+	if err := envconfig.Process("", &q); err != nil {
+		return q, errors.Wrap(err, "parse query env")
+	}
+	// A negative wait would silently fall back to the library default inside
+	// query.Config.Normalize; a misconfiguration must fail loudly instead.
+	if q.ReadBudgetWait < 0 {
+		return q, errors.Errorf("PROFILER_READ_BUDGET_WAIT must not be negative, got %s", q.ReadBudgetWait)
+	}
+	return q, nil
 }
 
 // ParseMaintain reads the `maintain` configuration from the environment.
