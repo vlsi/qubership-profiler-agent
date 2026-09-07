@@ -13,6 +13,9 @@ dependencies {
     api(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     constraints {
         api("com.beust:jcommander:1.82")
+        // The version ChannelNInstrumentationTest checks the RabbitMQ injector against; the older
+        // versions it also checks are pinned in plugins/rabbitmq/build.gradle.kts, which Renovate ignores.
+        api("com.rabbitmq:amqp-client:5.35.0")
         api("com.zaxxer:HikariCP:7.0.2")
         api("io.mockk:mockk:1.14.11")
         api("org.jmockit:jmockit-coverage:1.23")
