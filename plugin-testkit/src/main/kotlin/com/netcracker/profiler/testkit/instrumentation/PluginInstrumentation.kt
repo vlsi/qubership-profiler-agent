@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.params.provider.Arguments
 import org.objectweb.asm.ClassReader
+import org.objectweb.asm.tree.MethodInsnNode
 import org.objectweb.asm.util.CheckClassAdapter
 import org.w3c.dom.Element
 import org.w3c.dom.NodeList
@@ -128,6 +129,33 @@ object PluginInstrumentation {
         }
     }
 
+    /**
+     * Fails when a method the configuration selects calls another method it selects on the same
+     * class, which records one operation twice.
+     *
+     * A library that turns an overload into a delegation to a wider one puts both under a rule that
+     * pins neither, and the caller then runs two instrumented frames: two enter and exit pairs in
+     * the call tree and two copies of every event the injected method records. Only a direct call is
+     * reported, so a delegation that passes through a method no rule selects still gets past this.
+     */
+    @JvmStatic
+    fun assertNoOperationIsInstrumentedTwice(library: LibraryUnderTest) {
+        withInstrumented(library) { _, instrumented ->
+            val nested = instrumented.flatMap { subject ->
+                val original = classNode(subject.original)
+                subject.selectedMethods.flatMap { selected ->
+                    val body = original.methods.first { it.name + it.desc == selected }
+                    body.instructions.asSequence()
+                        .filterIsInstance<MethodInsnNode>()
+                        .filter { it.owner == subject.internalName && it.name + it.desc in subject.selectedMethods }
+                        .map { "${subject.internalName}.$selected calls ${it.name}${it.desc}" }
+                        .toList()
+                }
+            }
+            assertEquals(emptyList<String>(), nested, "methods the configuration selects that call one another on $library")
+        }
+    }
+
     private class Subject(
         val internalName: String,
         val original: ByteArray,
@@ -165,7 +193,7 @@ object PluginInstrumentation {
                             val original = file.getInputStream(file.getEntry("$internalName.class")).use { it.readBytes() }
                             val transformed = transformer.transform(null, internalName, null, domain, original)
                                 ?: return@mapNotNull null
-                            val rules = rulesFor(transformer, internalName, domain)
+                            val rules = rulesFor(transformer, internalName, domain, original)
                             Subject(internalName, original, transformed, rules, selectedMethods(original, rules))
                         }
                     }
@@ -173,19 +201,29 @@ object PluginInstrumentation {
         }
 
     /**
-     * The rules the transformer would apply to [internalName], with the `if-enhancer` filters
-     * already applied, exactly as `ProfilingTransformer.transform` applies them.
+     * The rules the transformer would apply to [internalName], with the `if-enhancer` and the
+     * class-structure filters already applied, exactly as `ProfilingTransformer.transform` applies
+     * them.
      */
-    private fun rulesFor(transformer: ProfilingTransformer, internalName: String, domain: ProtectionDomain): Collection<Rule> {
+    private fun rulesFor(
+        transformer: ProfilingTransformer,
+        internalName: String,
+        domain: ProtectionDomain,
+        original: ByteArray,
+    ): Collection<Rule> {
         val configuration = transformer.configuration
         val registry = configuration.enhancementRegistry
         val info: ClassInfo = ClassInfoImpl().apply {
             className = internalName
             protectionDomain = domain
         }
+        val declaredMethods by lazy { classNode(original).methods.map { it.name + it.desc } }
         return configuration.getRulesForClass(internalName, null).filter { rule ->
-            val ifEnhancer = rule.ifEnhancer ?: return@filter true
-            (registry.getFilter(ifEnhancer) as EnhancerPlugin?)?.accept(info) ?: true
+            val ifEnhancer = rule.ifEnhancer
+            if (ifEnhancer != null && (registry.getFilter(ifEnhancer) as EnhancerPlugin?)?.accept(info) == false) {
+                return@filter false
+            }
+            !rule.hasClassStructureCriteria() || rule.matchesClassStructure(declaredMethods)
         }
     }
 

@@ -2,9 +2,20 @@
 <profiler-configuration>
     <enhancer>rabbitmq</enhancer>
     <ruleset if-enhancer="rabbitmq">
+        <!--
+          amqp-client 5.31 added the ByteBuffer overload and turned the byte[] one into a delegation
+          to it, so a client that carries both runs two instrumented frames for one publish. Each
+          rule below therefore claims the overload that performs the publish on the client at hand.
+        -->
         <rule>
             <class>com.rabbitmq.client.impl.ChannelN</class>
-            <method>basicPublish(java.lang.String, java.lang.String, boolean, boolean, ...)</method>
+            <if-class-does-not-declare>basicPublish(java.lang.String, java.lang.String, boolean, boolean, com.rabbitmq.client.AMQP$BasicProperties, java.nio.ByteBuffer, com.rabbitmq.client.WriteListener)</if-class-does-not-declare>
+            <method>basicPublish(java.lang.String, java.lang.String, boolean, boolean, com.rabbitmq.client.AMQP$BasicProperties, byte[])</method>
+            <execute-after type="com/rabbitmq/client/impl/ChannelN" exception="true">basicPublish$profiler(p1, p2, p6, throwable)</execute-after>
+        </rule>
+        <rule>
+            <class>com.rabbitmq.client.impl.ChannelN</class>
+            <method>basicPublish(java.lang.String, java.lang.String, boolean, boolean, com.rabbitmq.client.AMQP$BasicProperties, java.nio.ByteBuffer, com.rabbitmq.client.WriteListener)</method>
             <execute-after type="com/rabbitmq/client/impl/ChannelN" exception="true">basicPublish$profiler(p1, p2, p6, throwable)</execute-after>
         </rule>
         <rule>

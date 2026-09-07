@@ -35,6 +35,11 @@ class RabbitmqInstrumentationTest {
     fun `every method the configuration selects is instrumented`(library: LibraryUnderTest) =
         PluginInstrumentation.assertSelectedMethodsAreInstrumented(library)
 
+    @ParameterizedTest
+    @MethodSource("libraries")
+    fun `no operation is instrumented twice`(library: LibraryUnderTest) =
+        PluginInstrumentation.assertNoOperationIsInstrumentedTwice(library)
+
     companion object {
         @JvmStatic
         fun libraries() = PluginInstrumentation.librariesUnderTest()
