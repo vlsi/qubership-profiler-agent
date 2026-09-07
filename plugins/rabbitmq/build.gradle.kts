@@ -4,69 +4,17 @@ plugins {
     id("build-logic.kotlin")
 }
 
-dependencies {
-    testImplementation(projects.instrumenter)
-    testImplementation("org.ow2.asm:asm-tree")
-    testImplementation("org.ow2.asm:asm-util")
-}
-
-// ChannelNInstrumentationTest transforms the real ChannelN of each version listed here. amqp-client
-// 5.31.0 added basicPublish(String, String, boolean, boolean, BasicProperties, ByteBuffer,
-// WriteListener), so 5.30.0 and 5.31.0 are the two sides of that boundary and the injector has to
-// cover both. Renovate ignores plugins/*/build.gradle.kts (see ignorePaths in renovate.json), so
-// these versions stay where they are put, and the version that moves comes from bom-testing below.
-val pinnedAmqpClientVersions = listOf("5.30.0", "5.31.0")
-
-val amqpClientClasspaths = buildList {
-    for (version in pinnedAmqpClientVersions) {
-        val suffix = version.replace('.', '_')
-        val declared = configurations.dependencyScope("amqpClient$suffix") {
-            description = "Declares amqp-client $version, instrumented by ChannelNInstrumentationTest"
-        }
-        add(
-            configurations.resolvable("amqpClient${suffix}Classpath") {
-                extendsFrom(declared.get())
-            }
-        )
-        dependencies.add(declared.name, "com.rabbitmq:amqp-client:$version")
-    }
-    val declaredCurrent = configurations.dependencyScope("amqpClientCurrent") {
-        description = "Declares the amqp-client version bom-testing pins, so Renovate keeps it moving"
-    }
-    add(
-        configurations.resolvable("amqpClientCurrentClasspath") {
-            extendsFrom(declaredCurrent.get())
-        }
-    )
-    dependencies.add(declaredCurrent.name, dependencies.platform(projects.bomTesting))
-    dependencies.add(declaredCurrent.name, "com.rabbitmq:amqp-client")
-}
-
-tasks.test {
-    systemProperty("amqp.client.classpath.count", amqpClientClasspaths.size)
-    // The jars are handed to the test as paths rather than added to its own classpath: the test
-    // reads bytecode from several amqp-client versions at once, which one classpath cannot hold.
-    // @Classpath on the provider declares them as an input of this task, so no inputs.files is
-    // needed, and the provider holds a file collection rather than a script reference, which is what
-    // the configuration cache can serialize.
-    amqpClientClasspaths.forEachIndexed { index, classpath ->
-        jvmArgumentProviders.add(
-            objects.newInstance<AmqpClientClasspath>().apply {
-                this.index.set(index)
-                jars.from(classpath)
-            }
-        )
-    }
-}
-
-/** Passes one amqp-client version's jars to the test as `-Damqp.client.classpath.<index>`. */
-abstract class AmqpClientClasspath : CommandLineArgumentProvider {
-    @get:Input
-    abstract val index: Property<Int>
-
-    @get:Classpath
-    abstract val jars: ConfigurableFileCollection
-
-    override fun asArguments(): Iterable<String> =
-        listOf("-Damqp.client.classpath.${index.get()}=${jars.asPath}")
-}
+// ChannelN.basicPublish gained a seven-argument ByteBuffer overload in amqp-client 5.31.0, and the
+// profiler binds an injected method by the exact descriptor of the call site, so each published body
+// type needs its own basicPublish$profiler. 5.30.0 and 5.31.0 are the two sides of that boundary.
+//
+// spring-amqp 4.0 changed MessagingMessageListenerAdapter.invokeHandler to
+// (Channel, org.springframework.messaging.Message, boolean, org.springframework.amqp.core.Message...)
+// and moved InvocationResult to org.springframework.amqp.listener.adapter, so the rule in
+// rabbitmq.xml matches no method there and the plugin records neither the consumer queue nor the
+// connection URL. Until an injector for that signature exists, spring-rabbit is checked at the
+// versions the rule does match.
+instrumentationTestLibraries(
+    "com.rabbitmq:amqp-client" to versions("5.30.0", "5.31.0"),
+    "org.springframework.amqp:spring-rabbit" to versions("2.4.17", "3.2.6", trackLatest = false),
+)

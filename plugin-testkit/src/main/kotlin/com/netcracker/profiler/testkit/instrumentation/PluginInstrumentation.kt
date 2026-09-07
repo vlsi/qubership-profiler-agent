@@ -1,0 +1,236 @@
+package com.netcracker.profiler.testkit.instrumentation
+
+import com.netcracker.profiler.agent.ProfilingTransformer
+import com.netcracker.profiler.agent.plugins.EnhancerRegistryPluginImpl
+import com.netcracker.profiler.configuration.ConfigurationImpl
+import com.netcracker.profiler.configuration.Rule
+import com.netcracker.profiler.instrument.GatherRulesForMethodVisitor
+import com.netcracker.profiler.instrument.enhancement.ClassInfo
+import com.netcracker.profiler.instrument.enhancement.ClassInfoImpl
+import com.netcracker.profiler.instrument.enhancement.EnhancerPlugin
+import com.netcracker.profiler.util.MethodInstrumentationInfo
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.params.provider.Arguments
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.util.CheckClassAdapter
+import org.w3c.dom.Element
+import org.w3c.dom.NodeList
+
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.PrintWriter
+import java.net.URLClassLoader
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.security.CodeSource
+import java.security.ProtectionDomain
+import java.util.jar.JarFile
+import java.util.stream.Collectors
+import javax.xml.parsers.DocumentBuilderFactory
+
+/** One distribution of a third-party library the plugin under test is checked against. */
+data class LibraryUnderTest(val name: String, val classpath: List<Path>) {
+    override fun toString(): String = name
+}
+
+/**
+ * Checks a profiler plugin against the real libraries it instruments.
+ *
+ * A plugin binds an injected `$profiler` method by the exact descriptor of the call site, and
+ * `ExecuteMethod` builds that descriptor from the parameter types of the method the rule matched. A
+ * library that adds an overload therefore produces a call to a method the injector may not declare,
+ * and the JVM only reports it, as `NoSuchMethodError`, when the instrumented method first runs.
+ * These checks read the transformed bytecode instead, so a missing member fails the build.
+ *
+ * Nothing here names a class: the harness reads the plugin's own configuration, asks
+ * [ProfilingTransformer.transformRequired] about every class in the library, and checks the ones it
+ * selects. A plugin's test therefore lists the libraries and their versions and nothing else.
+ *
+ * Gradle passes the libraries in the `profiler.instrumentation.*` system properties; see
+ * `instrumentationTestLibrary` in `build-logic`.
+ */
+object PluginInstrumentation {
+    private const val CONFIG_DIR = "profiler.instrumentation.config.dir"
+    private const val LIBRARY_COUNT = "profiler.instrumentation.library.count"
+
+    /** The distributions Gradle resolved for this module, one parameterized case each. */
+    @JvmStatic
+    fun librariesUnderTest(): List<Arguments> {
+        val count = System.getProperty(LIBRARY_COUNT)
+            ?: error("$LIBRARY_COUNT is not set; run this test through Gradle")
+        return (0 until count.toInt()).map { index ->
+            val name = System.getProperty("profiler.instrumentation.library.$index.name")
+            val classpath = System.getProperty("profiler.instrumentation.library.$index.classpath")
+                .split(File.pathSeparator)
+                .map { Paths.get(it) }
+            Arguments.argumentSet(name, LibraryUnderTest(name, classpath))
+        }
+    }
+
+    /**
+     * Fails when a member or type the transformation added to a class of [library] is not declared.
+     *
+     * This is the check that catches an injector with no method for an overload the library added.
+     */
+    @JvmStatic
+    fun assertAddedReferencesResolve(library: LibraryUnderTest) {
+        withInstrumented(library) { loader, instrumented ->
+            val unresolved = instrumented.flatMap { subject ->
+                val node = classNode(subject.transformed)
+                (references(subject.transformed) - references(subject.original))
+                    .mapNotNull { unresolved(it, node, loader) }
+            }
+            assertEquals(emptyList<String>(), unresolved, "references the profiler added on $library")
+        }
+    }
+
+    /** Fails when a class the transformation rewrote no longer passes bytecode verification. */
+    @JvmStatic
+    fun assertInstrumentedClassesVerify(library: LibraryUnderTest) {
+        withInstrumented(library) { loader, instrumented ->
+            val broken = instrumented.mapNotNull { subject ->
+                val report = ByteArrayOutputStream()
+                PrintWriter(report, true).use {
+                    CheckClassAdapter.verify(ClassReader(subject.transformed), loader, false, it)
+                }
+                report.toString("UTF-8").takeIf { it.isNotEmpty() }?.let { "${subject.internalName}: $it" }
+            }
+            assertEquals(emptyList<String>(), broken, "CheckClassAdapter.verify on $library")
+        }
+    }
+
+    /**
+     * Fails when the configuration selects a class of [library] but no method of it is rewritten, or
+     * when a method it selects keeps the body it had.
+     *
+     * Without this the other checks pass on a plugin that instruments nothing: a rule that stops
+     * matching adds no reference to resolve and rewrites no body to verify.
+     */
+    @JvmStatic
+    fun assertSelectedMethodsAreInstrumented(library: LibraryUnderTest) {
+        withInstrumented(library) { _, instrumented ->
+            val missed = instrumented.flatMap { subject ->
+                val before = bodySizes(subject.original)
+                val after = bodySizes(subject.transformed)
+                when {
+                    subject.rules.isEmpty() -> emptyList()
+                    subject.selectedMethods.isEmpty() ->
+                        listOf("${subject.internalName}: rules match the class, no method")
+                    else -> subject.selectedMethods
+                        .filter { before[it] == after[it] }
+                        .map { "${subject.internalName}.$it: selected, body unchanged" }
+                }
+            }
+            assertEquals(emptyList<String>(), missed, "methods the configuration selects on $library")
+        }
+    }
+
+    private class Subject(
+        val internalName: String,
+        val original: ByteArray,
+        val transformed: ByteArray,
+        val rules: Collection<Rule>,
+        val selectedMethods: Set<String>,
+    )
+
+    private fun <T> withInstrumented(library: LibraryUnderTest, body: (ClassLoader, List<Subject>) -> T): T =
+        URLClassLoader(
+            library.classpath.map { it.toUri().toURL() }.toTypedArray(),
+            PluginInstrumentation::class.java.classLoader
+        ).use { loader ->
+            val subjects = instrument(library)
+            assertNotEquals(
+                emptyList<String>(),
+                subjects.map { it.internalName },
+                "classes of $library the configuration in ${configDir()} selects"
+            )
+            body(loader, subjects)
+        }
+
+    private fun instrument(library: LibraryUnderTest): List<Subject> =
+        library.classpath.filter { it.fileName.toString().endsWith(".jar") }.flatMap { jar ->
+            val domain = ProtectionDomain(CodeSource(jar.toUri().toURL(), null as Array<java.security.cert.Certificate>?), null)
+            JarFile(jar.toFile()).use { file ->
+                java.util.Collections.list(file.entries())
+                    .filter { it.name.endsWith(".class") }
+                    .map { it.name.removeSuffix(".class") }
+                    .flatMap { internalName ->
+                        transformers().mapNotNull { transformer ->
+                            if (!transformer.transformRequired(internalName)) {
+                                return@mapNotNull null
+                            }
+                            val original = file.getInputStream(file.getEntry("$internalName.class")).use { it.readBytes() }
+                            val transformed = transformer.transform(null, internalName, null, domain, original)
+                                ?: return@mapNotNull null
+                            val rules = rulesFor(transformer, internalName, domain)
+                            Subject(internalName, original, transformed, rules, selectedMethods(original, rules))
+                        }
+                    }
+            }
+        }
+
+    /**
+     * The rules the transformer would apply to [internalName], with the `if-enhancer` filters
+     * already applied, exactly as `ProfilingTransformer.transform` applies them.
+     */
+    private fun rulesFor(transformer: ProfilingTransformer, internalName: String, domain: ProtectionDomain): Collection<Rule> {
+        val configuration = transformer.configuration
+        val registry = configuration.enhancementRegistry
+        val info: ClassInfo = ClassInfoImpl().apply {
+            className = internalName
+            protectionDomain = domain
+        }
+        return configuration.getRulesForClass(internalName, null).filter { rule ->
+            val ifEnhancer = rule.ifEnhancer ?: return@filter true
+            (registry.getFilter(ifEnhancer) as EnhancerPlugin?)?.accept(info) ?: true
+        }
+    }
+
+    /** The methods [rules] select in [original], keyed the way the profiler keys them: name plus descriptor. */
+    private fun selectedMethods(original: ByteArray, rules: Collection<Rule>): Set<String> {
+        if (rules.isEmpty()) {
+            return emptySet()
+        }
+        val selected = HashMap<String, MethodInstrumentationInfo>()
+        ClassReader(original).accept(GatherRulesForMethodVisitor(selected, rules), ClassReader.SKIP_FRAMES)
+        return selected.keys
+    }
+
+    private fun bodySizes(classFile: ByteArray): Map<String, Int> =
+        classNode(classFile).methods.associate { it.name + it.desc to it.instructions.size() }
+
+    private fun configDir(): Path =
+        Paths.get(System.getProperty(CONFIG_DIR) ?: error("$CONFIG_DIR is not set; run this test through Gradle"))
+
+    /** One transformer per configuration file the plugin ships, with its enhancers registered. */
+    private fun transformers(): List<ProfilingTransformer> = transformers
+
+    private val transformers: List<ProfilingTransformer> by lazy {
+        EnhancerRegistryPluginImpl()
+        val configs = Files.walk(configDir()).use { paths ->
+            paths.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".xml") }
+                .filter { it.parent.fileName.toString() == "50main" }
+                .sorted()
+                .collect(Collectors.toList())
+        }
+        check(configs.isNotEmpty()) { "no */50main/*.xml under ${configDir()}" }
+        configs.map { config ->
+            registerEnhancers(config)
+            ProfilingTransformer(ConfigurationImpl(config.toString()))
+        }
+    }
+
+    /** Instantiates `EnhancerPlugin_<name>` for every `<enhancer>` the configuration declares. */
+    private fun registerEnhancers(config: Path) {
+        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(config.toFile())
+        val declared: NodeList = document.getElementsByTagName("enhancer")
+        for (index in 0 until declared.length) {
+            val name = (declared.item(index) as Element).textContent.trim()
+            val className = "com.netcracker.profiler.instrument.enhancement.EnhancerPlugin_$name"
+            Class.forName(className).getDeclaredConstructor().newInstance()
+        }
+    }
+}
