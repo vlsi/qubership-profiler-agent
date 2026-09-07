@@ -12,6 +12,12 @@
             <method>invokeHandler(org.springframework.amqp.core.Message, Channel, Message)</method>
             <execute-after exception="true">invokeHandler$profiler(p1, p2, p3, throwable)</execute-after>
         </rule>
+        <!-- spring-amqp 4 takes the channel first and the AMQP messages last, as a varargs array -->
+        <rule>
+            <class>org.springframework.amqp.rabbit.listener.adapter.MessagingMessageListenerAdapter</class>
+            <method>invokeHandler(Channel, Message, boolean, org.springframework.amqp.core.Message[])</method>
+            <execute-after exception="true">invokeHandler$profiler(p1, p4, throwable)</execute-after>
+        </rule>
     </ruleset>
 
 </profiler-configuration>
