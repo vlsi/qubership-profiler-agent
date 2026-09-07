@@ -28,6 +28,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.security.CodeSource
 import java.security.ProtectionDomain
+import java.security.cert.Certificate
 import java.util.jar.JarFile
 import java.util.stream.Collectors
 import javax.xml.parsers.DocumentBuilderFactory
@@ -51,7 +52,7 @@ data class LibraryUnderTest(val name: String, val classpath: List<Path>) {
  * selects. A plugin's test therefore lists the libraries and their versions and nothing else.
  *
  * Gradle passes the libraries in the `profiler.instrumentation.*` system properties; see
- * `instrumentationTestLibrary` in `build-logic`.
+ * `instrumentationTestLibraries` in `build-logic`.
  */
 object PluginInstrumentation {
     private const val CONFIG_DIR = "profiler.instrumentation.config.dir"
@@ -104,11 +105,15 @@ object PluginInstrumentation {
     }
 
     /**
-     * Fails when the configuration selects a class of [library] but no method of it is rewritten, or
-     * when a method it selects keeps the body it had.
+     * Fails when the configuration selects a class of [library] but no method of it is rewritten,
+     * when a method it selects keeps the body it had, or when the library comes through with no
+     * method instrumented at all.
      *
      * Without this the other checks pass on a plugin that instruments nothing: a rule that stops
-     * matching adds no reference to resolve and rewrites no body to verify.
+     * matching adds no reference to resolve and rewrites no body to verify. The last of the three is
+     * what makes the check unfalsifiable otherwise, since [withInstrumented] only requires a class
+     * the configuration named: `transform` hands back a rewritten copy of a class whose rules a
+     * later filter dropped, so a plugin whose rules all fall away still produces subjects.
      */
     @JvmStatic
     fun assertSelectedMethodsAreInstrumented(library: LibraryUnderTest) {
@@ -120,30 +125,40 @@ object PluginInstrumentation {
                     subject.rules.isEmpty() -> emptyList()
                     subject.selectedMethods.isEmpty() ->
                         listOf("${subject.internalName}: rules match the class, no method")
-                    else -> subject.selectedMethods
+                    else -> subject.selectedMethods.keys
                         .filter { before[it] == after[it] }
                         .map { "${subject.internalName}.$it: selected, body unchanged" }
                 }
             }
             assertEquals(emptyList<String>(), missed, "methods the configuration selects on $library")
+            assertNotEquals(
+                emptyList<String>(),
+                instrumented.filter { it.selectedMethods.isNotEmpty() }.map { it.internalName },
+                "classes of $library with at least one method the configuration selects"
+            )
         }
     }
 
     /**
      * Fails when a method the configuration selects calls another method it selects on the same
-     * class, which records one operation twice.
+     * class, which runs two instrumented frames for one operation.
      *
-     * A library that turns an overload into a delegation to a wider one puts both under a rule that
-     * pins neither, and the caller then runs two instrumented frames: two enter and exit pairs in
-     * the call tree and two copies of every event the injected method records. Only a direct call is
-     * reported, so a delegation that passes through a method no rule selects still gets past this.
+     * A library that turns an overload into a delegation to a wider one leaves both under the
+     * configuration, and the caller then pays two enter and exit pairs in the call tree and two
+     * copies of every event the injected methods record.
+     *
+     * This one is opt-in, and [PluginInstrumentationTest] does not run it, because nesting is
+     * sometimes the point: `apache_httpclient` profiles `HttpRequestExecutor.execute` and the
+     * `doSendRequest` and `doReceiveResponse` it calls, to show where the time inside the call goes.
+     * Call it from a plugin whose rules are meant to claim one method per operation. Only a direct
+     * call is reported, so a delegation through a method no rule selects still gets past it.
      */
     @JvmStatic
     fun assertNoOperationIsInstrumentedTwice(library: LibraryUnderTest) {
         withInstrumented(library) { _, instrumented ->
             val nested = instrumented.flatMap { subject ->
                 val original = classNode(subject.original)
-                subject.selectedMethods.flatMap { selected ->
+                subject.selectedMethods.keys.flatMap { selected ->
                     val body = original.methods.first { it.name + it.desc == selected }
                     body.instructions.asSequence()
                         .filterIsInstance<MethodInsnNode>()
@@ -161,7 +176,7 @@ object PluginInstrumentation {
         val original: ByteArray,
         val transformed: ByteArray,
         val rules: Collection<Rule>,
-        val selectedMethods: Set<String>,
+        val selectedMethods: Map<String, Rule>,
     )
 
     private fun <T> withInstrumented(library: LibraryUnderTest, body: (ClassLoader, List<Subject>) -> T): T =
@@ -180,23 +195,24 @@ object PluginInstrumentation {
 
     private fun instrument(library: LibraryUnderTest): List<Subject> =
         library.classpath.filter { it.fileName.toString().endsWith(".jar") }.flatMap { jar ->
-            val domain = ProtectionDomain(CodeSource(jar.toUri().toURL(), null as Array<java.security.cert.Certificate>?), null)
+            val domain = ProtectionDomain(CodeSource(jar.toUri().toURL(), null as Array<Certificate>?), null)
             JarFile(jar.toFile()).use { file ->
-                java.util.Collections.list(file.entries())
+                file.entries().asSequence()
                     .filter { it.name.endsWith(".class") }
-                    .map { it.name.removeSuffix(".class") }
-                    .flatMap { internalName ->
-                        transformers().mapNotNull { transformer ->
+                    .flatMap { entry ->
+                        val internalName = entry.name.removeSuffix(".class")
+                        val original by lazy { file.getInputStream(entry).use { it.readBytes() } }
+                        transformers.mapNotNull { transformer ->
                             if (!transformer.transformRequired(internalName)) {
                                 return@mapNotNull null
                             }
-                            val original = file.getInputStream(file.getEntry("$internalName.class")).use { it.readBytes() }
                             val transformed = transformer.transform(null, internalName, null, domain, original)
                                 ?: return@mapNotNull null
                             val rules = rulesFor(transformer, internalName, domain, original)
                             Subject(internalName, original, transformed, rules, selectedMethods(original, rules))
                         }
                     }
+                    .toList()
             }
         }
 
@@ -227,14 +243,20 @@ object PluginInstrumentation {
         }
     }
 
-    /** The methods [rules] select in [original], keyed the way the profiler keys them: name plus descriptor. */
-    private fun selectedMethods(original: ByteArray, rules: Collection<Rule>): Set<String> {
+    /**
+     * The methods [rules] select in [original], keyed the way the profiler keys them, name plus
+     * descriptor, and mapped to the rule that claimed each one.
+     *
+     * `GatherRulesForMethodVisitor` stops at the first rule that matches a method, so the mapping is
+     * the one the transformer itself will use.
+     */
+    private fun selectedMethods(original: ByteArray, rules: Collection<Rule>): Map<String, Rule> {
         if (rules.isEmpty()) {
-            return emptySet()
+            return emptyMap()
         }
         val selected = HashMap<String, MethodInstrumentationInfo>()
         ClassReader(original).accept(GatherRulesForMethodVisitor(selected, rules), ClassReader.SKIP_FRAMES)
-        return selected.keys
+        return selected.mapValues { it.value.rule }
     }
 
     private fun bodySizes(classFile: ByteArray): Map<String, Int> =
@@ -244,8 +266,6 @@ object PluginInstrumentation {
         Paths.get(System.getProperty(CONFIG_DIR) ?: error("$CONFIG_DIR is not set; run this test through Gradle"))
 
     /** One transformer per configuration file the plugin ships, with its enhancers registered. */
-    private fun transformers(): List<ProfilingTransformer> = transformers
-
     private val transformers: List<ProfilingTransformer> by lazy {
         EnhancerRegistryPluginImpl()
         val configs = Files.walk(configDir()).use { paths ->
