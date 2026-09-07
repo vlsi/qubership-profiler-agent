@@ -819,9 +819,12 @@ public class ConfigurationImpl implements ConfigurationSPI {
             } catch (ClassCastException ex) {
                 log.error("Unable to instantiate {}", content, ex);
             }
+            return null;
         }
         if ("when".equals(tagName))
             return new GuardedAction(parseActions(e));
+        log.warn("Ignoring unknown tag {}: it names neither a rule selector nor an action, "
+                + "so the rule around it applies as if the tag were absent", currentStack);
         return null;
     }
 
