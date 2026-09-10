@@ -62,6 +62,7 @@ dependencies {
     nmcpAggregation(projects.parsers)
     nmcpAggregation(projects.pluginGenerator)
     nmcpAggregation(projects.pluginRuntime)
+    nmcpAggregation(projects.profiler)
     nmcpAggregation(projects.protoDefinition)
     nmcpAggregation(projects.runtime)
     nmcpAggregation(projects.warLib)
