@@ -11,12 +11,12 @@
             <class>com.rabbitmq.client.impl.ChannelN</class>
             <if-class-does-not-declare>basicPublish(java.lang.String, java.lang.String, boolean, boolean, com.rabbitmq.client.AMQP$BasicProperties, java.nio.ByteBuffer, com.rabbitmq.client.WriteListener)</if-class-does-not-declare>
             <method>basicPublish(java.lang.String, java.lang.String, boolean, boolean, com.rabbitmq.client.AMQP$BasicProperties, byte[])</method>
-            <execute-after type="com/rabbitmq/client/impl/ChannelN" exception="true">basicPublish$profiler(p1, p2, p6, throwable)</execute-after>
+            <execute-after type="com/rabbitmq/client/impl/ChannelN" exception="true">basicPublish$profiler(p1, p2, p5, p6, throwable)</execute-after>
         </rule>
         <rule>
             <class>com.rabbitmq.client.impl.ChannelN</class>
             <method>basicPublish(java.lang.String, java.lang.String, boolean, boolean, com.rabbitmq.client.AMQP$BasicProperties, java.nio.ByteBuffer, com.rabbitmq.client.WriteListener)</method>
-            <execute-after type="com/rabbitmq/client/impl/ChannelN" exception="true">basicPublish$profiler(p1, p2, p6, throwable)</execute-after>
+            <execute-after type="com/rabbitmq/client/impl/ChannelN" exception="true">basicPublish$profiler(p1, p2, p5, p6, throwable)</execute-after>
         </rule>
         <rule>
             <class>org.springframework.amqp.rabbit.listener.adapter.MessagingMessageListenerAdapter</class>
