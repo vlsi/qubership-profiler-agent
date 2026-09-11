@@ -1,0 +1,166 @@
+# Temporary: exercises publishAggregationToGithubPackages in a fork. Not for merging.
+name: GitHub Packages fork test
+
+on:
+  push:
+    branches:
+      - test/github-packages-fork
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish and resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      ORG_GRADLE_PROJECT_githubPackagesUsername: ${{ github.actor }}
+      ORG_GRADLE_PROJECT_githubPackagesPassword: ${{ github.token }}
+      REGISTRY: https://maven.pkg.github.com/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Netcracker/qubership-core-base-images
+          path: installer/build/git/qubership-core-base-images
+          fetch-depth: 50
+          persist-credentials: false
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: diagtools/go.mod
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Build the aggregation without uploading
+        run: ./gradlew --console=plain -x test nmcpZipAggregation
+
+      - name: Snapshot, first upload
+        run: time ./gradlew --console=plain -x test publishAggregationToGithubPackages
+
+      - name: Snapshot, second upload
+        run: time ./gradlew --console=plain -x test publishAggregationToGithubPackages
+
+      - name: Create a throwaway signing key
+        # language=bash
+        run: |
+          export GNUPGHOME=$(mktemp -d)
+          gpg --batch --pinentry-mode loopback --passphrase test --quick-gen-key 'Throwaway <throwaway@example.invalid>' ed25519 sign never
+          {
+            echo 'SIGNING_PGP_PRIVATE_KEY<<EOF'
+            gpg --batch --pinentry-mode loopback --passphrase test --armor --export-secret-keys
+            echo 'EOF'
+            echo 'SIGNING_PGP_PASSPHRASE=test'
+          } >> "$GITHUB_ENV"
+
+      - name: Release 0.0.1, first upload
+        run: time ./gradlew --console=plain -x test -Prelease=true -Pprofiler.version=0.0.1 publishAggregationToGithubPackages
+
+      - name: Release 0.0.1, second upload must fail
+        # language=bash
+        run: |
+          if ./gradlew --console=plain -x test -Prelease=true -Pprofiler.version=0.0.1 publishAggregationToGithubPackages; then
+            echo "Error: the registry accepted the same release version twice"
+            exit 1
+          fi
+
+      - name: Show the metadata the registry serves
+        # language=bash
+        run: |
+          base="$REGISTRY/org/qubership/profiler/qubership-profiler-agent"
+          for path in maven-metadata.xml 4.0.6-SNAPSHOT/maven-metadata.xml 0.0.1/qubership-profiler-agent-0.0.1.pom.sha1; do
+            echo "=== $path"
+            curl -sS -L -u "$ORG_GRADLE_PROJECT_githubPackagesUsername:$ORG_GRADLE_PROJECT_githubPackagesPassword" -w '\nHTTP %{http_code}\n' "$base/$path"
+          done
+
+      - name: Probe checksum handling
+        continue-on-error: true
+        # language=bash
+        run: |
+          auth="$ORG_GRADLE_PROJECT_githubPackagesUsername:$ORG_GRADLE_PROJECT_githubPackagesPassword"
+          get() { curl -sS -L -u "$auth" -o "$2" -w "%{http_code}" "$1"; }
+          put() { local url=$1 file=$2; shift 2; curl -sS -u "$auth" -X PUT --data-binary "@$file" "$@" -o "$RUNNER_TEMP/put.out" -w "%{http_code}" "$url"; echo " $(head -c 300 "$RUNNER_TEMP/put.out")"; }
+
+          echo "=== Checksums the registry serves for a published jar"
+          jar="$REGISTRY/org/qubership/profiler/qubership-profiler-agent/0.0.1/qubership-profiler-agent-0.0.1.jar"
+          echo "jar: HTTP $(get "$jar" "$RUNNER_TEMP/a.jar")"
+          for alg in md5 sha1 sha256 sha512; do
+            status=$(get "$jar.$alg" "$RUNNER_TEMP/a.$alg")
+            echo "$alg: HTTP $status served=$(head -c 128 "$RUNNER_TEMP/a.$alg") computed=$(${alg}sum "$RUNNER_TEMP/a.jar" | cut -d' ' -f1)"
+          done
+
+          echo "=== Upload probes in org.qubership.profiler:checksum-probe:0.0.1"
+          probe="$REGISTRY/org/qubership/profiler/checksum-probe/0.0.1"
+          printf '<project><modelVersion>4.0.0</modelVersion><groupId>org.qubership.profiler</groupId><artifactId>checksum-probe</artifactId><version>0.0.1</version></project>' > "$RUNNER_TEMP/p.pom"
+          head -c 4096 /dev/urandom > "$RUNNER_TEMP/p.jar"
+          head -c 4096 /dev/urandom > "$RUNNER_TEMP/q.jar"
+          echo "pom: $(put "$probe/checksum-probe-0.0.1.pom" "$RUNNER_TEMP/p.pom")"
+          echo "jar with a wrong X-Checksum-Sha1 header: $(put "$probe/checksum-probe-0.0.1.jar" "$RUNNER_TEMP/p.jar" -H 'X-Checksum-Sha1: 0000000000000000000000000000000000000000')"
+          echo "jar with a wrong X-Checksum-Sha256 header: $(put "$probe/checksum-probe-0.0.1-b.jar" "$RUNNER_TEMP/p.jar" -H 'X-Checksum-Sha256: 0000000000000000000000000000000000000000000000000000000000000000')"
+          echo "second jar: $(put "$probe/checksum-probe-0.0.1-c.jar" "$RUNNER_TEMP/q.jar")"
+          echo 0000000000000000000000000000000000000000 > "$RUNNER_TEMP/wrong.sha1"
+          echo "wrong .sha1 for the second jar: $(put "$probe/checksum-probe-0.0.1-c.jar.sha1" "$RUNNER_TEMP/wrong.sha1")"
+          for alg in sha1 sha256; do
+            status=$(get "$probe/checksum-probe-0.0.1-c.jar.$alg" "$RUNNER_TEMP/c.$alg")
+            echo "second jar $alg: HTTP $status served=$(head -c 128 "$RUNNER_TEMP/c.$alg") computed=$(${alg}sum "$RUNNER_TEMP/q.jar" | cut -d' ' -f1)"
+          done
+          for name in checksum-probe-0.0.1.jar checksum-probe-0.0.1-b.jar; do
+            status=$(get "$probe/$name" "$RUNNER_TEMP/r.jar")
+            echo "$name: HTTP $status sameContent=$(cmp -s "$RUNNER_TEMP/r.jar" "$RUNNER_TEMP/p.jar" && echo yes || echo no)"
+          done
+
+      - name: Resolve with Maven, strict checksums
+        # language=bash
+        run: |
+          cat > "$RUNNER_TEMP/settings.xml" <<EOF
+          <settings><servers><server><id>github</id>
+          <username>$ORG_GRADLE_PROJECT_githubPackagesUsername</username>
+          <password>$ORG_GRADLE_PROJECT_githubPackagesPassword</password>
+          </server></servers></settings>
+          EOF
+          for gav in org.qubership.profiler:qubership-profiler-agent:0.0.1 org.qubership.profiler:qubership-profiler-agent:4.0.6-SNAPSHOT org.qubership.profiler:qubership-profiler-profiler:0.0.1:war; do
+            mvn -B -C -s "$RUNNER_TEMP/settings.xml" -Dmaven.repo.local="$RUNNER_TEMP/m2" \
+              dependency:get -Dtransitive=false -Dartifact="$gav" \
+              -DremoteRepositories="github::default::$REGISTRY"
+          done
+          find "$RUNNER_TEMP/m2/org/qubership" -type f | sort
+
+      - name: Resolve with Gradle
+        # language=bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          echo 'rootProject.name = "consumer"' > settings.gradle.kts
+          cat > build.gradle.kts <<'EOF'
+          repositories {
+              maven {
+                  url = uri(System.getenv("REGISTRY"))
+                  credentials {
+                      username = System.getenv("ORG_GRADLE_PROJECT_githubPackagesUsername")
+                      password = System.getenv("ORG_GRADLE_PROJECT_githubPackagesPassword")
+                  }
+              }
+          }
+          val check by configurations.creating
+          dependencies {
+              check("org.qubership.profiler:qubership-profiler-agent:0.0.1")
+              check("org.qubership.profiler:qubership-profiler-agent:4.0.6-SNAPSHOT")
+          }
+          tasks.register("resolve") {
+              val files = check.incoming.artifacts.resolvedArtifacts
+              doLast { files.get().forEach { println("${it.id.componentIdentifier}: ${it.file.name}") } }
+          }
+          EOF
+          "$GITHUB_WORKSPACE/gradlew" --console=plain --no-daemon -p . resolve
