@@ -17,10 +17,11 @@ permissions:
   contents: read
 
 concurrency:
-  # On master/release, we don't want any jobs cancelled so the sha is used to name the group
+  # On main, we don't want any jobs cancelled so the sha is used to name the group:
+  # a cancelled snapshot upload to GitHub Packages leaves a partial publication behind.
   # On PR branches, we cancel the job if new commits are pushed
   # More info: https://stackoverflow.com/a/68422069/253468
-  group: ${{ (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/release' ) && format('ci-main-{0}', github.sha) || format('ci-main-{0}', github.ref) }}
+  group: ${{ github.ref == 'refs/heads/main' && format('ci-main-{0}', github.sha) || format('ci-main-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
@@ -179,6 +180,11 @@ jobs:
     name: Publish snapshots to GitHub Packages
     needs: build-test
     if: ${{ github.event_name == 'push' && vars.PUBLISH_TO_GITHUB_PACKAGES == 'true' }}
+    # Runs on main do not cancel each other, so the uploads take turns:
+    # two concurrent uploads would read the same snapshot build number from the registry.
+    concurrency:
+      group: publish-github-packages-snapshots
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read

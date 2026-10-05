@@ -40,7 +40,11 @@ tasks.register<PublishToGithubPackagesTask>("publishAggregationToGithubPackages"
         .orElse(
             providers.environmentVariable("GITHUB_REPOSITORY")
                 .orElse("Netcracker/qubership-profiler-agent")
-                .map { "https://maven.pkg.github.com/$it" }
+                .map {
+                    // GITHUB_REPOSITORY keeps the owner's casing, and GitHub Packages accepts only a lowercase owner
+                    val owner = it.substringBefore('/').lowercase()
+                    "https://maven.pkg.github.com/$owner/${it.substringAfter('/')}"
+                }
         )
     username = providers.gradleProperty("githubPackagesUsername")
     password = providers.gradleProperty("githubPackagesPassword")
