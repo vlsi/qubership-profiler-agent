@@ -1,6 +1,10 @@
 package s3
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"errors"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 const (
 	// operation type label for cdt_minio_operation_latency_seconds: get, list, put, remove, remove_many
@@ -72,14 +76,18 @@ var operationTypes = []string{
 }
 
 // RegisterMetrics registers the cdt_minio_* collectors on reg and initializes
-// every operation series to zero. It is safe to call more than once and
-// tolerates a collector already registered on reg (prometheus.
-// AlreadyRegisteredError), so several MinioClients sharing one process registry
-// do not fight over the series.
+// every operation series to zero. It is safe to call more than once, so several
+// MinioClients sharing one process registry do not fight over the series.
+//
+// It panics when reg holds any other collector under a cdt_minio_* name. That
+// includes a different instance with an identical descriptor: Prometheus
+// reports it as prometheus.AlreadyRegisteredError too, but reg would then
+// expose that instance and never the series this package updates.
 func RegisterMetrics(reg prometheus.Registerer) {
 	for _, c := range Collectors() {
 		if err := reg.Register(c); err != nil {
-			if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			var registered prometheus.AlreadyRegisteredError
+			if !errors.As(err, &registered) || registered.ExistingCollector != c {
 				panic(err)
 			}
 		}

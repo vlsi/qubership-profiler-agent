@@ -46,3 +46,27 @@ func TestRegisterMetricsPanicsOnConflictingCollector(t *testing.T) {
 
 	assert.Panics(t, func() { RegisterMetrics(reg) })
 }
+
+// A different collector with the same name, help, and labels makes Prometheus
+// return AlreadyRegisteredError, yet the registry would expose that collector
+// and never the series this package updates.
+func TestRegisterMetricsPanicsOnDifferentCollectorWithSameDescriptor(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cdt_minio_operation_errors_count",
+			Help: "Failed minio operations count, by operation type",
+		},
+		[]string{operationTypeLabelName},
+	))
+
+	assert.Panics(t, func() { RegisterMetrics(reg) })
+}
+
+// Several clients in one process register the same collectors on one registry.
+func TestRegisterMetricsToleratesRepeatedRegistration(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	RegisterMetrics(reg)
+
+	assert.NotPanics(t, func() { RegisterMetrics(reg) })
+}
