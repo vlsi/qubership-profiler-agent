@@ -21,8 +21,7 @@ jobs:
     permissions:
       # write permission is required to create a GitHub release
       contents: write
-      # write permission is required for autolabeler
-      # otherwise, read permission is required at least
+      # release-drafter reads the merged pull requests to build the release notes
       pull-requests: read
     steps:
       - name: Validate input parameters
@@ -44,7 +43,7 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -64,7 +63,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Check if tag exists
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           VERSION: ${{ steps.release_version.outputs.version }}
         with:
@@ -89,11 +88,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app_token
         with:
-          app-id: ${{ vars.GH_BUMP_VERSION_APP_ID }}
+          client-id: ${{ vars.GH_BUMP_VERSION_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_BUMP_VERSION_APP_KEY }} # zizmor: ignore[secrets-outside-env]
+          permission-contents: write
 
       - name: Update version in gradle.properties to ${{ steps.release_version.outputs.version }}
         uses: ./.github/actions/update_version
@@ -102,14 +102,14 @@ jobs:
           version: ${{ steps.release_version.outputs.version }}
 
       - name: Set up JDK 21
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: zulu
           java-version: 21
           server-id: central
 
       - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: diagtools/go.mod
           # Disable Go build cache in the release workflow to avoid a
@@ -133,7 +133,7 @@ jobs:
       # Publish to Central before generating a tag, so we don't need to drop the tag if
       # Central deployment fails.
       - name: Publish to Central Portal
-        uses: burrunan/gradle-cache-action@4b67497abd37a511d6c1dc6299bdd84ff39f7bf5 # v3.0.2
+        uses: burrunan/gradle-cache-action@404534c34a2faa40430357a3183522a845b04f3b # v3.0.3
         with:
           arguments: publishAggregationToCentralPortal
           # language=properties
@@ -147,10 +147,9 @@ jobs:
           SIGNING_PGP_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }} # zizmor: ignore[secrets-outside-env]
 
       - name: Publish GitHub release
-        uses: release-drafter/release-drafter@6a93d829887aa2e0748befe2e808c66c0ec6e4c7 # v6.4.0
+        uses: release-drafter/release-drafter@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7.7.0
         id: publish_release
         with:
-          disable-autolabeler: true
           publish: true
           latest: ${{ github.ref_name == github.event.repository.default_branch }}
           version: ${{ steps.release_version.outputs.version }}
@@ -186,7 +185,7 @@ jobs:
       CONFIG_FILE: backend/.qubership/docker-build-config.cfg
     steps:
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: 'v${{ needs.publish-release.outputs.version }}'
           persist-credentials: false
@@ -231,7 +230,7 @@ jobs:
         component: ${{ fromJson(needs.load-docker-components.outputs.components) }}
     steps:
       - name: Docker build and publish
-        uses: netcracker/qubership-workflow-hub/actions/docker-action@cabbb90e9471163cfac84bd50ff0296b2803b44c # v2.3.0
+        uses: netcracker/qubership-workflow-hub/actions/docker-action@288a6a0d9a78e80dfdefccab1be6497a39deb746 # v2.8.0
         with:
           ref: 'v${{ needs.publish-release.outputs.version }}'
           download-artifact: false
