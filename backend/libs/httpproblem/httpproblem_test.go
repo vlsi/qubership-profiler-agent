@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -161,6 +162,99 @@ func TestErrorHandlerHeadHasNoBody(t *testing.T) {
 	assert.Empty(t, body)
 }
 
+// A blob served through net/http refuses a request on its own, past both Send
+// and the boundary mapper: a Range it cannot satisfy leaves as a text/plain
+// 416. ServeContent has to turn that refusal into the §8 envelope without
+// touching what net/http gets right — the status, the Content-Range of a range
+// past the end, and every successful partial read.
+func TestServeContentRefusalsUseTheEnvelope(t *testing.T) {
+	const blob = "0123456789"
+	get := func(t *testing.T, method string, header http.Header) (*http.Response, string) {
+		t.Helper()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("ETag", `"blob"`)
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			httpproblem.ServeContent(w, req, strings.NewReader(blob))
+		}))
+		defer server.Close()
+		req, err := http.NewRequest(method, server.URL, nil)
+		require.NoError(t, err)
+		req.Header = header
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		return resp, string(body)
+	}
+
+	for _, tc := range []struct {
+		name         string
+		header       http.Header
+		status       int
+		code         string
+		contentRange string
+	}{
+		{
+			name:   "a Range that does not parse",
+			header: http.Header{"Range": {"garbage"}},
+			status: http.StatusRequestedRangeNotSatisfiable,
+			code:   httpproblem.CodeRangeNotSatisfiable,
+		},
+		{
+			name:         "a Range past the end keeps the size hint",
+			header:       http.Header{"Range": {"bytes=100-200"}},
+			status:       http.StatusRequestedRangeNotSatisfiable,
+			code:         httpproblem.CodeRangeNotSatisfiable,
+			contentRange: "bytes */10",
+		},
+		{
+			name:   "a failed If-Match",
+			header: http.Header{"If-Match": {`"other"`}},
+			status: http.StatusPreconditionFailed,
+			code:   httpproblem.CodeInvalidRequest,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := get(t, http.MethodGet, tc.header)
+
+			assert.Equal(t, tc.status, resp.StatusCode)
+			assert.Equal(t, httpproblem.ContentType, resp.Header.Get(echo.HeaderContentType), "body: %s", body)
+			assert.Equal(t, tc.contentRange, resp.Header.Get("Content-Range"))
+			assert.Empty(t, resp.Header.Get("Cache-Control"), "a cache must not pin the refusal for a year")
+			var got envelope
+			require.NoError(t, json.Unmarshal([]byte(body), &got), "body: %s", body)
+			assert.Equal(t, "about:blank", got.Type)
+			assert.Equal(t, tc.status, got.Status)
+			assert.Equal(t, tc.code, got.Code)
+		})
+	}
+
+	t.Run("a HEAD refusal has no body", func(t *testing.T) {
+		resp, body := get(t, http.MethodHead, http.Header{"Range": {"garbage"}})
+
+		assert.Equal(t, http.StatusRequestedRangeNotSatisfiable, resp.StatusCode)
+		assert.Equal(t, httpproblem.ContentType, resp.Header.Get(echo.HeaderContentType))
+		assert.Empty(t, body)
+	})
+
+	t.Run("a satisfiable Range is served untouched", func(t *testing.T) {
+		resp, body := get(t, http.MethodGet, http.Header{"Range": {"bytes=2-4"}})
+
+		assert.Equal(t, http.StatusPartialContent, resp.StatusCode)
+		assert.Equal(t, "234", body)
+		assert.Equal(t, "bytes 2-4/10", resp.Header.Get("Content-Range"))
+		assert.Equal(t, "public, max-age=31536000, immutable", resp.Header.Get("Cache-Control"))
+	})
+
+	t.Run("a matching If-None-Match is a 304", func(t *testing.T) {
+		resp, body := get(t, http.MethodGet, http.Header{"If-None-Match": {`"blob"`}})
+
+		assert.Equal(t, http.StatusNotModified, resp.StatusCode)
+		assert.Empty(t, body)
+	})
+}
+
 // What crosses the wire is the constant's value, not its Go name. Every other
 // assertion in this repository compares a response against the constant, so
 // retyping CodeCursorRejected as "cursor" keeps the whole suite green while
@@ -184,6 +278,7 @@ func TestCodesMatchTheDocumentedWireValues(t *testing.T) {
 		{httpproblem.CodeNotReady, "not_ready"},
 		{httpproblem.CodeNotFound, "not_found"},
 		{httpproblem.CodeMethodNotAllowed, "method_not_allowed"},
+		{httpproblem.CodeRangeNotSatisfiable, "range_not_satisfiable"},
 		{httpproblem.CodeInternalError, "internal_error"},
 	}
 

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/calltree"
 	"github.com/Netcracker/qubership-profiler-backend/libs/httpproblem"
@@ -231,8 +230,9 @@ func (s *Service) handleCallTrace(c echo.Context) error {
 	h.Set(echo.HeaderContentType, echo.MIMEOctetStream)
 	h.Set("ETag", pkETag(pk))
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
-	// ServeContent covers Range, HEAD, and If-None-Match (§2.4).
-	http.ServeContent(c.Response(), c.Request(), "", time.Time{}, bytes.NewReader(fetch.blob))
+	// ServeContent covers Range, HEAD, and If-None-Match (§2.4), and answers
+	// an unsatisfiable Range in the §8 envelope.
+	httpproblem.ServeContent(c.Response(), c.Request(), bytes.NewReader(fetch.blob))
 	return nil
 }
 

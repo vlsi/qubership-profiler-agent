@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
-	"time"
 
 	"github.com/Netcracker/qubership-profiler-backend/libs/clock"
 	"github.com/Netcracker/qubership-profiler-backend/libs/collector/hotstore"
@@ -338,8 +337,9 @@ func (a *API) handleTrace(c echo.Context) error {
 	h.Set(echo.HeaderContentType, echo.MIMEOctetStream)
 	h.Set("ETag", pkETag(pk))
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
-	// ServeContent covers Range and If-None-Match (02 §2.4).
-	http.ServeContent(c.Response(), c.Request(), "", time.Time{}, bytes.NewReader(blob))
+	// ServeContent covers Range and If-None-Match (02 §2.4), and answers an
+	// unsatisfiable Range in the §8 envelope.
+	httpproblem.ServeContent(c.Response(), c.Request(), bytes.NewReader(blob))
 	return nil
 }
 

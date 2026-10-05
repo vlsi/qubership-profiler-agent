@@ -198,6 +198,7 @@ The rejection body (§8) carries the estimate and a per-class byte breakdown, so
 - `Cache-Control: public, max-age=31536000, immutable`
 - `Accept-Ranges: bytes` — supports `Range:` for partial reads (useful when the UI streams the start of a long trace)
 - `404` if `trace_blob = NULL` (see `truncated_reason` in the Call row)
+- `416` in the §8 envelope, with `code: range_not_satisfiable`, for a `Range:` that does not parse or starts past the end of the blob; the latter also carries `Content-Range: bytes */<size>`
 - `503 + partial` markers do not apply here: blob is either present or absent.
 
 Reader semantics (chunk stream with tail/head noise; parsed against the per-pod-restart dictionary) — see `01-write-contract.md` §4.5.
@@ -651,6 +652,7 @@ Every failure of `/api/v1` and `/internal/v1` answers in this envelope, with `Co
 | 404 | PK not found, or `trace_blob = NULL` (blob endpoint). |
 | 404 | No route matches the path. The embedded SPA serves its client-side routes but never an unmatched `/api/v1` path. |
 | 405 | The path matches no route for the request method. With the SPA embedded, a non-GET request to an unmatched path lands here rather than on the route-miss row above, because the SPA catch-all is registered for `GET` alone. |
+| 416 | The `Range:` of a blob request does not parse, or starts past the end of the blob (§2.4). |
 | 500 | An unexpected internal failure. The detail is deliberately generic — the cause is in the server log, not in the response, so bucket names, object keys, and driver messages stay out of a client's hands. |
 | 503 | `query` itself is not Ready (e.g., DNS discovery uninitialized). While the API handler is unmounted this covers every non-probe path, the SPA shell included; the `/health/ready` and `/health/live` probes keep the state body of `03-lifecycle.md` §4. |
 | 503 | Read memory budget denied the request (§7.5) — atomic, with `Retry-After`; the body carries the guard-dialect members below and a detail naming the reason (`exhausted` vs `never_fits`). |
@@ -673,6 +675,7 @@ Partial results (some sources failed but some succeeded) are NOT errors — `par
 | `no_source_available` | 504 | Every attempted source failed and none succeeded. |
 | `not_found` | 404 | No route matches the path. |
 | `method_not_allowed` | 405 | The path matches no route for this method. |
+| `range_not_satisfiable` | 416 | The blob cannot serve the request's `Range:` (§2.4). The blob is immutable, so the same range never becomes valid: drop the header or correct it. |
 | `internal_error` | 500 | An unexpected server-side failure. |
 
 The two wide-query rejections (§2.3.2) extend the Problem Details body so a client can render a guided prompt instead of a bare error:

@@ -5,6 +5,8 @@
 // A producer builds its body with New and hands it to Send (inside echo) or
 // Write (outside it); ErrorHandler covers everything no producer reached — a
 // handler that returned a raw error, an unmatched route, a wrong method.
+// ServeContent covers the one path that writes its own errors past both: a
+// blob served through net/http.
 //
 // The envelope carries a machine-readable code alongside the prose title and
 // detail. Clients branch on the code: type stays "about:blank", and the title
@@ -16,11 +18,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -59,6 +63,9 @@ const (
 	CodeNotFound = "not_found"
 	// CodeMethodNotAllowed is a path that matches no route for this method.
 	CodeMethodNotAllowed = "method_not_allowed"
+	// CodeRangeNotSatisfiable is a Range header the content cannot serve:
+	// unparsable, or past the end of the blob (02 §2.4).
+	CodeRangeNotSatisfiable = "range_not_satisfiable"
 	// CodeInternalError is an unexpected server-side failure; the cause is in
 	// the server log, never in the response.
 	CodeInternalError = "internal_error"
@@ -141,6 +148,54 @@ func ErrorHandler(err error, c echo.Context) {
 	_ = Send(c, New(status, codeForStatus(status), strings.ToLower(http.StatusText(status)), detail))
 }
 
+// ServeContent is http.ServeContent for an unnamed, undated body whose
+// refusals leave as the §8 envelope. net/http answers an unsatisfiable Range
+// with a text/plain 416 and a failed If-Match with a bare 412, and it writes
+// both straight to w, so neither reaches ErrorHandler. A 200, 206, or 304
+// passes through untouched.
+func ServeContent(w http.ResponseWriter, req *http.Request, content io.ReadSeeker) {
+	http.ServeContent(&contentWriter{ResponseWriter: w, req: req}, req, "", time.Time{}, content)
+}
+
+// contentWriter replaces the error body http.ServeContent writes with the §8
+// envelope, keeping the status and the Content-Range net/http set beside it.
+type contentWriter struct {
+	http.ResponseWriter
+	req *http.Request
+	// refused is set once the envelope is written: the plain-text message
+	// net/http sends after the status is dropped.
+	refused bool
+}
+
+func (w *contentWriter) WriteHeader(status int) {
+	if status < http.StatusBadRequest {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	w.refused = true
+	h := w.Header()
+	// The caller's Cache-Control describes the blob. Left on a refusal, it
+	// would let a cache pin the error for as long as the blob.
+	h.Del("Cache-Control")
+	detail := ""
+	if status == http.StatusRequestedRangeNotSatisfiable {
+		detail = fmt.Sprintf("the content cannot serve Range %q", w.req.Header.Get("Range"))
+	}
+	if w.req.Method == http.MethodHead {
+		h.Set(echo.HeaderContentType, ContentType)
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	_ = Write(w.ResponseWriter, New(status, codeForStatus(status), strings.ToLower(http.StatusText(status)), detail))
+}
+
+func (w *contentWriter) Write(b []byte) (int, error) {
+	if w.refused {
+		return len(b), nil
+	}
+	return w.ResponseWriter.Write(b)
+}
+
 // codeForStatus maps a status the boundary saw to its §8 code. Every status
 // gets one: an empty code on the member clients branch on would be worse than
 // a coarse one.
@@ -150,6 +205,8 @@ func codeForStatus(status int) string {
 		return CodeNotFound
 	case status == http.StatusMethodNotAllowed:
 		return CodeMethodNotAllowed
+	case status == http.StatusRequestedRangeNotSatisfiable:
+		return CodeRangeNotSatisfiable
 	case status >= 400 && status < 500:
 		return CodeInvalidRequest
 	default:
