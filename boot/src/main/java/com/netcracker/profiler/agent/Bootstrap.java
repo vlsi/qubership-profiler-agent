@@ -349,7 +349,7 @@ public class Bootstrap {
             for (PluginJarInfo jar : jars) {
                 sb.append("  - ").append(jar.jarPath.replace(lib, "$esc"));
                 sb.append(" (version=").append(jar.version == null ? "unknown" : jar.version).append(")");
-                if (jar == winner) {
+                if (jar.jarPath.equals(winner.jarPath)) {
                     sb.append(" -- loaded\n");
                 } else {
                     displacedBy.put(jar.jarPath, winner.jarPath);

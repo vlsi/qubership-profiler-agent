@@ -19,10 +19,12 @@ public class Profiler {
             dumper = (DumperPlugin_02) Bootstrap.getPlugin(DumperPlugin.class);
             if (dumper == null) {
                 logger.severe("[Profiler] Unable to find Dumper in the class path");
+                markDumperDead();
                 return;
             }
         } catch (Throwable e){
             logger.severe("[Profiler] Unable to find Dumper in the class path", e);
+            markDumperDead();
             return;
         }
         final LocalState state;
@@ -30,13 +32,16 @@ public class Profiler {
             state = getState();
         } catch (Throwable e) {
             logger.severe("[Profiler] Unable to reach the profiler state, profiling data is not collected", e);
+            markDumperDead();
             return;
         }
         int depthBeforeEnter = state.sp;
+        boolean dumperCreated = false;
 
         try {
             enter("void " + Profiler.class.getName() + ".startDumper() (Profiler.java:20) [profiler-runtime.jar]");
             dumper.newDumper(ProfilerData.dirtyBuffers, ProfilerData.emptyBuffers, ProfilerData.activeThreads);
+            dumperCreated = true;
             ProfilerTransformerPlugin plugin = Bootstrap.getPlugin(ProfilerTransformerPlugin.class);
             if (plugin == null) {
                 logger.severe("[Profiler] Unable to find the profiling transformer in the class path");
@@ -53,6 +58,9 @@ public class Profiler {
             // half-initialized agent has to degrade to "no profiling", not to a broken class.
             // The message is logged here rather than after exit() so it survives a failing exit().
             logger.severe("[Profiler] Unable to start the dumper, profiling data is not collected", e);
+            if (!dumperCreated) {
+                markDumperDead();
+            }
         } finally {
             // exit() has to pair with enter() on every path out. LocalState ends a call only when
             // its depth returns to zero, so a thread left one frame deep never writes another
@@ -67,6 +75,16 @@ public class Profiler {
                 logger.severe("[Profiler] Unable to close the dumper startup call", e);
             }
         }
+    }
+
+    /**
+     * Puts buffer producers into the discard state for a dumper that was never created.
+     * Nothing drains {@link ProfilerData#dirtyBuffers} in that case, so the queue fills, and with
+     * {@link ProfilerData#BLOCK_WHEN_DIRTY_BUFFERS_QUEUE_IS_FULL} set, application threads would
+     * park in {@code dirtyBuffers.put()} forever.
+     */
+    private static void markDumperDead() {
+        ProfilerData.dumperDead = true;
     }
 
     public static LocalState getState() {
