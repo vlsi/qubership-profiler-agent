@@ -1,41 +1,23 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:best-practices"
+    "github>Netcracker/renovate-config:base",
+    "github>Netcracker/renovate-config:automerge",
+    "github>Netcracker/renovate-config:annotated-versions",
+    "github>Netcracker/renovate-config:github-actions",
+    "github>Netcracker/renovate-config:go",
+    "github>Netcracker/renovate-config:maven-groupid",
+    "github>Netcracker/renovate-config:netcracker-dependencies"
   ],
   "labels": [
     "dependencies"
   ],
-  "automerge": true,
-  "platformAutomerge": false,
-  "schedule": [
-    "every 4 day"
-  ],
+  "rebaseWhen": "behind-base-branch",
   "ignorePaths": [
     "**/node_modules/**",
     "plugins/*/build.gradle.kts"
   ],
   "packageRules": [
-    {
-      "description": "Update Go version everywhere at once: build image, go.mod and GitHub Actions workflows",
-      "groupName": "Go",
-      "schedule": [
-        "every 1 weeks on Monday"
-      ],
-      "matchDatasources": [
-        "docker",
-        "github-actions",
-        "github-releases",
-        "golang-version",
-        "gomod"
-      ],
-      "matchPackageNames": [
-        "go",
-        "golang",
-        "actions/go-versions",
-        "actions/setup-go"
-      ]
-    },
     {
       "groupName": "errorprone",
       "matchPackageNames": [
@@ -49,18 +31,6 @@
       "allowedVersions": "< 7",
       "matchPackageNames": [
         "javax:javaee-api"
-      ]
-    },
-    {
-      "groupName": "checkerframework",
-      "matchPackageNames": [
-        "org.checkerframework{/,}**"
-      ]
-    },
-    {
-      "groupName": "jmh",
-      "matchPackageNames": [
-        "org.openjdk.jmh{/,}**"
       ]
     },
     {
@@ -115,24 +85,28 @@
       ]
     },
     {
-      "description": "Pin sample-apps/it-spring-boot-3 to Spring Boot 3.x; create it-spring-boot-4 module when bumping major",
+      "description": "Keep Spring Boot 3 example modules on Spring Boot 3",
       "groupName": "Spring Boot 3 sample app",
       "matchFileNames": [
-        "sample-apps/it-spring-boot-3/**"
+        "backend/examples/spring-boot-3-*/**"
       ],
       "allowedVersions": "< 4",
       "matchPackageNames": [
-        "org.springframework.boot{/,}**",
-        "org.springframework{/,}**",
-        "org.springframework.session{/,}**"
+        "org.springframework.boot{/,}**"
       ]
     },
     {
-      "description": "Group all GitHub Actions updates into a single PR",
-      "groupName": "GitHub Actions",
-      "matchManagers": [
-        "github-actions"
-      ]
+      "description": "Disable Docker images that are unavailable from their registries",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "centos7/openjdk11-x64",
+        "centos7/openjdk11-x86",
+        "alpine/openjdk17",
+        "alpine/openjdk21"
+      ],
+      "enabled": false
     }
   ]
 }
