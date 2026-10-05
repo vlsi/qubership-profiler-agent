@@ -278,7 +278,8 @@ flowchart LR
 ```
 
 - **Serving.** `query` mounts an `embed.FS` at `/ui` on its existing router, with an SPA fallback to
-  `index.html` for client-side routes. `/api/v1/*`, `/metrics`, and `/api/v1/health/*` are unchanged. One
+  `index.html` for client-side routes. `/api/v1/*` and `/api/v1/health/*` are unchanged; `/metrics` now
+  lives on a separate metrics port, off the ingress-mapped external port (`04-storage-layout.md` §12). One
   origin means no CORS.
 - **Base path.** The sub-path is a build-time switch: `UI_BASE_PATH` sets the Vite base, the router
   basename follows it, and the binary reads the base back out of the built `index.html`. The image
