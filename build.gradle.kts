@@ -31,6 +31,11 @@ jacoco {
 val jacocoReport by tasks.registering(JacocoReport::class) {
     group = "Coverage reports"
     description = "Generates an aggregate report from all subprojects"
+    reports {
+        // Codecov reads the XML report only; the HTML one just costs build time in CI.
+        xml.required = true
+        html.required = false
+    }
 }
 
 allprojects {
@@ -46,6 +51,8 @@ val parameters by tasks.registering {
 
 dependencies {
     nmcpAggregation(projects.agent)
+    // The Gradle metadata of every published module depends on this platform, see build-logic.java
+    nmcpAggregation(projects.bomThirdparty)
     nmcpAggregation(projects.boot)
     nmcpAggregation(projects.common)
     nmcpAggregation(projects.cli)
@@ -57,6 +64,7 @@ dependencies {
     nmcpAggregation(projects.parsers)
     nmcpAggregation(projects.pluginGenerator)
     nmcpAggregation(projects.pluginRuntime)
+    nmcpAggregation(projects.profiler)
     nmcpAggregation(projects.protoDefinition)
     nmcpAggregation(projects.runtime)
     nmcpAggregation(projects.warLib)
