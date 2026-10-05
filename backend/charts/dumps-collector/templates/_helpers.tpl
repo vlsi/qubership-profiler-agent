@@ -29,6 +29,31 @@ app.kubernetes.io/component: backend
 {{/******************************************************************************************************************/}}
 
 {{/*
+Gateway system type (legacy-ingress / gateway-api-default).
+*/}}
+{{- define "gateway.systemType" -}}
+{{- default .Values.dumpsCollector.gateway.systemType | default "legacy-ingress" -}}
+{{- end -}}
+
+{{/*
+Gateway API parentRefs for HTTPRoute and similar resources.
+*/}}
+{{- define "gateway.parentRefs" -}}
+{{- $peerNamespace := default .Values.dumpsCollector.gateway.blueGreen.peerNamespace | default "" }}
+{{- if $peerNamespace -}}
+- group: gateway.networking.k8s.io
+  kind: Gateway
+  name: edge-router
+  namespace: {{ default .Values.dumpsCollector.gateway.blueGreen.controllerNamespace | default "bluegreen-controller" }}
+{{- else -}}
+- group: gateway.networking.k8s.io
+  kind: Gateway
+  name: {{ default .Values.dumpsCollector.gateway.externalGateway.name | default "default-external-gateway" }}
+  namespace: {{ default .Values.dumpsCollector.gateway.externalGateway.namespace | default "gateway-system" }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Set default value for dumps-collector ingress host if not specify in Values.
 */}}
 {{- define "dumpsCollector.ingress" -}}
@@ -36,6 +61,19 @@ Set default value for dumps-collector ingress host if not specify in Values.
     {{ .Values.dumpsCollector.ingress.host }}
   {{- else -}}
     {{- printf "dumps-collector-%s.%s" .Values.NAMESPACE .Values.CLOUD_PUBLIC_HOST -}}
+  {{- end -}}
+{{- end -}}
+
+{{/*
+Set default value for dumps-collector httpRoute host if not specify in Values.
+*/}}
+{{- define "dumpsCollector.httpRoute" -}}
+  {{- if .Values.dumpsCollector.httpRoute.host -}}
+    {{ .Values.dumpsCollector.httpRoute.host }}
+  {{- else if .Values.CLOUD_PUBLIC_HOST -}}
+    {{- printf "dumps-collector-%s.eg.%s" (.Values.NAMESPACE | default .Release.Namespace) .Values.CLOUD_PUBLIC_HOST -}}
+  {{- else -}}
+    {{- fail "dumpsCollector.httpRoute is enabled but no host can be built: set dumpsCollector.httpRoute.host, or provide CLOUD_PUBLIC_HOST" -}}
   {{- end -}}
 {{- end -}}
 

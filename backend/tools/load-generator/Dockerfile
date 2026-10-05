@@ -6,7 +6,7 @@
 # the k6/x/cdt module and the go-prometheus-exporter live in this module, and
 # the traffic is fully synthetic — no captured dumps enter the image.
 
-FROM golang:1.26.2-alpine3.22@sha256:7ef941168f213aa115df2e61364d67682129e99dc8188b734139dea862cc7d31 AS builder
+FROM golang:1.27.0-alpine3.24@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
 
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -22,7 +22,7 @@ COPY tools/load-generator/ tools/load-generator/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-w -s" -o /workspace/k6 ./tools/load-generator/k6runner
 
-FROM alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11 AS release
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS release
 
 COPY --from=builder /workspace/k6 /xk6/k6
 COPY tools/load-generator/scripts /xk6/scripts
