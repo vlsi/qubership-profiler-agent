@@ -28,7 +28,7 @@ val githubPackagesPublisherClasspath = configurations.resolvable("githubPackages
 
 dependencies {
     // Keep the version in sync with the compileOnly dependency in build-logic/root-build/build.gradle.kts
-    githubPackagesPublisher("com.gradleup.nmcp:nmcp-tasks:1.6.1")
+    githubPackagesPublisher("com.gradleup.nmcp:nmcp-tasks:1.6.2")
 }
 
 tasks.register<PublishToGithubPackagesTask>("publishAggregationToGithubPackages") {
