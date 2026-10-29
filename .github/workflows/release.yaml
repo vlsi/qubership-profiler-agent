@@ -259,10 +259,28 @@ jobs:
       matrix:
         component: ${{ fromJson(needs.load-docker-components.outputs.components) }}
     steps:
+      - name: Checkout release sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 'v${{ needs.publish-release.outputs.version }}'
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        if: matrix.component.file == 'apps/dumps-collector/Dockerfile'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: zulu
+          java-version: 21
+
+      - name: Build release agent installer
+        if: matrix.component.file == 'apps/dumps-collector/Dockerfile'
+        # Packaging does not run signing tasks or need in-memory signing keys.
+        run: ./gradlew --quiet -Prelease -PuseInMemoryPgpKeys=false :installer:prepareDumpsCollectorDocker
+
       - name: Docker build and publish
         uses: netcracker/qubership-workflow-hub/actions/docker-action@e6afd0a6bcc4f24d73e3e4d5fb9a31ada009e3f1 # v2.8.2
         with:
-          ref: 'v${{ needs.publish-release.outputs.version }}'
+          checkout: "false"
           download-artifact: false
           dry-run: false
           component: ${{ toJson(matrix.component) }}
