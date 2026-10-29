@@ -24,6 +24,15 @@ on:
     branches-ignore:
       - 'renovate/**'
     paths:
+      - 'apps/agent/**'
+      - 'build-logic/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - '.dockerignore'
+      - '.qubership/docker-build-config.cfg'
       - 'apps/dumps-collector/**'
       - 'apps/profiler-backend/**'
       - 'apps/ui/**'
@@ -41,6 +50,15 @@ on:
     branches:
       - '**'
     paths:
+      - 'apps/agent/**'
+      - 'build-logic/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - '.dockerignore'
+      - '.qubership/docker-build-config.cfg'
       - 'apps/dumps-collector/**'
       - 'apps/profiler-backend/**'
       - 'apps/ui/**'
@@ -116,6 +134,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up JDK 21
+        if: matrix.component.file == 'apps/dumps-collector/Dockerfile'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: zulu
+          java-version: 21
+
+      - name: Build agent installer
+        if: matrix.component.file == 'apps/dumps-collector/Dockerfile'
+        uses: burrunan/gradle-cache-action@404534c34a2faa40430357a3183522a845b04f3b # v3.0.3
+        with:
+          arguments: --quiet :installer:prepareDumpsCollectorDocker
 
       - name: "Create metadata"
         uses: netcracker/qubership-workflow-hub/actions/metadata-action@e6afd0a6bcc4f24d73e3e4d5fb9a31ada009e3f1 # v2.8.2
