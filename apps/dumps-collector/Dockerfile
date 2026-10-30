@@ -1,7 +1,7 @@
 # Build context: repository root
 # Usage: make -C apps/dumps-collector docker-build
 
-FROM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 
 # Multi-arch build support
 ARG TARGETOS=linux
@@ -11,17 +11,16 @@ ARG TARGETARCH
 WORKDIR /workspace
 RUN mkdir -p tools
 
-# Copy go modules from repository root
+# Copy go modules and sources preserving the module structure
 COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy go sources preserving the module structure
 COPY apps/dumps-collector/ apps/dumps-collector/
 COPY libs/ libs/
 
 # Build from the app directory
-RUN cd apps/dumps-collector && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -o /workspace/tools/prf_dump_writer main.go
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    cd apps/dumps-collector && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /workspace/tools/prf_dump_writer main.go
 
 FROM nginx:1.31.7-alpine3.24@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
 
