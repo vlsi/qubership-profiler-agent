@@ -2,6 +2,7 @@
 # one collector, one query, SeaweedFS as the S3 target. The services create
 # the bucket themselves on first connect, so SeaweedFS needs no init container.
 #
+#   make profiler-backend-docker-binaries
 #   docker compose up --build -d
 #   make smoke        # end-to-end proof against this stack
 services:

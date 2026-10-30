@@ -15,7 +15,7 @@ All three workloads read the S3 credentials from a Secret **mounted as a volume*
 Run the commands in both quick starts from the repository root.
 
 ```bash
-docker build -f apps/profiler-backend/Dockerfile -t profiler-backend:dev .
+make -C apps/profiler-backend docker-build DOCKER_IMAGE=profiler-backend:dev
 kind create cluster --name profiler
 kind load docker-image profiler-backend:dev --name profiler
 helm install profiler deploy/charts/profiler-backend -f deploy/kind/values-kind.yaml
@@ -29,7 +29,7 @@ kubectl rollout status statefulset/profiler-profiler-backend-collector --timeout
 OrbStack's k8s shares the host Docker daemon — no image loading step — and ships a built-in LoadBalancer, so the agent Service gets a host-reachable IP:
 
 ```bash
-docker build -f apps/profiler-backend/Dockerfile -t profiler-backend:dev .
+make -C apps/profiler-backend docker-build DOCKER_IMAGE=profiler-backend:dev
 kubectl config use-context orbstack
 helm install profiler deploy/charts/profiler-backend -f deploy/kind/values-orbstack.yaml
 kubectl rollout status statefulset/profiler-profiler-backend-collector --timeout=180s

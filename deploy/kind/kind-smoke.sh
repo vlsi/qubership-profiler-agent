@@ -18,7 +18,7 @@ IMAGE=profiler-backend:dev
 KUBECTL=(kubectl --context "${CONTEXT}")
 
 echo "==> Building ${IMAGE}..."
-docker build -f apps/profiler-backend/Dockerfile -t "${IMAGE}" .
+make -C apps/profiler-backend docker-build DOCKER_IMAGE="${IMAGE}"
 
 if [[ "${CONTEXT}" == kind-* ]]; then
   if ! kind get clusters | grep -qx "${CLUSTER}"; then

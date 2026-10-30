@@ -239,7 +239,7 @@ jobs:
           if [ "${verify}" == 'true' ]; then
             echo "✅ Docker build config is valid"
             components=$(jq -c ".components" "$GITHUB_WORKSPACE/${CONFIG_PATH}")
-            platforms=$(jq -c ".platforms" "$GITHUB_WORKSPACE/${CONFIG_PATH}")
+            platforms=$(jq -r ".platforms" "$GITHUB_WORKSPACE/${CONFIG_PATH}")
           else
             echo "❗ Docker build config is invalid"
             exit 1
@@ -276,6 +276,12 @@ jobs:
         if: matrix.component.file == 'apps/dumps-collector/Dockerfile'
         # Packaging does not run signing tasks or need in-memory signing keys.
         run: ./gradlew --quiet -Prelease -PuseInMemoryPgpKeys=false :installer:prepareDumpsCollectorDocker
+
+      - name: Build profiler backend
+        if: matrix.component.name == 'qubership-profiler-backend'
+        uses: ./.github/actions/build-profiler-backend
+        with:
+          platforms: ${{ needs.load-docker-components.outputs.platforms }}
 
       - name: Docker build and publish
         uses: netcracker/qubership-workflow-hub/actions/docker-action@e6afd0a6bcc4f24d73e3e4d5fb9a31ada009e3f1 # v2.8.2

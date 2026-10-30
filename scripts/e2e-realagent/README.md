@@ -56,6 +56,7 @@ make smoke-realagent
 Or step by step, keeping the stack up for iteration:
 
 ```bash
+make profiler-backend-docker-binaries
 docker compose up --build -d
 go test -tags smoke_realagent -count=1 -timeout 20m -v ./libs/tests/smoke_realagent/...
 docker compose down -v --remove-orphans
@@ -164,6 +165,7 @@ make smoke-realagent-v313
 or step by step:
 
 ```bash
+make profiler-backend-docker-binaries
 docker compose up --build -d
 go test -tags smoke_realagent_v313 -count=1 -timeout 20m -v ./libs/tests/smoke_realagent/...
 docker compose down -v --remove-orphans

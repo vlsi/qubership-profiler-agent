@@ -1,0 +1,24 @@
+name: Build profiler backend
+description: Build the embedded UI and static Go binaries before Docker packaging.
+inputs:
+  platforms:
+    description: Comma-separated Linux platforms to compile.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+        package-manager-cache: false
+    - name: Build UI and Go binaries
+      shell: bash
+      env:
+        PLATFORMS: ${{ inputs.platforms }}
+      run: make -C apps/profiler-backend docker-binaries

@@ -1,6 +1,6 @@
 // Package ui embeds the built single-page app that the query service serves
 // at /ui (07-ui-design.md §6). Build the assets first — `npm run build` in
-// this directory; the profiler-backend Dockerfile runs that in a node stage.
+// this directory; the profiler-backend docker-binaries Make target does this.
 package ui
 
 import (

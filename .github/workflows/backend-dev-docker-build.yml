@@ -46,6 +46,9 @@ on:
       - 'Makefile'
       - 'docker-compose.yaml'
       - '.github/workflows/backend-dev-docker-build.yml'
+      - '.github/actions/build-profiler-backend/**'
+      - '.qubership/docker-build-config.cfg'
+      - '.dockerignore'
   pull_request:
     branches:
       - '**'
@@ -72,6 +75,9 @@ on:
       - 'Makefile'
       - 'docker-compose.yaml'
       - '.github/workflows/backend-dev-docker-build.yml'
+      - '.github/actions/build-profiler-backend/**'
+      - '.qubership/docker-build-config.cfg'
+      - '.dockerignore'
 
 permissions:
   contents: read
@@ -109,7 +115,7 @@ jobs:
           if [ ${verify} == 'true' ]; then
             echo "✅ $GITHUB_WORKSPACE/${CONFIG_FILE} file is valid"
             components=$(jq -c ".components" "$GITHUB_WORKSPACE/${CONFIG_FILE}")
-            platforms=$(jq -c ".platforms" "$GITHUB_WORKSPACE/${CONFIG_FILE}")
+            platforms=$(jq -r ".platforms" "$GITHUB_WORKSPACE/${CONFIG_FILE}")
           else
             echo "❗ $GITHUB_WORKSPACE/${CONFIG_FILE} file is invalid"
             exit 1
@@ -147,6 +153,12 @@ jobs:
         uses: burrunan/gradle-cache-action@404534c34a2faa40430357a3183522a845b04f3b # v3.0.3
         with:
           arguments: --quiet :installer:prepareDumpsCollectorDocker
+
+      - name: Build profiler backend
+        if: matrix.component.name == 'qubership-profiler-backend'
+        uses: ./.github/actions/build-profiler-backend
+        with:
+          platforms: ${{ needs.load-docker-build-components.outputs.platforms }}
 
       - name: "Create metadata"
         uses: netcracker/qubership-workflow-hub/actions/metadata-action@e6afd0a6bcc4f24d73e3e4d5fb9a31ada009e3f1 # v2.8.2

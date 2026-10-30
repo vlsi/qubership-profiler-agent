@@ -26,11 +26,37 @@ since `--run-now` exits too fast to scrape). query keeps `/metrics` and
 From the repository root:
 
 ```bash
+make profiler-backend-docker-binaries
 docker compose up --build -d     # SeaweedFS + collector + query
 make smoke                       # end-to-end proof: agent → collector → seal → SeaweedFS → query
 ```
 
 The services create the `profiler-data` bucket themselves on first connect.
+
+## Build the image
+
+Install Go and Node.js 24, then run from the repository root:
+
+```bash
+make -C apps/profiler-backend docker-build
+```
+
+This builds the UI first, embeds it in a static Linux binary, and packages the binary in distroless.
+The build uses the exact `toolchain` version from the root `go.mod`, including when a different Go version is on `PATH`.
+Update that directive to rebuild with a patched Go standard library; no Go builder image is involved.
+
+For a multi-platform image, prepare both binaries before running Buildx:
+
+```bash
+make -C apps/profiler-backend docker-binaries PLATFORMS=linux/amd64,linux/arm64
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f apps/profiler-backend/Dockerfile -t profiler-backend .
+```
+
+`docker-binaries` writes to `apps/profiler-backend/build/image/<os>_<arch>/` and prints each binary's Go build metadata.
+`PLATFORMS` defaults to Linux with the host Go architecture and accepts `linux/amd64` and `linux/arm64`.
+Set `UI_BASE_PATH` when building the assets to override `/ui/`.
+The dev and release workflows compile both platforms on the runner before Docker packaging.
 
 ## Configuration
 

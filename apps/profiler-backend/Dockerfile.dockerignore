@@ -1,0 +1,6 @@
+**
+!apps/
+!apps/profiler-backend/
+!apps/profiler-backend/build/
+!apps/profiler-backend/build/image/
+!apps/profiler-backend/build/image/**

@@ -232,6 +232,10 @@ migration-docker:
 	@echo "==> Building Docker image for migration..."
 	$(MAKE) -C $(TOOLS_DIR)/migration docker-build
 
+.PHONY: profiler-backend-docker-binaries
+profiler-backend-docker-binaries:
+	$(MAKE) -C $(APPS_DIR)/profiler-backend docker-binaries
+
 profiler-backend-docker:
 	@echo "==> Building Docker image for profiler-backend..."
 	$(MAKE) -C $(APPS_DIR)/profiler-backend docker-build
@@ -258,7 +262,7 @@ profiler-backend-archive:
 # =============================================================================
 
 .PHONY: smoke
-smoke:
+smoke: profiler-backend-docker-binaries
 	@echo "==> Starting the dev stack..."
 	docker compose down -v --remove-orphans
 	docker compose up --build -d
@@ -277,7 +281,7 @@ smoke:
 # with what the agent sent; see libs/tests/smoke_realagent and
 # scripts/e2e-realagent/README.md.
 .PHONY: smoke-realagent
-smoke-realagent: smoke-realagent-build
+smoke-realagent: smoke-realagent-build profiler-backend-docker-binaries
 	@echo "==> Starting the dev stack..."
 	docker compose down -v --remove-orphans
 	docker compose up --build -d
@@ -302,7 +306,7 @@ smoke-realagent-build:
 # ../scripts/e2e-realagent/README.md. Kept separate from smoke-realagent: it
 # fetches a released old version instead of building HEAD.
 .PHONY: smoke-realagent-v313
-smoke-realagent-v313:
+smoke-realagent-v313: profiler-backend-docker-binaries
 	@echo "==> Starting the dev stack..."
 	docker compose down -v --remove-orphans
 	docker compose up --build -d
@@ -466,4 +470,3 @@ help-migration:
 help-profiler-backend:
 	@echo "Help for profiler-backend application:"
 	$(MAKE) -C $(APPS_DIR)/profiler-backend help
-
